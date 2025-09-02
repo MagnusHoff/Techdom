@@ -1,0 +1,2 @@
+# Techdom
+AI-drevet eiendomskalkulator
