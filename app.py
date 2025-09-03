@@ -3,6 +3,18 @@ import math
 import streamlit as st
 from openai import OpenAI
 
+
+# Hide the Streamlit footer, menu, and "Made with Streamlit" branding
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stAppDeployButton {display: none;}
+    .stAppBottomRight {display: none;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # ---------- Skjul Streamlit-standard ----------
 HIDE_STYLE = """
 <style>
