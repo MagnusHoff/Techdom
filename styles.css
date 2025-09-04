@@ -1,0 +1,137 @@
+/* styles.css */
+:root {
+  /* darker & richer blue */
+  --td-blue: #0b1f55;
+  --td-blue-2: #0d2a7a;
+  --td-blue-3: #0f2f91;
+}
+
+/* Primary buttons everywhere (normal buttons and form submit) */
+.stButton > button,
+.stForm button[kind="primary"],
+.stForm div.stButton > button {
+  background: linear-gradient(180deg, var(--td-blue-2) 0%, var(--td-blue) 90%);
+  color: #fff !important;
+  border: 1px solid var(--td-blue-3) !important;
+  border-radius: 10px !important;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(13, 42, 122, .35);
+  transition: transform .06s ease, filter .15s ease, box-shadow .15s ease;
+}
+
+.stButton > button:hover,
+.stForm button[kind="primary"]:hover,
+.stForm div.stButton > button:hover {
+  filter: brightness(1.07);
+  box-shadow: 0 10px 26px rgba(13, 42, 122, .45);
+  transform: translateY(-1px);
+}
+
+.stButton > button:active,
+.stForm button[kind="primary"]:active,
+.stForm div.stButton > button:active {
+  transform: translateY(0);
+}
+
+/* Inputs: darker blue outline instead of grey */
+input, textarea, select {
+  border-color: rgba(13, 42, 122, 0.55) !important;
+  box-shadow: none !important;
+}
+
+/* Hide Streamlit's global "running" / status widget to avoid grey flash */
+div[data-testid="stStatusWidget"] {
+  display: none !important;
+}
+
+/* Gjør landing-knappen mer kompakt og midtstilt */
+.stForm .stButton { 
+  display: flex; 
+  justify-content: center; 
+}
+
+.stForm .stButton > button {
+  padding: .55rem 1.05rem !important;   /* mer kompakt */
+  min-width: 200px;                     /* passe bredde */
+}
+
+/* --- Midtstill hele FINN-skjemaet på landingssiden --- */
+.landing-wrap {
+  max-width: 900px;           /* bredde på "kortet" */
+  margin: 0 auto;             /* midtstill */
+}
+
+/* Midtstill & kompakt knapp inni landingsskjemaet (samme glossy stil beholdes) */
+.center-btn .stButton { 
+  display: flex; 
+  justify-content: center; 
+}
+.center-btn .stButton > button {
+  padding: .55rem 1.05rem !important;
+  min-width: 200px;
+}
+
+/* --- Spinner inni "Kjører analyse …"-knappen --- */
+/* Pakk knappen i .analyze-btn i Python (se under) */
+.analyze-btn button[disabled] {
+  position: relative;
+  padding-left: 2.0rem !important;   /* plass til spinner */
+}
+.analyze-btn button[disabled]::before {
+  content: "";
+  position: absolute;
+  left: 14px; top: 50%;
+  width: 16px; height: 16px;
+  margin-top: -8px;
+  border: 2px solid rgba(255,255,255,.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: td-spin .9s linear infinite;
+}
+@keyframes td-spin { to { transform: rotate(360deg); } }
+
+/* Knappestil som også treffer form-knapper */
+.stButton > button,
+.stForm button {
+  background: linear-gradient(180deg, #0d2a7a 0%, #0b1f55 90%) !important;
+  color: #fff !important;
+  border: 1px solid #0f2f91 !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 6px 18px rgba(13, 42, 122, .35) !important;
+  transition: transform .06s ease, filter .15s ease, box-shadow .15s ease !important;
+}
+.stButton > button:hover,
+.stForm button:hover {
+  filter: brightness(1.07) !important;
+  box-shadow: 0 10px 26px rgba(13, 42, 122, .45) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Midtstill og komprimer kun landing-knappen */
+.center-btn .stButton { 
+  display: flex; 
+  justify-content: center; 
+}
+.center-btn .stButton > button {
+  padding: .55rem 1.05rem !important;
+  min-width: 200px;
+}
+
+/* Spinner i "Kjører analyse …"-knappen (resultatsiden) */
+.analyze-btn button[disabled] {
+  position: relative;
+  padding-left: 2.0rem !important;
+}
+.analyze-btn button[disabled]::before {
+  content: "";
+  position: absolute;
+  left: 14px; top: 50%;
+  width: 16px; height: 16px;
+  margin-top: -8px;
+  border: 2px solid rgba(255,255,255,.45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: td-spin .9s linear infinite;
+}
+@keyframes td-spin { to { transform: rotate(360deg); } }
