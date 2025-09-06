@@ -1,20 +1,23 @@
-# app.py — clean baseline (no sidebar comps button)
-
+from pathlib import Path
+from PIL import Image
 import streamlit as st
 
-st.set_page_config(page_title="Techdom", layout="wide")
+icon_path = Path(__file__).parent / "Assets" / "logo_64.png"  # merk stor A
+icon_img = Image.open(icon_path)
 
-# Hide Streamlit's default menu & footer
-HIDE = """
-    <style>
-      #MainMenu {visibility: hidden;}
-      footer {visibility: hidden;}
-      header {visibility: hidden;}
-    </style>
-"""
-st.markdown(HIDE, unsafe_allow_html=True)
+st.set_page_config(page_title="Techdom.AI", page_icon=icon_img, layout="wide")
 
-st.set_page_config(page_title="Techdom.AI", page_icon="assets/logo.png", layout="wide")
+# Skjul Streamlit-chrome
+st.markdown(
+    """
+<style>
+  #MainMenu{visibility:hidden;}
+  footer{visibility:hidden;}
+  header{visibility:hidden;}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 from dotenv import load_dotenv
 
