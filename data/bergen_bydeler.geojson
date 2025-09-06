@@ -1,0 +1,27 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "BYDEL": "Bergenhus"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.32,
+                            60.40
+                        ],
+                        [
+                            5.33,
+                            60.40
+                        ], ...
+                    ]
+                ]
+            }
+        }
+        // Fana, Ytrebygda, Fyllingsdalen, Laksevåg, Årstad, Åsane, Arna ...
+    ]
+}

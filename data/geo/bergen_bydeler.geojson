@@ -1,0 +1,170 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bergen sentrum"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.27,
+                            60.36
+                        ],
+                        [
+                            5.38,
+                            60.36
+                        ],
+                        [
+                            5.38,
+                            60.42
+                        ],
+                        [
+                            5.27,
+                            60.42
+                        ],
+                        [
+                            5.27,
+                            60.36
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bergen vest"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.10,
+                            60.30
+                        ],
+                        [
+                            5.27,
+                            60.30
+                        ],
+                        [
+                            5.27,
+                            60.45
+                        ],
+                        [
+                            5.10,
+                            60.45
+                        ],
+                        [
+                            5.10,
+                            60.30
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bergen øst"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.38,
+                            60.30
+                        ],
+                        [
+                            5.55,
+                            60.30
+                        ],
+                        [
+                            5.55,
+                            60.45
+                        ],
+                        [
+                            5.38,
+                            60.45
+                        ],
+                        [
+                            5.38,
+                            60.30
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bergen nord"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.20,
+                            60.42
+                        ],
+                        [
+                            5.50,
+                            60.42
+                        ],
+                        [
+                            5.50,
+                            60.55
+                        ],
+                        [
+                            5.20,
+                            60.55
+                        ],
+                        [
+                            5.20,
+                            60.42
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Bergen sør"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.20,
+                            60.20
+                        ],
+                        [
+                            5.50,
+                            60.20
+                        ],
+                        [
+                            5.50,
+                            60.36
+                        ],
+                        [
+                            5.20,
+                            60.36
+                        ],
+                        [
+                            5.20,
+                            60.20
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}
