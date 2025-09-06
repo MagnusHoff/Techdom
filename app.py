@@ -14,7 +14,11 @@ HIDE = """
 """
 st.markdown(HIDE, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Techdom.AI", page_icon="🏠", layout="wide")
+st.set_page_config(
+    page_title="Techdom.AI",
+    page_icon="logo.png",  # ligger i rot, så ingen assets/-mappe trengs
+    layout="wide",
+)
 
 from dotenv import load_dotenv
 
