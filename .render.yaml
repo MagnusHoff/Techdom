@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: techdom-app
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.address 0.0.0.0 --server.port $PORT
+    autoDeploy: true
+    healthCheckPath: /

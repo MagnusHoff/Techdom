@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 
 # ---------- Hjelpere ----------
 
+
 def _num(s):
     """Rydd tall: '3 500 000 kr' -> 3500000"""
     if s is None:
@@ -46,9 +47,9 @@ def _address_from_jsonld(item) -> str | None:
     addr = item.get("address") or {}
     if isinstance(addr, list) and addr:
         addr = addr[0]
-    street   = (addr.get("streetAddress")   or "").strip()
+    street = (addr.get("streetAddress") or "").strip()
     locality = (addr.get("addressLocality") or "").strip()
-    postal   = (addr.get("postalCode")      or "").strip()
+    postal = (addr.get("postalCode") or "").strip()
     if street and postal and locality:
         return f"{street}, {postal} {locality}"
     if street or locality:
@@ -66,6 +67,7 @@ def _clean_address(s: str) -> str:
 
 
 # ---------- Hovedfunksjon ----------
+
 
 def scrape_finn(url: str) -> dict:
     """
@@ -112,7 +114,11 @@ def scrape_finn(url: str) -> dict:
                 for item in items:
                     if isinstance(item.get("image"), str) and not img:
                         img = item["image"]
-                    elif isinstance(item.get("image"), list) and item["image"] and not img:
+                    elif (
+                        isinstance(item.get("image"), list)
+                        and item["image"]
+                        and not img
+                    ):
                         img = item["image"][0]
                     if img:
                         break
@@ -120,7 +126,9 @@ def scrape_finn(url: str) -> dict:
                     break
 
         if not img:
-            gimg = soup.select_one("img[data-testid='gallery-image'], img[src*='images']")
+            gimg = soup.select_one(
+                "img[data-testid='gallery-image'], img[src*='images']"
+            )
             if gimg and gimg.get("src"):
                 img = gimg["src"]
 
@@ -164,7 +172,9 @@ def scrape_finn(url: str) -> dict:
                 offers = item.get("offers") or {}
                 if isinstance(offers, list) and offers:
                     offers = offers[0]
-                price = offers.get("price") or (offers.get("priceSpecification") or {}).get("price")
+                price = offers.get("price") or (
+                    offers.get("priceSpecification") or {}
+                ).get("price")
                 if price and not found_price:
                     n = _num(price)
                     if n:
@@ -182,10 +192,12 @@ def scrape_finn(url: str) -> dict:
         if "address" not in out:
             m = re.search(
                 r"(?:Kart\s+)?((?=[^,]*\d)[A-Za-zÆØÅæøå0-9\.\- ]+),\s*(\d{4})\s+([A-Za-zÆØÅæøå\-\s]+)",
-                text
+                text,
             )
             if m:
-                cand = _clean_address(f"{m.group(1).strip()}, {m.group(2).strip()} {m.group(3).strip()}")
+                cand = _clean_address(
+                    f"{m.group(1).strip()}, {m.group(2).strip()} {m.group(3).strip()}"
+                )
                 if any(ch.isdigit() for ch in cand) and len(cand) <= 80:
                     out["address"] = cand
 
@@ -193,11 +205,15 @@ def scrape_finn(url: str) -> dict:
         # TOTALPRIS / PRISANTYDNING (regex fallback)
         # -----------------------------
         if "total_price" not in out:
-            m = re.search(r"(Totalpris)\s*[:\s]\s*([0-9\s\.\u00A0]+)kr?", text, flags=re.I)
+            m = re.search(
+                r"(Totalpris)\s*[:\s]\s*([0-9\s\.\u00A0]+)kr?", text, flags=re.I
+            )
             if m:
                 out["total_price"] = _num(m.group(2))
         if "total_price" not in out:
-            m = re.search(r"(Prisantydning)\s*[:\s]\s*([0-9\s\.\u00A0]+)kr?", text, flags=re.I)
+            m = re.search(
+                r"(Prisantydning)\s*[:\s]\s*([0-9\s\.\u00A0]+)kr?", text, flags=re.I
+            )
             if m:
                 out["total_price"] = _num(m.group(2))
 
@@ -207,7 +223,8 @@ def scrape_finn(url: str) -> dict:
         if "hoa_month" not in out:
             m = re.search(
                 r"(Felleskostnader|Felleskost/mnd\.?|Fellesutgifter)\s*[:\s]\s*([0-9\s\.\u00A0]+)kr?",
-                text, flags=re.I
+                text,
+                flags=re.I,
             )
             if m:
                 out["hoa_month"] = _num(m.group(2))

@@ -1,5 +1,6 @@
 import streamlit as st
 
+
 def render_landing():
     # Midtstill alt med kolonner
     left, mid, right = st.columns([1, 2, 1])
@@ -17,7 +18,7 @@ def render_landing():
             # KUN denne knappen midtstilles lokalt
             st.markdown('<div class="center-btn">', unsafe_allow_html=True)
             run = st.form_submit_button("Kjør analyse")
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
         if run:
             url = (url or "").strip()
@@ -26,16 +27,18 @@ def render_landing():
                 return
 
             # klargjør state for resultatsiden
-            st.session_state.update({
-                "listing_url": url,
-                "params": {},
-                "computed": None,
-                "ai_text": "",
-                "_first_compute_done": False,   # ikke auto-kjør
-                "_updating": False,
-                "_queued_params": None,
-                "_scraped_url": None,
-                "_scraped_info": {},
-                "page": "result",
-            })
+            st.session_state.update(
+                {
+                    "listing_url": url,
+                    "params": {},
+                    "computed": None,
+                    "ai_text": "",
+                    "_first_compute_done": False,  # ikke auto-kjør
+                    "_updating": False,
+                    "_queued_params": None,
+                    "_scraped_url": None,
+                    "_scraped_info": {},
+                    "page": "result",
+                }
+            )
             st.rerun()
