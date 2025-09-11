@@ -52,3 +52,5 @@ tzdata==2025.2
 urllib3==2.5.0
 PyYAML==6.0.1
 pyjstat>=2.6.1
+matplotlib>=3.8
+lxml>=5
