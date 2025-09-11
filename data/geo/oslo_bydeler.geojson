@@ -1,0 +1,104 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Oslo sentrum"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.680,
+                            59.890
+                        ],
+                        [
+                            10.780,
+                            59.890
+                        ],
+                        [
+                            10.780,
+                            59.940
+                        ],
+                        [
+                            10.680,
+                            59.940
+                        ],
+                        [
+                            10.680,
+                            59.890
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Oslo vest"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.550,
+                            59.850
+                        ],
+                        [
+                            10.680,
+                            59.850
+                        ],
+                        [
+                            10.680,
+                            59.970
+                        ],
+                        [
+                            10.550,
+                            59.970
+                        ],
+                        [
+                            10.550,
+                            59.850
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Oslo øst"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.780,
+                            59.850
+                        ],
+                        [
+                            10.950,
+                            59.850
+                        ],
+                        [
+                            10.950,
+                            60.000
+                        ],
+                        [
+                            10.780,
+                            60.000
+                        ],
+                        [
+                            10.780,
+                            59.850
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}

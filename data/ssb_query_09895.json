@@ -1,0 +1,55 @@
+{
+    "query": [
+        {
+            "code": "Soner2",
+            "selection": {
+                "filter": "item",
+                "values": [
+                    "00",
+                    "01",
+                    "02",
+                    "03",
+                    "04",
+                    "05",
+                    "20",
+                    "21",
+                    "22"
+                ]
+            }
+        },
+        {
+            "code": "Rom",
+            "selection": {
+                "filter": "item",
+                "values": [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5+"
+                ]
+            }
+        },
+        {
+            "code": "ContentsCode",
+            "selection": {
+                "filter": "item",
+                "values": [
+                    "Husleiear"
+                ]
+            }
+        },
+        {
+            "code": "Tid",
+            "selection": {
+                "filter": "item",
+                "values": [
+                    "2024"
+                ]
+            }
+        }
+    ],
+    "response": {
+        "format": "json-stat2"
+    }
+}

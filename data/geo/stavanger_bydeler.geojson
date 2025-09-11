@@ -1,0 +1,104 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Stavanger sentrum"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.710,
+                            58.950
+                        ],
+                        [
+                            5.820,
+                            58.950
+                        ],
+                        [
+                            5.820,
+                            59.000
+                        ],
+                        [
+                            5.710,
+                            59.000
+                        ],
+                        [
+                            5.710,
+                            58.950
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Stavanger vest"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.550,
+                            58.900
+                        ],
+                        [
+                            5.710,
+                            58.900
+                        ],
+                        [
+                            5.710,
+                            59.050
+                        ],
+                        [
+                            5.550,
+                            59.050
+                        ],
+                        [
+                            5.550,
+                            58.900
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Stavanger øst"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            5.820,
+                            58.900
+                        ],
+                        [
+                            5.950,
+                            58.900
+                        ],
+                        [
+                            5.950,
+                            59.050
+                        ],
+                        [
+                            5.820,
+                            59.050
+                        ],
+                        [
+                            5.820,
+                            58.900
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}

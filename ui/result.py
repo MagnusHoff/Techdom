@@ -109,7 +109,7 @@ def render_result() -> None:
                 min_value=0,
                 step=500,
                 value=int(params["rent"]),
-                help="Estimert månedlig husleie før kostnader.",
+                help="Estimert månedlig husleie før kostnader. Foreløpig kun støttet for Bergen og Oslo",
             )
             params["hoa"] = st.number_input(
                 "Felleskost. (kr/mnd)",

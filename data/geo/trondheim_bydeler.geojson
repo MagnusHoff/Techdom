@@ -1,0 +1,104 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Trondheim sentrum"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.350,
+                            63.410
+                        ],
+                        [
+                            10.450,
+                            63.410
+                        ],
+                        [
+                            10.450,
+                            63.440
+                        ],
+                        [
+                            10.350,
+                            63.440
+                        ],
+                        [
+                            10.350,
+                            63.410
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Trondheim vest"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.150,
+                            63.360
+                        ],
+                        [
+                            10.350,
+                            63.360
+                        ],
+                        [
+                            10.350,
+                            63.480
+                        ],
+                        [
+                            10.150,
+                            63.480
+                        ],
+                        [
+                            10.150,
+                            63.360
+                        ]
+                    ]
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "name": "Trondheim øst"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [
+                            10.450,
+                            63.360
+                        ],
+                        [
+                            10.650,
+                            63.360
+                        ],
+                        [
+                            10.650,
+                            63.480
+                        ],
+                        [
+                            10.450,
+                            63.480
+                        ],
+                        [
+                            10.450,
+                            63.360
+                        ]
+                    ]
+                ]
+            }
+        }
+    ]
+}
