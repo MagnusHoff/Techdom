@@ -1,4 +1,5 @@
 import streamlit as st
+from ui.recent import render_recent_analyses
 
 
 def render_landing():
@@ -14,11 +15,13 @@ def render_landing():
                 placeholder="www.finn.no",
                 label_visibility="collapsed",
             )
-
-            # KUN denne knappen midtstilles lokalt
             st.markdown('<div class="center-btn">', unsafe_allow_html=True)
             run = st.form_submit_button("Kjør analyse")
             st.markdown("</div>", unsafe_allow_html=True)
+
+        # ⬇️ Vis de 6 siste analysene + DEV-knapp
+        st.divider()
+        render_recent_analyses(6)
 
         if run:
             url = (url or "").strip()

@@ -7,6 +7,7 @@ from core.compute import compute_metrics
 from core.ai import ai_explain
 from core.rates import get_interest_estimate
 from core.rent import get_rent_by_csv
+from core.history import add_analysis  # ⬅️ NYTT
 
 
 def _strip_house_number(addr: str) -> str:
@@ -40,6 +41,7 @@ def render_result() -> None:
     # --- Init flagg ---
     st.session_state.setdefault("_first_compute_done", False)
     st.session_state.setdefault("_updating", False)
+    st.session_state.setdefault("_history_logged", False)  # ⬅️ NYTT
 
     # --- Scrape ved ny URL + init params ---
     if st.session_state.get("_scraped_url") != url:
@@ -49,6 +51,7 @@ def render_result() -> None:
         st.session_state["computed"] = None
         st.session_state["params"] = _init_params_for_new_url(info)
         st.session_state["_first_compute_done"] = False
+        st.session_state["_history_logged"] = False
     else:
         info = st.session_state.get("_scraped_info", {}) or {}
 
@@ -266,12 +269,49 @@ def render_result() -> None:
         st.session_state["computed"] = m
         st.session_state["ai_text"] = ai_explain(p, m)
         st.session_state["_updating"] = False
+        st.session_state["_first_compute_done"] = (
+            True  # ⬅️ NYTT: markér at første compute er gjort
+        )
         st.rerun()
 
     # --- Vis beregninger ---
     m = st.session_state.get("computed")
     if not m:
         return
+
+    # --- NYTT: logg én gang når vi har første gyldige resultat ---
+    if not st.session_state.get("_history_logged"):
+        info_now = st.session_state.get("_scraped_info", {}) or {}
+        # Hent felter med fornuftige fallbacks
+        title = info_now.get("title") or (info_now.get("address") or "Uten tittel")
+        address_for_log = info_now.get("address") or ""
+        price_for_log = int(info_now.get("total_price") or 0) or int(
+            st.session_state["params"].get("price") or 0
+        )
+        summary = (st.session_state.get("ai_text") or "")[:200]
+
+    # --- NYTT: logg én gang når vi har første gyldige resultat ---
+    if not st.session_state.get("_history_logged"):
+        info_now = st.session_state.get("_scraped_info", {}) or {}
+
+        title = (
+            info_now.get("address") or ""
+        ).strip() or "Uten tittel"  # kun tittel = adresse
+        price_for_log = int(info_now.get("total_price") or 0) or int(
+            st.session_state["params"].get("price") or 0
+        )
+        summary = (st.session_state.get("ai_text") or "")[:200]
+        image_url = info_now.get("image")  # <- bilde fra annonsen
+
+        add_analysis(
+            finn_url=url,
+            title=title,
+            price=price_for_log if price_for_log > 0 else None,
+            summary=summary,
+            image=image_url,
+            result_args={"id": ""},  # ev. intern id dersom du har
+        )
+        st.session_state["_history_logged"] = True
 
     a, b, c = st.columns(3)
     with a:
