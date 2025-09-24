@@ -12,3 +12,5 @@ tqdm>=4.66,<5
 PyYAML>=6.0,<7
 python-dotenv>=1.0
 PyPDF2>=3.0.1
+pypdf>=4.0.0
+playwright==1.46.0
