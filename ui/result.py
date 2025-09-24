@@ -152,6 +152,7 @@ def render_result() -> None:
     st.session_state.setdefault("_fetching", False)  # for "Hent data"
     st.session_state.setdefault("_history_logged", False)
     st.session_state.setdefault("prospectus_ai", {})
+    st.session_state.setdefault("show_details_modal", False)
 
     # En felles "busy"-flag for å låse inputs/knapper
     busy = bool(st.session_state.get("_updating") or st.session_state.get("_fetching"))
@@ -170,10 +171,71 @@ def render_result() -> None:
 
     params = cast(Dict[str, Any], st.session_state["params"])
 
-    # --- Tittel ---
+    # --- Tittel + tre små lenkeknapper på samme linje ---
     address = _as_str(info.get("address")).strip()
-    if address:
-        st.subheader(address)
+
+    # Felles stil for chip-lenker (alle tre helt like)
+    st.markdown(
+        """
+        <style>
+          /* Hele gruppen – én flex-rad vi kontrollerer selv */
+          #hdr_chips { display:flex; justify-content:flex-end; }
+
+          /* Helt inntil hverandre (endre gap her hvis du vil ha 1–2px luft) */
+          #hdr_chips_row { display:flex; gap:5px; align-items:center; }
+
+          /* Selve chippen */
+          a.chip, span.chip {
+            display:inline-flex; align-items:center; justify-content:center;
+            padding:7px 16px;                 /* størrelse */
+            font-size:14px; font-weight:600;  /* tekst */
+            line-height:1;
+            color:#E7ECFF !important;
+            text-decoration:none !important;
+            white-space:nowrap;
+            background:transparent;
+            border:1px solid rgba(255,255,255,.35);
+            border-radius:8px;
+          }
+          a.chip:hover { background:rgba(255,255,255,.06); }
+          .chip.disabled { opacity:.55; pointer-events:none; cursor:default; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Venstre: adresse. Høyre: tre chips i én rad
+    hdr_left, hdr_right = st.columns([0.68, 0.32], gap="small")
+    with hdr_left:
+        if address:
+            st.subheader(address)
+
+    with hdr_right:
+        pdf_url = _as_str(st.session_state.get("prospectus_pdf_url")) or None
+        listing_url = url.strip() or None
+
+        chips = []
+        if pdf_url:
+            chips.append(
+                f'<a class="chip" href="{pdf_url}" target="_blank" rel="noopener">Salgsoppgave</a>'
+            )
+        else:
+            chips.append('<span class="chip disabled">Salgsoppgave</span>')
+
+        if listing_url:
+            chips.append(
+                f'<a class="chip" href="{listing_url}" target="_blank" rel="noopener">Annonse</a>'
+            )
+        else:
+            chips.append('<span class="chip disabled">Annonse</span>')
+
+        # Alltid grå ut "Alle detaljer" (ikke klikkbar)
+        chips.append('<span class="chip disabled">Alle detaljer</span>')
+
+        st.markdown(
+            f'<div id="hdr_chips"><div id="hdr_chips_row">{"".join(chips)}</div></div>',
+            unsafe_allow_html=True,
+        )
 
     # --- Layout ---
     left, right = st.columns([6, 6], gap="large")
@@ -186,6 +248,7 @@ def render_result() -> None:
 
     # ---------- HØYRE ----------
     with right:
+        # --- Parametere (inputfeltene) ---
         st.markdown("**Parametre**")
         c1, c2 = st.columns(2)
 
@@ -569,8 +632,8 @@ def render_result() -> None:
 
         st.subheader("🧠 AI-analyse (tall)")
 
-        m = cast(Dict[str, Any], st.session_state.get("computed") or {})
-        p = cast(Dict[str, Any], st.session_state.get("params") or {})
+        m_now = cast(Dict[str, Any], st.session_state.get("computed") or {})
+        p_now = cast(Dict[str, Any], st.session_state.get("params") or {})
 
         def kr(x: Any) -> str:
             try:
@@ -588,10 +651,10 @@ def render_result() -> None:
             st.markdown("**📑 Kjøp & finansiering**")
             st.markdown(
                 f"""
-                • **Kjøpesum:** {kr(p.get("price", 0))}  
-                • **Egenkapital (EK):** {kr(p.get("equity", 0))}  
-                • **Rente:** {pct(p.get("interest", 0))}  
-                • **Lånetid:** {_as_int(p.get("term_years", 0))} år
+                • **Kjøpesum:** {kr(p_now.get("price", 0))}  
+                • **Egenkapital (EK):** {kr(p_now.get("equity", 0))}  
+                • **Rente:** {pct(p_now.get("interest", 0))}  
+                • **Lånetid:** {_as_int(p_now.get("term_years", 0))} år
                 """
             )
 
@@ -599,23 +662,23 @@ def render_result() -> None:
             st.markdown("**📊 Leieinntekter & kostnader**")
             st.markdown(
                 f"""
-                • **Leieinntekt (brutto):** {kr(p.get("rent", 0))} / mnd  
-                • **Felleskostnader:** {kr(p.get("hoa", 0))} / mnd  
-                • **Vedlikehold:** {pct(p.get("maint_pct", 0))} av leie  
-                • **Andre kostnader:** {kr(p.get("other_costs", 0))} / mnd
+                • **Leieinntekt (brutto):** {kr(p_now.get("rent", 0))} / mnd  
+                • **Felleskostnader:** {kr(p_now.get("hoa", 0))} / mnd  
+                • **Vedlikehold:** {pct(p_now.get("maint_pct", 0))} av leie  
+                • **Andre kostnader:** {kr(p_now.get("other_costs", 0))} / mnd
                 """
             )
 
         with st.container(border=True):
             st.markdown("**💰 Kontantstrøm & avkastning**")
-            if m:
+            if m_now:
                 st.markdown(
                     f"""
-                    • **Cashflow (mnd):** {kr(m.get("cashflow", 0))}  
-                    • **Break-even (mnd):** {kr(m.get("break_even", 0))}  
-                    • **NOI (år):** {kr(m.get("noi_year", 0))}  
-                    • **Lånebetaling (mnd):** {kr(m.get("m_payment", 0))}  
-                    • **ROE:** {pct(m.get("total_equity_return_pct", 0))}
+                    • **Cashflow (mnd):** {kr(m_now.get("cashflow", 0))}  
+                    • **Break-even (mnd):** {kr(m_now.get("break_even", 0))}  
+                    • **NOI (år):** {kr(m_now.get("noi_year", 0))}  
+                    • **Lånebetaling (mnd):** {kr(m_now.get("m_payment", 0))}  
+                    • **ROE:** {pct(m_now.get("total_equity_return_pct", 0))}
                     """
                 )
             else:

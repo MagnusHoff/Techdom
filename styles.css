@@ -7,9 +7,9 @@
 }
 
 /* Primary buttons everywhere (normal buttons and form submit) */
-.stButton > button,
+.stButton>button,
 .stForm button[kind="primary"],
-.stForm div.stButton > button {
+.stForm div.stButton>button {
   background: linear-gradient(180deg, var(--td-blue-2) 0%, var(--td-blue) 90%);
   color: #fff !important;
   border: 1px solid var(--td-blue-3) !important;
@@ -19,22 +19,24 @@
   transition: transform .06s ease, filter .15s ease, box-shadow .15s ease;
 }
 
-.stButton > button:hover,
+.stButton>button:hover,
 .stForm button[kind="primary"]:hover,
-.stForm div.stButton > button:hover {
+.stForm div.stButton>button:hover {
   filter: brightness(1.07);
   box-shadow: 0 10px 26px rgba(13, 42, 122, .45);
   transform: translateY(-1px);
 }
 
-.stButton > button:active,
+.stButton>button:active,
 .stForm button[kind="primary"]:active,
-.stForm div.stButton > button:active {
+.stForm div.stButton>button:active {
   transform: translateY(0);
 }
 
 /* Inputs: darker blue outline instead of grey */
-input, textarea, select {
+input,
+textarea,
+select {
   border-color: rgba(13, 42, 122, 0.55) !important;
   box-shadow: none !important;
 }
@@ -45,28 +47,33 @@ div[data-testid="stStatusWidget"] {
 }
 
 /* Gjør landing-knappen mer kompakt og midtstilt */
-.stForm .stButton { 
-  display: flex; 
-  justify-content: center; 
+.stForm .stButton {
+  display: flex;
+  justify-content: center;
 }
 
-.stForm .stButton > button {
-  padding: .55rem 1.05rem !important;   /* mer kompakt */
-  min-width: 200px;                     /* passe bredde */
+.stForm .stButton>button {
+  padding: .55rem 1.05rem !important;
+  /* mer kompakt */
+  min-width: 200px;
+  /* passe bredde */
 }
 
 /* --- Midtstill hele FINN-skjemaet på landingssiden --- */
 .landing-wrap {
-  max-width: 900px;           /* bredde på "kortet" */
-  margin: 0 auto;             /* midtstill */
+  max-width: 900px;
+  /* bredde på "kortet" */
+  margin: 0 auto;
+  /* midtstill */
 }
 
 /* Midtstill & kompakt knapp inni landingsskjemaet (samme glossy stil beholdes) */
-.center-btn .stButton { 
-  display: flex; 
-  justify-content: center; 
+.center-btn .stButton {
+  display: flex;
+  justify-content: center;
 }
-.center-btn .stButton > button {
+
+.center-btn .stButton>button {
   padding: .55rem 1.05rem !important;
   min-width: 200px;
 }
@@ -75,23 +82,32 @@ div[data-testid="stStatusWidget"] {
 /* Pakk knappen i .analyze-btn i Python (se under) */
 .analyze-btn button[disabled] {
   position: relative;
-  padding-left: 2.0rem !important;   /* plass til spinner */
+  padding-left: 2.0rem !important;
+  /* plass til spinner */
 }
+
 .analyze-btn button[disabled]::before {
   content: "";
   position: absolute;
-  left: 14px; top: 50%;
-  width: 16px; height: 16px;
+  left: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
   margin-top: -8px;
-  border: 2px solid rgba(255,255,255,.45);
+  border: 2px solid rgba(255, 255, 255, .45);
   border-top-color: #fff;
   border-radius: 50%;
   animation: td-spin .9s linear infinite;
 }
-@keyframes td-spin { to { transform: rotate(360deg); } }
+
+@keyframes td-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /* Knappestil som også treffer form-knapper */
-.stButton > button,
+.stButton>button,
 .stForm button {
   background: linear-gradient(180deg, #0d2a7a 0%, #0b1f55 90%) !important;
   color: #fff !important;
@@ -101,7 +117,8 @@ div[data-testid="stStatusWidget"] {
   box-shadow: 0 6px 18px rgba(13, 42, 122, .35) !important;
   transition: transform .06s ease, filter .15s ease, box-shadow .15s ease !important;
 }
-.stButton > button:hover,
+
+.stButton>button:hover,
 .stForm button:hover {
   filter: brightness(1.07) !important;
   box-shadow: 0 10px 26px rgba(13, 42, 122, .45) !important;
@@ -109,11 +126,12 @@ div[data-testid="stStatusWidget"] {
 }
 
 /* Midtstill og komprimer kun landing-knappen */
-.center-btn .stButton { 
-  display: flex; 
-  justify-content: center; 
+.center-btn .stButton {
+  display: flex;
+  justify-content: center;
 }
-.center-btn .stButton > button {
+
+.center-btn .stButton>button {
   padding: .55rem 1.05rem !important;
   min-width: 200px;
 }
@@ -123,15 +141,46 @@ div[data-testid="stStatusWidget"] {
   position: relative;
   padding-left: 2.0rem !important;
 }
+
 .analyze-btn button[disabled]::before {
   content: "";
   position: absolute;
-  left: 14px; top: 50%;
-  width: 16px; height: 16px;
+  left: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
   margin-top: -8px;
-  border: 2px solid rgba(255,255,255,.45);
+  border: 2px solid rgba(255, 255, 255, .45);
   border-top-color: #fff;
   border-radius: 50%;
   animation: td-spin .9s linear infinite;
 }
-@keyframes td-spin { to { transform: rotate(360deg); } }
+
+@keyframes td-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Sørg for at button ser helt lik ut som a og span */
+button.chip {
+  appearance: none;
+  /* fjern browser default */
+  -webkit-appearance: none;
+  /* Safari fix */
+  border-radius: 8px !important;
+  /* samme som de andre */
+  font-family: inherit !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+  color: #E7ECFF !important;
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, .35) !important;
+  padding: 7px 16px !important;
+  cursor: pointer;
+}
+
+button.chip:hover {
+  background: rgba(255, 255, 255, .06) !important;
+}
