@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import io
 import html
-from typing import Any, Dict, Optional, List, Tuple, Union, cast
+from typing import Any, Dict, Optional, List, cast
 
 import streamlit as st
 
@@ -148,9 +148,13 @@ def render_result() -> None:
 
     # --- Init flags/state ---
     st.session_state.setdefault("_first_compute_done", False)
-    st.session_state.setdefault("_updating", False)
+    st.session_state.setdefault("_updating", False)  # for "Kjør analyse"
+    st.session_state.setdefault("_fetching", False)  # for "Hent data"
     st.session_state.setdefault("_history_logged", False)
     st.session_state.setdefault("prospectus_ai", {})
+
+    # En felles "busy"-flag for å låse inputs/knapper
+    busy = bool(st.session_state.get("_updating") or st.session_state.get("_fetching"))
 
     # --- Scrape ved ny URL + init params ---
     if st.session_state.get("_scraped_url") != url:
@@ -192,6 +196,7 @@ def render_result() -> None:
                 step=50_000,
                 value=_as_int(params.get("price"), 0),
                 help="Sum kjøpesum inkl. omkostninger fra annonsen.",
+                disabled=busy,
             )
             params["equity"] = st.number_input(
                 "Egenkapital (kr)",
@@ -199,6 +204,7 @@ def render_result() -> None:
                 step=10_000,
                 value=_as_int(params.get("equity"), 0),
                 help="Kontanter/egenkapital du legger inn i kjøpet.",
+                disabled=busy,
             )
             params["interest"] = st.number_input(
                 "Rente (% p.a.)",
@@ -206,6 +212,7 @@ def render_result() -> None:
                 step=0.1,
                 value=_as_float(params.get("interest"), 0.0),
                 help="Nominell årlig rente brukt i låneberegningen.",
+                disabled=busy,
             )
             params["term_years"] = st.number_input(
                 "Lånetid (år)",
@@ -214,6 +221,7 @@ def render_result() -> None:
                 step=1,
                 value=_as_int(params.get("term_years"), 30),
                 help="Nedbetalingstid for annuitetslånet (år).",
+                disabled=busy,
             )
 
         with c2:
@@ -223,6 +231,7 @@ def render_result() -> None:
                 step=500,
                 value=_as_int(params.get("rent"), 0),
                 help="Estimert månedlig husleie før kostnader (foreløpig Oslo/Bergen).",
+                disabled=busy,
             )
             params["hoa"] = st.number_input(
                 "Felleskost. (kr/mnd)",
@@ -230,6 +239,7 @@ def render_result() -> None:
                 step=100,
                 value=_as_int(params.get("hoa"), 0),
                 help="Månedlige felleskostnader (TV/internett inkludert hvis oppgitt).",
+                disabled=busy,
             )
             params["maint_pct"] = st.number_input(
                 "Vedlikehold (% av leie)",
@@ -237,6 +247,7 @@ def render_result() -> None:
                 step=0.5,
                 value=_as_float(params.get("maint_pct"), 0.0),
                 help="Avsatt vedlikehold i prosent av brutto leie.",
+                disabled=busy,
             )
             params["other_costs"] = st.number_input(
                 "Andre kostn. (kr/mnd)",
@@ -244,45 +255,45 @@ def render_result() -> None:
                 step=100,
                 value=_as_int(params.get("other_costs"), 0),
                 help="Andre månedlige driftskostnader (strøm, forsikring, mv.).",
+                disabled=busy,
             )
 
-        # --- Bunn-knapper: analyse / hent data / infoboble ---
-        # Spinner-overlay som ikke påvirker layout
+        # --- Felles CSS for liten spinner (står ved siden av "Hent data") ---
         st.markdown(
             """
-        <style>
-          /* overlay-holder tar ingen plass (height:0), spinner legges absolutt over knappen */
-          .spin-overlay { position: relative; height: 0; }
-          .spin-overlay::after {
-            content: "";
-            position: absolute;
-            top: 50%;              /* midt i høyden */
-            right: 12px;           /* avstand fra høyrekanten */
-            transform: translateY(-50%);  /* flytt opp halvparten av egen høyde */
-            width: 16px; height: 16px;
-            border: 2px solid rgba(255,255,255,.35);
-            border-top-color: #fff;
-            border-radius: 50%;
-            animation: spn .8s linear infinite;
-            pointer-events: none;
-          }
-          @keyframes spn { to { transform: rotate(360deg); } }
-        </style>
-        """,
+            <style>
+              .btn-spin {
+                width: 16px; height: 16px; margin-left: 10px;
+                border: 2px solid rgba(255,255,255,.35);
+                border-top-color: #fff; border-radius: 50%;
+                animation: tdspn .8s linear infinite;
+                display: inline-block;
+                vertical-align: middle;
+              }
+              @keyframes tdspn { to { transform: rotate(360deg); } }
+            </style>
+            """,
             unsafe_allow_html=True,
         )
 
+        # 'busy' = noe kjører (henting eller analyse). Brukes for å disable inputs/knapper og vise spinneren.
+        busy = bool(st.session_state.get("_fetching")) or bool(
+            st.session_state.get("_updating")
+        )
+
+        # --- Bunn-knapper: analyse / hent data / infoboble ---
         k1, k2, k3 = st.columns([6, 3, 1], gap="small")
 
+        # ---------------- K1: KJØR ANALYSE ----------------
         with k1:
-            if st.session_state.get("_updating", False):
-                st.button("Kjører analyse …", disabled=True, use_container_width=True)
-            else:
-                if st.button("Kjør analyse", use_container_width=True):
-                    st.session_state["_updating"] = True
-                    st.session_state["_queued_params"] = dict(params)
-                    st.rerun()
+            updating = bool(st.session_state.get("_updating"))
+            label = "Kjører analyse …" if updating else "Kjør analyse"
+            if st.button(label, use_container_width=True, disabled=busy):
+                st.session_state["_updating"] = True
+                st.session_state["_queued_params"] = dict(params)
+                st.rerun()
 
+        # ---------------- K2: HENT DATA (én spinner vises her når busy) ----------------
         with k2:
             # Nullstill lagret PDF/AI når FINN-url endres
             current_url = url.strip()
@@ -297,30 +308,25 @@ def render_result() -> None:
                     st.session_state.pop(key, None)
                 st.session_state["prospectus_source_url"] = current_url
 
-            # State for henting
-            fetching = bool(st.session_state.get("_fetching", False))
-            btn_label = "Hent data" if not fetching else "Henter …"
+            col_btn, col_spin = st.columns([1, 0.1])
+            with col_btn:
+                fetching = bool(st.session_state.get("_fetching"))
+                fetch_label = "Henter …" if fetching else "Hent data"
+                if st.button(
+                    fetch_label,
+                    use_container_width=True,
+                    key="fetch_btn",
+                    disabled=busy,
+                ):
+                    st.session_state["_fetching"] = True
+                    st.rerun()
 
-            # Selve knappen
-            pressed = st.button(
-                btn_label, use_container_width=True, key="fetch_btn", disabled=fetching
-            )
+            with col_spin:
+                if busy:
+                    st.markdown('<div class="btn-spin"></div>', unsafe_allow_html=True)
 
-            # Spinner-overlay: vis kun når fetching = True (legges "over" knappen uten å flytte noe)
-            spin_slot = st.empty()
-            if fetching:
-                spin_slot.markdown(
-                    '<div class="spin-overlay"></div>', unsafe_allow_html=True
-                )
-            else:
-                spin_slot.empty()
-
-            if pressed and not fetching:
-                st.session_state["_fetching"] = True
-                st.rerun()  # re-render med "Henter …" + spinner
-
-            # Når _fetching er True, gjør jobben og slå den av igjen
-            if fetching:
+            # Gjør jobben når _fetching = True
+            if st.session_state.get("_fetching"):
                 try:
                     # 1) Tall fra FINN
                     price_from_finn = _as_int(info.get("total_price"), 0)
@@ -377,7 +383,7 @@ def render_result() -> None:
 
                     # 5) Hent TR eller scrape automatisk
                     pdf_bytes, pdf_url, pdf_dbg = get_tr_or_scrape(current_url)
-                    st.session_state["prospectus_debug"] = pdf_dbg  # debug i expander
+                    st.session_state["prospectus_debug"] = pdf_dbg
 
                     if pdf_bytes:
                         st.session_state["prospectus_pdf_bytes"] = pdf_bytes
@@ -394,7 +400,8 @@ def render_result() -> None:
                         else:
                             st.session_state.pop("prospectus_ai", None)
                             st.caption(
-                                "Klarte ikke å hente tekst fra PDF-en (kan være skannet). Last opp en tekst-PDF manuelt."
+                                "Klarte ikke å hente tekst fra PDF-en (kan være skannet). "
+                                "Last opp en tekst-PDF manuelt."
                             )
                     else:
                         for key in (
@@ -407,7 +414,7 @@ def render_result() -> None:
                             "Fant ikke PDF automatisk – du kan laste opp PDF manuelt under."
                         )
 
-                    # 6) Oppdater felter og rerun
+                    # 6) Oppdater felter
                     params["price"] = price_from_finn
                     params["equity"] = equity_from_price
                     params["rent"] = rent_suggestion
@@ -417,37 +424,37 @@ def render_result() -> None:
                     st.session_state["_fetching"] = False
                     st.rerun()
 
+        # ---------------- K3: Info-ikon ----------------
         with k3:
-            # Lite info-ikon
             st.markdown(
                 """
-        <style>
-          .td-info { position: relative; display:flex; justify-content:flex-end; height:28px; margin-top:6px; }
-          .td-info .ic { width:18px; height:18px; opacity:.85; cursor:help; }
-          .td-info .tip {
-            display:none; position:absolute; bottom:28px; right:0; background:#111; color:#fff;
-            padding:10px 12px; border-radius:6px; font-size:13px; line-height:1.45;
-            white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.3); z-index:9999; width:420px; text-align:left;
-          }
-          .td-info:hover .tip { display:block; }
-        </style>
-        <div class="td-info">
-          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-               aria-hidden="true" focusable="false">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="16" x2="12" y2="12"></line>
-            <line x1="12" y1="8"  x2="12.01" y2="8"></line>
-          </svg>
-          <div class="tip">
-            Henter fra FINN-annonsen:<br>
-            • Kjøpesum og felleskostnader<br>
-            • Egenkapital = 15 % av kjøpesum<br>
-            • Brutto leie fra CSV/Geo (kr/m² × BRA)<br>
-            • Rente (DNB hvis mulig, ellers styringsrente + margin)
-          </div>
-        </div>
-        """,
+                <style>
+                  .td-info { position: relative; display:flex; justify-content:flex-end; height:28px; margin-top:6px; }
+                  .td-info .ic { width:18px; height:18px; opacity:.85; cursor:help; }
+                  .td-info .tip {
+                    display:none; position:absolute; bottom:28px; right:0; background:#111; color:#fff;
+                    padding:10px 12px; border-radius:6px; font-size:13px; line-height:1.45;
+                    white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.3); z-index:9999; width:420px; text-align:left;
+                  }
+                  .td-info:hover .tip { display:block; }
+                </style>
+                <div class="td-info">
+                  <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                       aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8"  x2="12.01" y2="8"></line>
+                  </svg>
+                  <div class="tip">
+                    Henter fra FINN-annonsen:<br>
+                    • Kjøpesum og felleskostnader<br>
+                    • Egenkapital = 15 % av kjøpesum<br>
+                    • Brutto leie fra CSV/Geo (kr/m² × BRA)<br>
+                    • Rente (DNB hvis mulig, ellers styringsrente + margin)
+                  </div>
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
 
@@ -515,48 +522,42 @@ def render_result() -> None:
     # Global CSS for AI-seksjonene (separate hooks + egne klasser)
     st.markdown(
         """
-    <style>
-      /* ===== Hooks du kan justere fritt ===== */
-      #ai-metrics     { margin-top: 0px; }    /* venstre seksjon */
-      #ai-prospectus  { margin-top: 0px; }    /* høyre seksjon  */
+        <style>
+          /* ===== Hooks du kan justere fritt ===== */
+          #ai-metrics     { margin-top: 0px; }    /* venstre seksjon */
+          #ai-prospectus  { margin-top: 0px; }    /* høyre seksjon  */
 
-      /* ===== Venstre analyse (tall) – egne klasser ===== */
-      .aiL-grid{
-        display:grid;grid-template-columns:1fr;
-        gap:12px;margin-top:16px;align-items:stretch;
-      }
-      .aiL-card{
-        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
-        border:1px solid rgba(255,255,255,.12);
-        border-radius:14px;padding:14px 16px;width:100%;
-        display:flex;flex-direction:column;gap:6px;
-      }
-      .aiL-title{font-weight:700;font-size:16px;margin:0 0 4px 0}
-      .aiL-subtle{opacity:.85;font-size:13px}
+          /* ===== Venstre analyse (tall) – egne klasser ===== */
+          .aiL-grid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:16px; align-items:stretch; }
+          .aiL-card{
+            background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
+            border:1px solid rgba(255,255,255,.12);
+            border-radius:14px; padding:14px 16px; width:100%;
+            display:flex; flex-direction:column; gap:6px;
+          }
+          .aiL-title{ font-weight:700; font-size:16px; margin:0 0 4px 0 }
+          .aiL-subtle{ opacity:.85; font-size:13px }
 
-      /* ===== Høyre analyse (tilstandsrapport) – egne klasser ===== */
-      .aiR-grid{
-        display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
-        gap:16px;margin-top:16px;align-items:stretch;
-      }
-      @media (max-width:1000px){ .aiR-grid{grid-template-columns:1fr} }
-      .aiR-cell{min-height:100%;display:flex}
-      .aiR-card{
-        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
-        border:1px solid rgba(255,255,255,.12);
-        border-radius:14px;padding:16px 18px;width:100%;
-        display:flex;flex-direction:column;gap:8px;
-      }
-      .aiR-title{display:flex;align-items:center;gap:10px;margin:0 0 4px 0;font-weight:700;font-size:16px}
-      .aiR-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 8px;border-radius:999px;background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35)}
-      .aiR-badge.warn{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35)}
-      .aiR-badge.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
-      .aiR-list{margin:0;padding-left:1.15rem}
-      .aiR-list li{margin:.18rem 0}
-      .aiR-subtle{opacity:.85;font-size:13px}
-      .aiR-span2{grid-column:1 / -1}
-    </style>
-    """,
+          /* ===== Høyre analyse (tilstandsrapport) – egne klasser ===== */
+          .aiR-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:16px; align-items:stretch; }
+          @media (max-width:1000px){ .aiR-grid{ grid-template-columns:1fr } }
+          .aiR-cell{ min-height:100%; display:flex }
+          .aiR-card{
+            background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
+            border:1px solid rgba(255,255,255,.12);
+            border-radius:14px; padding:16px 18px; width:100%;
+            display:flex; flex-direction:column; gap:8px;
+          }
+          .aiR-title{ display:flex; align-items:center; gap:10px; margin:0 0 4px 0; font-weight:700; font-size:16px }
+          .aiR-badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:4px 8px; border-radius:999px; background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.35) }
+          .aiR-badge.warn{ background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.35) }
+          .aiR-badge.danger{ background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.35) }
+          .aiR-list{ margin:0; padding-left:1.15rem }
+          .aiR-list li{ margin:.18rem 0 }
+          .aiR-subtle{ opacity:.85; font-size:13px }
+          .aiR-span2{ grid-column:1 / -1 }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -587,22 +588,22 @@ def render_result() -> None:
             st.markdown("**📑 Kjøp & finansiering**")
             st.markdown(
                 f"""
-        • **Kjøpesum:** {kr(p.get("price", 0))}  
-        • **Egenkapital (EK):** {kr(p.get("equity", 0))}  
-        • **Rente:** {pct(p.get("interest", 0))}  
-        • **Lånetid:** {_as_int(p.get("term_years", 0))} år
-        """
+                • **Kjøpesum:** {kr(p.get("price", 0))}  
+                • **Egenkapital (EK):** {kr(p.get("equity", 0))}  
+                • **Rente:** {pct(p.get("interest", 0))}  
+                • **Lånetid:** {_as_int(p.get("term_years", 0))} år
+                """
             )
 
         with st.container(border=True):
             st.markdown("**📊 Leieinntekter & kostnader**")
             st.markdown(
                 f"""
-        • **Leieinntekt (brutto):** {kr(p.get("rent", 0))} / mnd  
-        • **Felleskostnader:** {kr(p.get("hoa", 0))} / mnd  
-        • **Vedlikehold:** {pct(p.get("maint_pct", 0))} av leie  
-        • **Andre kostnader:** {kr(p.get("other_costs", 0))} / mnd
-        """
+                • **Leieinntekt (brutto):** {kr(p.get("rent", 0))} / mnd  
+                • **Felleskostnader:** {kr(p.get("hoa", 0))} / mnd  
+                • **Vedlikehold:** {pct(p.get("maint_pct", 0))} av leie  
+                • **Andre kostnader:** {kr(p.get("other_costs", 0))} / mnd
+                """
             )
 
         with st.container(border=True):
@@ -610,12 +611,12 @@ def render_result() -> None:
             if m:
                 st.markdown(
                     f"""
-          • **Cashflow (mnd):** {kr(m.get("cashflow", 0))}  
-          • **Break-even (mnd):** {kr(m.get("break_even", 0))}  
-          • **NOI (år):** {kr(m.get("noi_year", 0))}  
-          • **Lånebetaling (mnd):** {kr(m.get("m_payment", 0))}  
-          • **ROE:** {pct(m.get("total_equity_return_pct", 0))}
-          """
+                    • **Cashflow (mnd):** {kr(m.get("cashflow", 0))}  
+                    • **Break-even (mnd):** {kr(m.get("break_even", 0))}  
+                    • **NOI (år):** {kr(m.get("noi_year", 0))}  
+                    • **Lånebetaling (mnd):** {kr(m.get("m_payment", 0))}  
+                    • **ROE:** {pct(m.get("total_equity_return_pct", 0))}
+                    """
                 )
             else:
                 st.caption("Kjør analyse for å fylle inn tallene.")
@@ -668,14 +669,14 @@ def render_result() -> None:
             qs_html = '<div class="aiR-card"><div class="aiR-title">❓ Spørsmål til megler</div><div class="aiR-subtle">Ingen spørsmål generert.</div></div>'
 
         grid_html = f"""
-    <div class="aiR-grid">
-      <div class="aiR-cell">{tg3_html}</div>
-      <div class="aiR-cell">{tiltak_html}</div>
-      <div class="aiR-cell">{tg2_html}</div>
-      <div class="aiR-cell">{watch_html}</div>
-      <div class="aiR-cell aiR-span2">{qs_html}</div>
-    </div>
-    """
+        <div class="aiR-grid">
+          <div class="aiR-cell">{tg3_html}</div>
+          <div class="aiR-cell">{tiltak_html}</div>
+          <div class="aiR-cell">{tg2_html}</div>
+          <div class="aiR-cell">{watch_html}</div>
+          <div class="aiR-cell aiR-span2">{qs_html}</div>
+        </div>
+        """
         st.markdown(grid_html, unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
