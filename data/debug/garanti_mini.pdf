@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="nb">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meglervisning.no</title>
+    <base href="/" />
+    <meta name="author" content="Vitec Megler" />
+    <link rel="stylesheet" href="/dist/vendor.css?v=qvHLFxpoVhH41Hgg5KH1uWi9Td3uMeVxBFEcfPOt2Uw" />
+    
+        <link rel="stylesheet" href="/dist/site.css?v=5hwPYk1dmcp_BEHm5okbx8LhtW294Uj7JZfuFAOWM60" />
+    
+    <link href="/Skins/DEFAULT/DEFAULT.css" rel="stylesheet" type="text/css"></link>
+    
+</head>
+<body>
+    <div class="page">
+        
+<app-root params="history: history, basename: basename"></app-root>
+
+
+
+        <div id="cookieBanner" class="consent-container banner-bottom" tabindex="0">
+            <div class="consent-bar">   
+                <div class="notice"> 
+                    <p class="title" aria-level="1"> Bruk av informasjonskapsler og data </p>
+                    <div class="notice-group"> 
+                        <div class="notice-des"> 
+                            <p>Vi benytter informasjonskapsler</p>
+                            <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#cookiePolicyExplanationModal">
+                                Les mer
+                            </button>
+                        </div>  
+                        <div class="notice-btn-wrapper" >                             
+                            <button class="btn btn-primary" aria-label="Avvis alle" id="rejectBtn">Avvis alle</button>
+                            <button class="btn btn-primary" aria-label="Godta alle" id="acceptBtn">Godta alle</button>
+                        </div> 
+                    </div> 
+                </div> 
+            </div> 
+        </div>
+
+        <div class="modal fade" id="cookiePolicyExplanationModal" tabindex="-1" role="dialog" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Retningslinjer for informasjonskapsler</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Lukk">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        Vi benytter informasjonskapsler
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Lukk</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <footer class="container footer">
+            <div>
+                &copy; 2025 <span data-bind="text: '- Vitec Megler Visningsportal'"></span>
+                 v.1.2.4.3
+                <a href="" id="reopenCookieBanner">Endre valg for informasjonskapsler</a>
+            </div>
+        </footer>
+    </div>
+    <script src="/dist/vendor.js?v=yAnZgKc6kegE_UPnUrvzb-tX0StR4AlV0grJA6RmFYs"></script>
+    
+    <script src="/dist/main.js?v=UzkmiysT80OsIoW0zBGiP7QJ11VstFgnVvRSMkrAWHQ"></script>
+
+</body>
+</html>

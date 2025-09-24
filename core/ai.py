@@ -1,39 +1,74 @@
-# ai.py
-import os, streamlit as st
-from openai import OpenAI
-import re, os
+# core/ai.py
+from __future__ import annotations
+
+import os
+import re
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, TypedDict, Optional
+
+import streamlit as st
+from openai import OpenAI
 
 
-def _local_explain(inputs, m):
+class Inputs(TypedDict, total=False):
+    price: int
+    equity: int
+    interest: float
+    term_years: int
+    rent: int
+    hoa: int
+
+
+class Metrics(TypedDict, total=False):
+    cashflow: float
+    break_even: float
+    noi_year: float
+    total_equity_return_pct: float
+
+
+def _local_explain(inputs: Inputs, m: Metrics) -> str:
     vurdering = "ok"
-    if m["total_equity_return_pct"] >= 7:
+    ter = float(m.get("total_equity_return_pct", 0.0) or 0.0)
+    if ter >= 7:
         vurdering = "god"
-    if m["total_equity_return_pct"] < 3:
+    if ter < 3:
         vurdering = "svak"
     return (
-        f"**Vurdering:** {vurdering}. ROE {m['total_equity_return_pct']:.1f}%.\n\n"
-        f"Cashflow {m['cashflow']:.0f} kr/mnd, break-even {m['break_even']:.0f} kr/mnd."
+        f"**Vurdering:** {vurdering}. ROE {ter:.1f}%.\n\n"
+        f"Cashflow {float(m.get('cashflow', 0.0)):.0f} kr/mnd, "
+        f"break-even {float(m.get('break_even', 0.0)):.0f} kr/mnd."
     )
 
 
-def _get_key():
-    return os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+def _get_key() -> str:
+    """Hent OpenAI-nøkkel fra env eller Streamlit secrets – uten å trigge typefeil."""
+    env_key = os.getenv("OPENAI_API_KEY") or ""
+    if env_key:
+        return env_key
+    try:
+        # st.secrets kan mangle lokalt; bruk try/except for å blidgjøre Pylance.
+        return st.secrets.get("OPENAI_API_KEY", "")  # type: ignore[no-any-return]
+    except Exception:
+        return ""
 
 
-def ai_explain(inputs, m):
+def ai_explain(inputs: Inputs, m: Metrics) -> str:
     key = _get_key()
     if not key:
         return _local_explain(inputs, m)
     try:
         client = OpenAI(api_key=key)
         prompt = (
-            f"Kort norsk analyse. Kjøpesum {inputs['price']:,}, EK {inputs['equity']:,}, "
-            f"rente {inputs['interest']} %, {inputs['term_years']} år. "
-            f"Leie {inputs['rent']:,}/mnd, HOA {inputs['hoa']:,}/mnd. "
-            f"Cashflow {m['cashflow']:.0f}, break-even {m['break_even']:.0f}, "
-            f"NOI {m['noi_year']:.0f}, ROE {m['total_equity_return_pct']:.1f}%."
+            f"Kort norsk analyse. Kjøpesum {int(inputs.get('price', 0)):,}, "
+            f"EK {int(inputs.get('equity', 0)):,}, "
+            f"rente {float(inputs.get('interest', 0.0))} %, "
+            f"{int(inputs.get('term_years', 0))} år. "
+            f"Leie {int(inputs.get('rent', 0)):,}/mnd, "
+            f"HOA {int(inputs.get('hoa', 0)):,}/mnd. "
+            f"Cashflow {float(m.get('cashflow', 0.0)):.0f}, "
+            f"break-even {float(m.get('break_even', 0.0)):.0f}, "
+            f"NOI {float(m.get('noi_year', 0.0)):.0f}, "
+            f"ROE {float(m.get('total_equity_return_pct', 0.0)):.1f}%."
         )
         r = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -41,13 +76,10 @@ def ai_explain(inputs, m):
             messages=[{"role": "user", "content": prompt}],
             max_tokens=300,
         )
-        return r.choices[0].message.content.strip()
+        content = (r.choices[0].message.content or "").strip()
+        return content or _local_explain(inputs, m)
     except Exception:
         return _local_explain(inputs, m)
-
-
-def _get_key():
-    return os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
 
 
 def analyze_prospectus(text: str) -> Dict[str, Any]:
@@ -76,8 +108,6 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
     key = _get_key()
     if key:
         try:
-            from openai import OpenAI
-
             client = OpenAI(api_key=key)
             system = (
                 "Du er en norsk eiendomsanalytiker. Ekstraher kort og tydelig liste over TG3, TG2, "
@@ -95,19 +125,27 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
                 ],
                 max_tokens=700,
             )
-            obj = json.loads(r.choices[0].message.content)
+            raw = r.choices[0].message.content or "{}"
+            obj = json.loads(raw)
+            if not isinstance(obj, dict):
+                obj = {}
             # defensiv normalisering
-            for k in ("tg3", "tg2", "upgrades", "watchouts", "questions"):
-                obj[k] = [str(x) for x in (obj.get(k) or [])]
-            obj["summary_md"] = obj.get("summary_md") or ""
-            return obj
+            out: Dict[str, Any] = {
+                "summary_md": str(obj.get("summary_md") or ""),
+                "tg3": [str(x) for x in (obj.get("tg3") or [])],
+                "tg2": [str(x) for x in (obj.get("tg2") or [])],
+                "upgrades": [str(x) for x in (obj.get("upgrades") or [])],
+                "watchouts": [str(x) for x in (obj.get("watchouts") or [])],
+                "questions": [str(x) for x in (obj.get("questions") or [])],
+            }
+            return out
         except Exception:
+            # faller til regex-basert
             pass
 
     # --- Fallback uten OpenAI: enkel regex-plukk ---
-    # Plukk linjer som nevner TG3/TG 3 / TG2 / TG 2
-    tg3 = []
-    tg2 = []
+    tg3: List[str] = []
+    tg2: List[str] = []
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     for l in lines:
         if re.search(r"\bTG\s*3\b", l, re.I):
@@ -115,7 +153,6 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
         elif re.search(r"\bTG\s*2\b", l, re.I):
             tg2.append(l[:200])
 
-    # naive forslag
     upgrades = [
         l for l in lines if re.search(r"(oppgrad|rehab|utbedr|pusse)", l, re.I)
     ][:8]

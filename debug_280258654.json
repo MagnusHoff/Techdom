@@ -1,0 +1,23 @@
+{
+  "step": "exception",
+  "finn_url": "https://www.finn.no/realestate/homes/ad.html?finnkode=280258654",
+  "megler_url": null,
+  "driver_name": null,
+  "driver_debug": null,
+  "browser_debug": null,
+  "pdf_url": null,
+  "pdf_path": null,
+  "content_type": null,
+  "content_length": null,
+  "tilstandsrapport_path": null,
+  "tilstands_pages": null,
+  "tilstands_size": null,
+  "combined_deleted": false,
+  "used_return": "combined",
+  "tilstands_engine": null,
+  "tilstands_method": null,
+  "tilstands_impl": null,
+  "error": "HTTPError: 404 Client Error: Not Found for url: https://www.finn.no/realestate/homes/ad.html?finnkode=280258654"
+}
+bytes: 0
+pdf_url: None

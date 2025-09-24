@@ -1,0 +1,40 @@
+{
+  "step": "driver_ok",
+  "finn_url": "https://www.finn.no/realestate/homes/ad.html?finnkode=416543409",
+  "megler_url": "https://aktiv.no/prospekt?estateId=fe2df6a4-6c03-4150-b377-9cb696ae2160",
+  "driver_name": "aktiv",
+  "driver_debug": {
+    "driver": "aktiv",
+    "step": "ok_direct",
+    "driver_meta": {
+      "head_https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536": {
+        "status": 200,
+        "ct": "application/pdf",
+        "final_url": "https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536"
+      },
+      "get_1_https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536": {
+        "status": 200,
+        "content_type": "application/pdf",
+        "content_length": null,
+        "elapsed_ms": 4637,
+        "final_url": "https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536",
+        "bytes": 13298905
+      }
+    }
+  },
+  "browser_debug": null,
+  "pdf_url": "https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536",
+  "pdf_path": "data/prospekt/416543409.pdf",
+  "content_type": null,
+  "content_length": "13298905",
+  "tilstandsrapport_path": null,
+  "tilstands_pages": "12-51",
+  "tilstands_size": null,
+  "combined_deleted": false,
+  "used_return": "tilstandsrapport",
+  "tilstands_engine": "fitz",
+  "tilstands_method": "aggressive_keywords",
+  "tilstands_impl": "anchor_v5_strict_toc_gated_2025-09-23"
+}
+bytes: 6111671
+pdf_url: https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~FE2DF6A4-6C03-4150-B377-9CB696AE2160~607037792738517~43/Digital~salgsoppgave.PDF?t=1758644536

@@ -6,7 +6,7 @@ import re
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, Any
 
 from core.geo_registry import get_geojson_info
 from core.geo import find_bucket_from_point
@@ -49,6 +49,23 @@ _table_mtime: Optional[float] = None
 # -------------------------------
 def _norm(s: Optional[str]) -> str:
     return (s or "").strip().lower()
+
+
+def _to_float_or_none(x: Any) -> Optional[float]:
+    """Trygg konvertering fra ukjent type til float."""
+    if x is None:
+        return None
+    try:
+        if isinstance(x, (int, float)):
+            return float(x)
+        if isinstance(x, str):
+            t = x.strip().replace(",", ".")
+            if not t:
+                return None
+            return float(t)
+    except Exception:
+        return None
+    return None
 
 
 def _canon_city_for_csv(s: str) -> str:
@@ -127,10 +144,12 @@ def _select_segment(area_m2: Optional[float], rooms: Optional[int]) -> str:
     return "standard"
 
 
-def _extract_postal(addr: Optional[str]) -> Optional[int]:
-    if not addr:
+def _extract_postal(addr: Any) -> Optional[int]:
+    """Trekk ut firesifret postnummer fra vilkårlig verdi (str, tall, None)."""
+    if addr is None:
         return None
-    m = re.search(r"\b(\d{4})\b", str(addr))
+    s = str(addr)
+    m = re.search(r"\b(\d{4})\b", s)
     return int(m.group(1)) if m else None
 
 
@@ -405,12 +424,10 @@ def get_rent_by_csv(
         note_parts.append(f"By brukt: {city_csv}")
 
     # GeoJSON (dersom registrert i geo_registry)
-    lat, lon = info.get("lat"), info.get("lon")
-    try:
-        lat_f = float(lat) if lat is not None else None
-        lon_f = float(lon) if lon is not None else None
-    except Exception:
-        lat_f, lon_f = None, None
+    lat = info.get("lat")
+    lon = info.get("lon")
+    lat_f = _to_float_or_none(lat)
+    lon_f = _to_float_or_none(lon)
 
     if lat_f is not None and lon_f is not None and city_csv and city_buckets:
         gj = get_geojson_info(city_csv)

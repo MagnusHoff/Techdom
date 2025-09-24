@@ -1,42 +1,50 @@
 # ui/result.py
 from __future__ import annotations
 
-import re
+import io
+import html
+from typing import Any, Dict, Optional, List, Tuple, Union, cast
+
 import streamlit as st
 
-# (IKKE importer extract_pdf_text_from_bytes fra core.scrape her)
+# PDF-leser: prøv pypdf først, fallback til PyPDF2
+try:
+    from pypdf import PdfReader  # type: ignore
+except Exception:
+    from PyPDF2 import PdfReader  # type: ignore
+
 from core.compute import compute_metrics
 from core.ai import ai_explain, analyze_prospectus
 from core.rates import get_interest_estimate
 from core.rent import get_rent_by_csv
 from core.history import add_analysis
 from core.scrape import scrape_finn
+from core.fetch import get_tr_or_scrape
 
-# --- Robust PDF-tekstuttrekk: prøv å importere fra core.scrape, ellers fallback her ---
+# Valgfri "rask" PDF-tekstuttrekk fra core (hvis du har en der)
 try:
-    from core.scrape import extract_pdf_text_from_bytes as _extract_pdf_text_from_bytes  # type: ignore
+    from core.scrape import extract_pdf_text_from_bytes as _EXTRACT_PDF_TEXT_FROM_BYTES  # type: ignore
 except Exception:
-    _extract_pdf_text_from_bytes = None  # type: ignore
+    _EXTRACT_PDF_TEXT_FROM_BYTES = None  # type: ignore
+
+
+# --------------------------- PDF tekstuttrekk ---------------------------
 
 
 def extract_pdf_text_from_bytes(data: bytes, max_pages: int = 40) -> str:
     """
-    Hent tekst fra PDF-bytes. Bruker core.scrape sin funksjon hvis tilgjengelig,
-    ellers en lokal fallback via PyPDF2.
+    Hent tekst fra PDF-bytes.
+    Bruker core.scrape sin funksjon hvis den finnes, ellers fallback via (py)PdfReader.
     """
-    if _extract_pdf_text_from_bytes is not None:
+    if _EXTRACT_PDF_TEXT_FROM_BYTES:
         try:
-            return _extract_pdf_text_from_bytes(data)  # bruker core.scrape sin
+            return _EXTRACT_PDF_TEXT_FROM_BYTES(data)  # type: ignore[misc]
         except Exception:
-            pass
-
-    # Fallback: lokal implementasjon
-    import io
-    from PyPDF2 import PdfReader
+            pass  # fall tilbake til lokal metode
 
     try:
         reader = PdfReader(io.BytesIO(data))
-        chunks = []
+        chunks: List[str] = []
         for page in reader.pages[:max_pages]:
             try:
                 t = page.extract_text() or ""
@@ -52,8 +60,68 @@ def extract_pdf_text_from_bytes(data: bytes, max_pages: int = 40) -> str:
 # --------------------------- helpers ---------------------------
 
 
-def _init_params_for_new_url(info: dict) -> dict:
-    """Startverdier når ny FINN-URL limes inn: alt 0, unntak lånetid=30."""
+def _as_str(v: Any, default: str = "") -> str:
+    if isinstance(v, str):
+        return v
+    if v is None:
+        return default
+    try:
+        return str(v)
+    except Exception:
+        return default
+
+
+def _as_int(v: Any, default: int = 0) -> int:
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    if isinstance(v, str):
+        t = v.replace("\u00a0", " ").replace(" ", "").replace(",", "")
+        try:
+            return int(float(t))
+        except Exception:
+            return default
+    return default
+
+
+def _as_float(v: Any, default: float = 0.0) -> float:
+    if isinstance(v, bool):
+        return default
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        t = v.replace("\u00a0", " ").replace(" ", "").replace(",", ".")
+        try:
+            return float(t)
+        except Exception:
+            return default
+    return default
+
+
+def _as_opt_float(v: Any) -> Optional[float]:
+    try:
+        f = _as_float(v, default=float("nan"))
+        return None if f != f else f  # nan-check
+    except Exception:
+        return None
+
+
+def _interest_only_float() -> float:
+    """get_interest_estimate() kan returnere float | (float, meta). Normaliser til float."""
+    try:
+        r = get_interest_estimate()
+        if isinstance(r, tuple):
+            return float(r[0])
+        return float(r)
+    except Exception:
+        return 0.0
+
+
+def _init_params_for_new_url(_: Dict[str, Any]) -> Dict[str, Any]:
+    """Default-verdier ved ny FINN-URL."""
     return {
         "price": 0,
         "equity": 0,
@@ -67,30 +135,12 @@ def _init_params_for_new_url(info: dict) -> dict:
     }
 
 
-def _pdf_bytes_to_text(pdf_bytes: bytes, max_pages: int = 40) -> str:
-    """Best-effort tekstuttrekk fra opplastet PDF (bytes)."""
-    try:
-        bio = io.BytesIO(pdf_bytes)
-        reader = PdfReader(bio)
-        chunks = []
-        for page in reader.pages[:max_pages]:
-            try:
-                t = page.extract_text() or ""
-            except Exception:
-                t = ""
-            if t.strip():
-                chunks.append(t)
-        return "\n".join(chunks).strip()
-    except Exception:
-        return ""
-
-
 # --------------------------- main view ---------------------------
 
 
 def render_result() -> None:
     # --- URL-guard ---
-    url = st.session_state.get("listing_url") or ""
+    url = _as_str(st.session_state.get("listing_url"))
     if not url:
         st.session_state["page"] = "landing"
         st.rerun()
@@ -104,7 +154,7 @@ def render_result() -> None:
 
     # --- Scrape ved ny URL + init params ---
     if st.session_state.get("_scraped_url") != url:
-        info = scrape_finn(url)
+        info: Dict[str, Any] = scrape_finn(url) or {}
         st.session_state["_scraped_url"] = url
         st.session_state["_scraped_info"] = info
         st.session_state["computed"] = None
@@ -112,12 +162,12 @@ def render_result() -> None:
         st.session_state["_first_compute_done"] = False
         st.session_state["_history_logged"] = False
     else:
-        info = st.session_state.get("_scraped_info", {}) or {}
+        info = cast(Dict[str, Any], st.session_state.get("_scraped_info", {}) or {})
 
-    params = st.session_state["params"]
+    params = cast(Dict[str, Any], st.session_state["params"])
 
     # --- Tittel ---
-    address = (info.get("address") or "").strip()
+    address = _as_str(info.get("address")).strip()
     if address:
         st.subheader(address)
 
@@ -126,8 +176,9 @@ def render_result() -> None:
 
     # ---------- VENSTRE ----------
     with left:
-        if info.get("image"):
-            st.image(info["image"], use_container_width=True)
+        img_url = _as_str(info.get("image"))
+        if img_url:
+            st.image(img_url, use_container_width=True)
 
     # ---------- HØYRE ----------
     with right:
@@ -139,21 +190,21 @@ def render_result() -> None:
                 "Total kjøpesum (kr)",
                 min_value=0,
                 step=50_000,
-                value=int(params["price"]),
+                value=_as_int(params.get("price"), 0),
                 help="Sum kjøpesum inkl. omkostninger fra annonsen.",
             )
             params["equity"] = st.number_input(
                 "Egenkapital (kr)",
                 min_value=0,
                 step=10_000,
-                value=int(params["equity"]),
+                value=_as_int(params.get("equity"), 0),
                 help="Kontanter/egenkapital du legger inn i kjøpet.",
             )
             params["interest"] = st.number_input(
                 "Rente (% p.a.)",
                 min_value=0.0,
                 step=0.1,
-                value=float(params["interest"]),
+                value=_as_float(params.get("interest"), 0.0),
                 help="Nominell årlig rente brukt i låneberegningen.",
             )
             params["term_years"] = st.number_input(
@@ -161,7 +212,7 @@ def render_result() -> None:
                 min_value=1,
                 max_value=40,
                 step=1,
-                value=int(params["term_years"]),
+                value=_as_int(params.get("term_years"), 30),
                 help="Nedbetalingstid for annuitetslånet (år).",
             )
 
@@ -170,444 +221,461 @@ def render_result() -> None:
                 "Brutto leie (kr/mnd)",
                 min_value=0,
                 step=500,
-                value=int(params["rent"]),
-                help="Estimert månedlig husleie før kostnader. Foreløpig kun støttet for Bergen og Oslo",
+                value=_as_int(params.get("rent"), 0),
+                help="Estimert månedlig husleie før kostnader (foreløpig Oslo/Bergen).",
             )
             params["hoa"] = st.number_input(
                 "Felleskost. (kr/mnd)",
                 min_value=0,
                 step=100,
-                value=int(params["hoa"]),
+                value=_as_int(params.get("hoa"), 0),
                 help="Månedlige felleskostnader (TV/internett inkludert hvis oppgitt).",
             )
             params["maint_pct"] = st.number_input(
                 "Vedlikehold (% av leie)",
                 min_value=0.0,
                 step=0.5,
-                value=float(params["maint_pct"]),
+                value=_as_float(params.get("maint_pct"), 0.0),
                 help="Avsatt vedlikehold i prosent av brutto leie.",
             )
             params["other_costs"] = st.number_input(
                 "Andre kostn. (kr/mnd)",
                 min_value=0,
                 step=100,
-                value=int(params["other_costs"]),
+                value=_as_int(params.get("other_costs"), 0),
                 help="Andre månedlige driftskostnader (strøm, forsikring, mv.).",
             )
 
-        # --- Bunn-knapper: analyse / hent data / infoboble
+        # --- Bunn-knapper: analyse / hent data / infoboble ---
+        # Spinner-overlay som ikke påvirker layout
+        st.markdown(
+            """
+        <style>
+          /* overlay-holder tar ingen plass (height:0), spinner legges absolutt over knappen */
+          .spin-overlay { position: relative; height: 0; }
+          .spin-overlay::after {
+            content: "";
+            position: absolute;
+            top: 50%;              /* midt i høyden */
+            right: 12px;           /* avstand fra høyrekanten */
+            transform: translateY(-50%);  /* flytt opp halvparten av egen høyde */
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,.35);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spn .8s linear infinite;
+            pointer-events: none;
+          }
+          @keyframes spn { to { transform: rotate(360deg); } }
+        </style>
+        """,
+            unsafe_allow_html=True,
+        )
+
         k1, k2, k3 = st.columns([6, 3, 1], gap="small")
 
         with k1:
             if st.session_state.get("_updating", False):
-                st.button(
-                    "Kjører analyse …",
-                    disabled=True,
-                    use_container_width=True,
-                    key="upd_disabled_main",
-                )
+                st.button("Kjører analyse …", disabled=True, use_container_width=True)
             else:
-                if st.button("Kjør analyse", use_container_width=True, key="upd_main"):
+                if st.button("Kjør analyse", use_container_width=True):
                     st.session_state["_updating"] = True
-                    st.session_state["_queued_params"] = params.copy()
+                    st.session_state["_queued_params"] = dict(params)
                     st.rerun()
 
         with k2:
-            if st.button("Hent data", use_container_width=True, key="rent_csv_btn"):
-                # 1) Tall fra FINN
-                price_from_finn = int(info.get("total_price") or 0)
-                hoa_from_finn = int(info.get("hoa_month") or 0)
+            # Nullstill lagret PDF/AI når FINN-url endres
+            current_url = url.strip()
+            prev_url = _as_str(st.session_state.get("prospectus_source_url"))
+            if current_url and current_url != prev_url:
+                for key in (
+                    "prospectus_pdf_bytes",
+                    "prospectus_pdf_url",
+                    "prospectus_ai",
+                    "prospectus_debug",
+                ):
+                    st.session_state.pop(key, None)
+                st.session_state["prospectus_source_url"] = current_url
 
-                # 2) Egenkapital 15 %
-                equity_from_price = (
-                    int(round(price_from_finn * 0.15)) if price_from_finn else 0
+            # State for henting
+            fetching = bool(st.session_state.get("_fetching", False))
+            btn_label = "Hent data" if not fetching else "Henter …"
+
+            # Selve knappen
+            pressed = st.button(
+                btn_label, use_container_width=True, key="fetch_btn", disabled=fetching
+            )
+
+            # Spinner-overlay: vis kun når fetching = True (legges "over" knappen uten å flytte noe)
+            spin_slot = st.empty()
+            if fetching:
+                spin_slot.markdown(
+                    '<div class="spin-overlay"></div>', unsafe_allow_html=True
                 )
+            else:
+                spin_slot.empty()
 
-                # 3) CSV/Geo-estimat
-                target_area = (
-                    float(info.get("area_m2")) if info.get("area_m2") else None
-                )
-                target_rooms = int(info.get("rooms")) if info.get("rooms") else None
+            if pressed and not fetching:
+                st.session_state["_fetching"] = True
+                st.rerun()  # re-render med "Henter …" + spinner
 
-                est = get_rent_by_csv(info, area_m2=target_area, rooms=target_rooms)
+            # Når _fetching er True, gjør jobben og slå den av igjen
+            if fetching:
+                try:
+                    # 1) Tall fra FINN
+                    price_from_finn = _as_int(info.get("total_price"), 0)
+                    hoa_from_finn = _as_int(info.get("hoa_month"), 0)
 
-                # 4) Debug + toast
-                if est:
-                    rent_suggestion = int(est.gross_rent)
-                    st.session_state["rent_debug"] = {
-                        "source": "csv",
-                        "city": est.city,
-                        "bucket": est.bucket,
-                        "kr_per_m2": est.kr_per_m2,
-                        "updated": est.updated,
-                        "confidence": est.confidence,
-                        "note": est.note,
-                        "area_m2": target_area,
-                        "rooms": target_rooms,
-                    }
-                    st.toast(
-                        f"Leieforslag: {rent_suggestion:,} kr  •  {est.bucket}  •  {est.updated}",
-                        icon="✅",
-                    )
-                else:
-                    rent_suggestion = params.get("rent") or 15000
-                    st.session_state["rent_debug"] = {
-                        "source": "csv",
-                        "error": "Fant ikke m²-tabell for byen – brukte foreløpig verdi.",
-                        "area_m2": target_area,
-                        "rooms": target_rooms,
-                    }
-                    st.toast(
-                        "Fant ikke m²-tabell for byen – brukte foreløpig verdi.",
-                        icon="⚠️",
+                    # 2) Egenkapital 15 %
+                    equity_from_price = (
+                        int(round(price_from_finn * 0.15)) if price_from_finn else 0
                     )
 
-                # 5) Rente-estimat
-                params["interest"] = float(get_interest_estimate())
+                    # 3) CSV/Geo-estimat (leie)
+                    target_area = _as_opt_float(info.get("area_m2"))
+                    target_rooms = _as_int(info.get("rooms"), 0) or None
+                    est = get_rent_by_csv(info, area_m2=target_area, rooms=target_rooms)
 
-                # 6) Oppdater felter og rerun
-                params["price"] = price_from_finn
-                params["equity"] = equity_from_price
-                params["rent"] = rent_suggestion
-                params["hoa"] = hoa_from_finn
-                st.rerun()
+                    if est:
+                        rent_suggestion = int(est.gross_rent)
+                        st.session_state["rent_debug"] = {
+                            "source": "csv",
+                            "city": est.city,
+                            "bucket": est.bucket,
+                            "kr_per_m2": est.kr_per_m2,
+                            "updated": est.updated,
+                            "confidence": est.confidence,
+                            "note": est.note,
+                            "area_m2": target_area,
+                            "rooms": target_rooms,
+                        }
+                        st.toast(
+                            f"Leieforslag: {rent_suggestion:,} kr  •  {est.bucket}  •  {est.updated}".replace(
+                                ",", " "
+                            ),
+                            icon="✅",
+                        )
+                    else:
+                        rent_suggestion = (
+                            _as_int(
+                                st.session_state.get("params", {}).get("rent"), 15000
+                            )
+                            or 15000
+                        )
+                        st.session_state["rent_debug"] = {
+                            "source": "csv",
+                            "error": "Fant ikke m²-tabell – brukte foreløpig verdi.",
+                            "area_m2": target_area,
+                            "rooms": target_rooms,
+                        }
+                        st.toast(
+                            "Fant ikke m²-tabell – brukte foreløpig verdi.", icon="⚠️"
+                        )
 
-        # Debug-panel (CSV)
-        with st.expander("Debug: leie (CSV) – sist hentet"):
-            st.json(st.session_state.get("rent_debug") or {})
+                    # 4) Rente-estimat
+                    params["interest"] = _interest_only_float()
+
+                    # 5) Hent TR eller scrape automatisk
+                    pdf_bytes, pdf_url, pdf_dbg = get_tr_or_scrape(current_url)
+                    st.session_state["prospectus_debug"] = pdf_dbg  # debug i expander
+
+                    if pdf_bytes:
+                        st.session_state["prospectus_pdf_bytes"] = pdf_bytes
+                        st.session_state["prospectus_pdf_url"] = pdf_url
+                        st.session_state["prospectus_source_url"] = current_url
+
+                        text = extract_pdf_text_from_bytes(pdf_bytes)
+                        if text:
+                            st.session_state["prospectus_ai"] = analyze_prospectus(text)
+                            st.toast(
+                                "Tilstandsrapport/salgsoppgave hentet og analysert.",
+                                icon="✅",
+                            )
+                        else:
+                            st.session_state.pop("prospectus_ai", None)
+                            st.caption(
+                                "Klarte ikke å hente tekst fra PDF-en (kan være skannet). Last opp en tekst-PDF manuelt."
+                            )
+                    else:
+                        for key in (
+                            "prospectus_pdf_bytes",
+                            "prospectus_pdf_url",
+                            "prospectus_ai",
+                        ):
+                            st.session_state.pop(key, None)
+                        st.caption(
+                            "Fant ikke PDF automatisk – du kan laste opp PDF manuelt under."
+                        )
+
+                    # 6) Oppdater felter og rerun
+                    params["price"] = price_from_finn
+                    params["equity"] = equity_from_price
+                    params["rent"] = rent_suggestion
+                    params["hoa"] = hoa_from_finn
+
+                finally:
+                    st.session_state["_fetching"] = False
+                    st.rerun()
 
         with k3:
             # Lite info-ikon
             st.markdown(
                 """
-                <style>
-                  .td-info { position: relative; display:flex; justify-content:flex-end; height:28px; margin-top:6px; }
-                  .td-info .ic { width:18px; height:18px; opacity:.85; cursor:help; }
-                  .td-info .tip {
-                    display:none; position:absolute; bottom:28px; right:0; background:#111; color:#fff;
-                    padding:10px 12px; border-radius:6px; font-size:13px; line-height:1.45;
-                    white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.3); z-index:9999; width:420px; text-align:left;
-                  }
-                  .td-info:hover .tip { display:block; }
-                </style>
-                <div class="td-info">
-                  <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                       aria-hidden="true" focusable="false">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8"  x2="12.01" y2="8"></line>
-                  </svg>
-                  <div class="tip">
-                    Henter fra FINN-annonsen:<br>
-                    • Kjøpesum og felleskostnader<br>
-                    • Egenkapital = 15 % av kjøpesum<br>
-                    • Brutto leie fra CSV/Geo (kr/m² × BRA)<br>
-                    • Rente (DNB hvis mulig, ellers styringsrente + margin)
-                  </div>
-                </div>
-                """,
+        <style>
+          .td-info { position: relative; display:flex; justify-content:flex-end; height:28px; margin-top:6px; }
+          .td-info .ic { width:18px; height:18px; opacity:.85; cursor:help; }
+          .td-info .tip {
+            display:none; position:absolute; bottom:28px; right:0; background:#111; color:#fff;
+            padding:10px 12px; border-radius:6px; font-size:13px; line-height:1.45;
+            white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.3); z-index:9999; width:420px; text-align:left;
+          }
+          .td-info:hover .tip { display:block; }
+        </style>
+        <div class="td-info">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8"  x2="12.01" y2="8"></line>
+          </svg>
+          <div class="tip">
+            Henter fra FINN-annonsen:<br>
+            • Kjøpesum og felleskostnader<br>
+            • Egenkapital = 15 % av kjøpesum<br>
+            • Brutto leie fra CSV/Geo (kr/m² × BRA)<br>
+            • Rente (DNB hvis mulig, ellers styringsrente + margin)
+          </div>
+        </div>
+        """,
                 unsafe_allow_html=True,
             )
 
-    # --- Utfør beregning når _updating = True ---
+    # --- Kjør beregning når _updating = True ---
     if st.session_state["_updating"]:
-        p = st.session_state.get("_queued_params") or params.copy()
+        p = cast(Dict[str, Any], st.session_state.get("_queued_params") or dict(params))
         m = compute_metrics(
-            p["price"],
-            p["equity"],
-            p["interest"],
-            p["term_years"],
-            p["rent"],
-            p["hoa"],
-            p["maint_pct"],
-            p["vacancy_pct"],
-            p["other_costs"],
+            _as_int(p.get("price")),
+            _as_int(p.get("equity")),
+            _as_float(p.get("interest")),
+            _as_int(p.get("term_years"), 30),
+            _as_int(p.get("rent")),
+            _as_int(p.get("hoa")),
+            _as_float(p.get("maint_pct")),
+            _as_float(p.get("vacancy_pct")),
+            _as_int(p.get("other_costs")),
         )
         st.session_state["params"] = p
         st.session_state["computed"] = m
-        st.session_state["ai_text"] = ai_explain(p, m)
+        st.session_state["ai_text"] = ai_explain(p, m)  # type: ignore[arg-type]
         st.session_state["_updating"] = False
         st.session_state["_first_compute_done"] = True
         st.rerun()
 
     # --- Vis beregninger ---
-    m = st.session_state.get("computed")
+    m = cast(Dict[str, Any], st.session_state.get("computed") or {})
     if not m:
         return
 
-    # Logg kun én gang til historikken når vi har første gyldige resultat
+    # Logg kun én gang når første gyldige resultat foreligger
     if not st.session_state.get("_history_logged"):
-        info_now = st.session_state.get("_scraped_info", {}) or {}
-        title = (info_now.get("address") or "").strip() or "Uten tittel"
-        price_for_log = int(info_now.get("total_price") or 0) or int(
-            st.session_state["params"].get("price") or 0
+        info_now = cast(Dict[str, Any], st.session_state.get("_scraped_info", {}) or {})
+        title = _as_str(info_now.get("address")).strip() or "Uten tittel"
+        price_for_log = _as_int(info_now.get("total_price"), 0) or _as_int(
+            st.session_state["params"].get("price"), 0
         )
-        summary = (st.session_state.get("ai_text") or "")[:200]
-        image_url = info_now.get("image")
-
+        summary = _as_str(st.session_state.get("ai_text")).strip()[:200]
+        image_url = _as_str(info_now.get("image"))
         add_analysis(
-            finn_url=url,
+            finn_url=_as_str(st.session_state.get("listing_url")),
             title=title,
             price=price_for_log if price_for_log > 0 else None,
             summary=summary,
-            image=image_url,
+            image=image_url or None,
             result_args={"id": ""},
         )
         st.session_state["_history_logged"] = True
 
     a, b, c = st.columns(3)
     with a:
-        st.metric("Cashflow (mnd)", f"{m['cashflow']:.0f} kr")
-        st.metric("Lånebetaling (mnd)", f"{m['m_payment']:.0f} kr")
+        st.metric("Cashflow (mnd)", f"{_as_float(m.get('cashflow')):.0f} kr")
+        st.metric("Lånebetaling (mnd)", f"{_as_float(m.get('m_payment')):.0f} kr")
     with b:
-        st.metric("Break-even", f"{m['break_even']:.0f} kr/mnd")
-        st.metric("NOI (år)", f"{m['noi_year']:.0f} kr")
+        st.metric("Break-even", f"{_as_float(m.get('break_even')):.0f} kr/mnd")
+        st.metric("NOI (år)", f"{_as_float(m.get('noi_year')):.0f} kr")
     with c:
-        st.metric("Avdrag (år)", f"{m['principal_reduction_year']:.0f} kr")
-        st.metric("ROE", f"{m['total_equity_return_pct']:.1f} %")
+        st.metric(
+            "Avdrag (år)", f"{_as_float(m.get('principal_reduction_year')):.0f} kr"
+        )
+        st.metric("ROE", f"{_as_float(m.get('total_equity_return_pct')):.1f} %")
 
     # --- AI: tall vs. salgsoppgave (PDF) ---
     st.markdown("---")
+
+    # Global CSS for AI-seksjonene (separate hooks + egne klasser)
+    st.markdown(
+        """
+    <style>
+      /* ===== Hooks du kan justere fritt ===== */
+      #ai-metrics     { margin-top: 0px; }    /* venstre seksjon */
+      #ai-prospectus  { margin-top: 0px; }    /* høyre seksjon  */
+
+      /* ===== Venstre analyse (tall) – egne klasser ===== */
+      .aiL-grid{
+        display:grid;grid-template-columns:1fr;
+        gap:12px;margin-top:16px;align-items:stretch;
+      }
+      .aiL-card{
+        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
+        border:1px solid rgba(255,255,255,.12);
+        border-radius:14px;padding:14px 16px;width:100%;
+        display:flex;flex-direction:column;gap:6px;
+      }
+      .aiL-title{font-weight:700;font-size:16px;margin:0 0 4px 0}
+      .aiL-subtle{opacity:.85;font-size:13px}
+
+      /* ===== Høyre analyse (tilstandsrapport) – egne klasser ===== */
+      .aiR-grid{
+        display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:16px;margin-top:16px;align-items:stretch;
+      }
+      @media (max-width:1000px){ .aiR-grid{grid-template-columns:1fr} }
+      .aiR-cell{min-height:100%;display:flex}
+      .aiR-card{
+        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
+        border:1px solid rgba(255,255,255,.12);
+        border-radius:14px;padding:16px 18px;width:100%;
+        display:flex;flex-direction:column;gap:8px;
+      }
+      .aiR-title{display:flex;align-items:center;gap:10px;margin:0 0 4px 0;font-weight:700;font-size:16px}
+      .aiR-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 8px;border-radius:999px;background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35)}
+      .aiR-badge.warn{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35)}
+      .aiR-badge.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
+      .aiR-list{margin:0;padding-left:1.15rem}
+      .aiR-list li{margin:.18rem 0}
+      .aiR-subtle{opacity:.85;font-size:13px}
+      .aiR-span2{grid-column:1 / -1}
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
     left_ai, right_ai = st.columns([6, 6], gap="large")
 
+    # ------------------- VENSTRE: AI-analyse (tall) -------------------
     with left_ai:
+        st.markdown('<div id="ai-metrics">', unsafe_allow_html=True)
+
         st.subheader("🧠 AI-analyse (tall)")
 
-        m = st.session_state.get("computed") or {}
-        p = st.session_state.get("params") or {}
+        m = cast(Dict[str, Any], st.session_state.get("computed") or {})
+        p = cast(Dict[str, Any], st.session_state.get("params") or {})
 
-        def kr(x):
+        def kr(x: Any) -> str:
             try:
-                return f"{float(x):,.0f} kr".replace(",", " ").replace(".0", "")
+                return f"{_as_float(x):,.0f} kr".replace(",", " ")
             except Exception:
                 return "–"
 
-        def pct(x):
+        def pct(x: Any) -> str:
             try:
-                return f"{float(x):.1f} %"
+                return f"{_as_float(x):.1f} %"
             except Exception:
                 return "–"
 
-        # --- Kjøp & finansiering ---
         with st.container(border=True):
             st.markdown("**📑 Kjøp & finansiering**")
             st.markdown(
                 f"""
-                • **Kjøpesum:** {kr(p.get("price", 0))}  
-                • **Egenkapital (EK):** {kr(p.get("equity", 0))}  
-                • **Rente:** {pct(p.get("interest", 0))}  
-                • **Lånetid:** {int(p.get("term_years", 0)) or 0} år
-                """
+        • **Kjøpesum:** {kr(p.get("price", 0))}  
+        • **Egenkapital (EK):** {kr(p.get("equity", 0))}  
+        • **Rente:** {pct(p.get("interest", 0))}  
+        • **Lånetid:** {_as_int(p.get("term_years", 0))} år
+        """
             )
 
-        # --- Leieinntekter & kostnader ---
         with st.container(border=True):
             st.markdown("**📊 Leieinntekter & kostnader**")
             st.markdown(
                 f"""
-                • **Leieinntekt (brutto):** {kr(p.get("rent", 0))} / mnd  
-                • **Felleskostnader:** {kr(p.get("hoa", 0))} / mnd  
-                • **Vedlikehold:** {pct(p.get("maint_pct", 0))} av leie  
-                • **Andre kostnader:** {kr(p.get("other_costs", 0))} / mnd
-                """
+        • **Leieinntekt (brutto):** {kr(p.get("rent", 0))} / mnd  
+        • **Felleskostnader:** {kr(p.get("hoa", 0))} / mnd  
+        • **Vedlikehold:** {pct(p.get("maint_pct", 0))} av leie  
+        • **Andre kostnader:** {kr(p.get("other_costs", 0))} / mnd
+        """
             )
 
-        # --- Kontantstrøm & avkastning ---
         with st.container(border=True):
             st.markdown("**💰 Kontantstrøm & avkastning**")
             if m:
                 st.markdown(
                     f"""
-                    • **Cashflow (mnd):** {kr(m.get("cashflow", 0))}  
-                    • **Break-even (mnd):** {kr(m.get("break_even", 0))}  
-                    • **NOI (år):** {kr(m.get("noi_year", 0))}  
-                    • **Lånebetaling (mnd):** {kr(m.get("m_payment", 0))}  
-                    • **ROE:** {pct(m.get("total_equity_return_pct", 0))}
-                    """
+          • **Cashflow (mnd):** {kr(m.get("cashflow", 0))}  
+          • **Break-even (mnd):** {kr(m.get("break_even", 0))}  
+          • **NOI (år):** {kr(m.get("noi_year", 0))}  
+          • **Lånebetaling (mnd):** {kr(m.get("m_payment", 0))}  
+          • **ROE:** {pct(m.get("total_equity_return_pct", 0))}
+          """
                 )
             else:
                 st.caption("Kjør analyse for å fylle inn tallene.")
 
-        # --- Oppsummering (tall) fra AI (valgfritt) ---
-        ai_md = (st.session_state.get("ai_text") or "").strip()
+        ai_md = _as_str(st.session_state.get("ai_text")).strip()
         if ai_md:
             with st.container(border=True):
                 st.markdown("**🧾 Oppsummering (tall)**")
                 st.markdown(ai_md)
 
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ------------------- HØYRE: AI-analyse (tilstandsrapport) -------------------
     with right_ai:
-        # ---------- CSS (layout, cards, compact uploader) ----------
-        st.markdown(
-            """
-            <style>
-              /* two-column grid that stretches cards to equal height per row */
-              .td-grid{
-                display:grid;
-                grid-template-columns:repeat(2,minmax(0,1fr));
-                gap:16px;
-                margin-top:18px;
-                align-items:stretch;
-              }
-              @media (max-width:1000px){
-                .td-grid{grid-template-columns:1fr;}
-              }
-              .td-cell{min-height:100%;display:flex}
-              .td-card{
-                background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
-                border:1px solid rgba(255,255,255,.12);
-                border-radius:14px;
-                padding:16px 18px;
-                width:100%;
-                display:flex;
-                flex-direction:column;
-                gap:8px;
-              }
-              .td-title{
-                display:flex;align-items:center;gap:10px;
-                margin:0 0 4px 0;font-weight:700;font-size:16px;
-              }
-              .td-badge{
-                display:inline-flex;align-items:center;gap:6px;
-                font-size:12px;font-weight:600;padding:4px 8px;border-radius:999px;
-                background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.35);
-              }
-              .td-badge.warn{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35)}
-              .td-badge.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
-              .td-list{margin:0;padding-left:1.15rem}
-              .td-list li{margin:.18rem 0}
-              .td-subtle{opacity:.85;font-size:13px}
-              .td-span2{grid-column:1 / -1}
+        st.markdown('<div id="ai-prospectus">', unsafe_allow_html=True)
 
-              /* Compact header: filename chip left + small dropzone right */
-              .td-head{display:grid;grid-template-columns:1fr 280px;gap:16px;margin-bottom:8px}
-              @media (max-width:1000px){ .td-head{grid-template-columns:1fr} }
-              .td-chip{
-                display:flex;align-items:center;gap:10px;
-                background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.18);
-                border-radius:10px;padding:10px 12px;min-height:46px;
-              }
-              .td-chip .x{
-                margin-left:auto;opacity:.9;cursor:pointer;font-weight:700;
-              }
-              /* Hide streamlit’s built-in uploaded-file preview (we show our own chip) */
-              div[data-testid="stUploadedFile"]{display:none !important;}
-              /* Make dropzone compact */
-              div[data-testid="stFileUploaderDropzone"]{padding:10px 12px !important;border-radius:10px !important;}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.subheader("📄 AI-analyse (tilstandsrapport)")
 
-        # ---------- Header ----------
-        st.subheader("📄 AI-analyse (salgsoppgave)")
-
-        # Compact header: filename chip (left) + uploader (right)
-        head_l, head_r = st.columns([1, 0.58])
-        with head_l:
-            _u = st.session_state.get("prospectus_pdf")
-            if _u is not None:
-                try:
-                    _name = getattr(_u, "name", "salgsoppgave.pdf")
-                    _size_mb = (
-                        f"{(len(_u.getvalue())/1_048_576):.1f}MB"
-                        if hasattr(_u, "getvalue")
-                        else ""
-                    )
-                except Exception:
-                    _name, _size_mb = "salgsoppgave.pdf", ""
-                st.markdown(
-                    f'<div class="td-chip">📄 <b>{_name}</b> <span style="opacity:.7">{_size_mb}</span>'
-                    f'<span class="x" onclick="window.dispatchEvent(new Event(\'td-clear-pdf\'))">✕</span></div>',
-                    unsafe_allow_html=True,
-                )
-                # Small JS hook to request rerun + clear; Streamlit will ignore JS, so keep a real button too.
-                if st.button("Fjern", key="td_clear_pdf_btn", help="Fjern valgt PDF"):
-                    st.session_state["prospectus_pdf"] = None
-                    st.session_state.pop("prospectus_ai", None)
-                    st.rerun()
-            else:
-                st.markdown(
-                    '<div class="td-chip">📄 <i>Ingen fil valgt</i></div>',
-                    unsafe_allow_html=True,
-                )
-
-        with head_r:
-            uploaded = st.file_uploader(
-                " ",
-                type=["pdf"],
-                accept_multiple_files=False,
-                key="prospectus_pdf",
-                label_visibility="collapsed",
-            )
-
-        # ---------- Analyse-knapp ----------
-        loading = st.session_state.get("prospectus_loading", False)
-        if st.button(
-            "🌀 Analyserer…" if loading else "Analyser PDF",
-            disabled=(uploaded is None or loading),
-        ):
-            if uploaded is not None and not loading:
-                st.session_state["prospectus_loading"] = True
-                with st.spinner("Analyserer PDF …"):
-                    data = uploaded.read()
-                    text = extract_pdf_text_from_bytes(data)
-                    if text:
-                        st.session_state["prospectus_ai"] = analyze_prospectus(text)
-                    else:
-                        st.error(
-                            "Klarte ikke å hente tekst fra PDF-en (kan være skannet/bilde-PDF)."
-                        )
-                st.session_state["prospectus_loading"] = False
-                st.rerun()
-
-        # ---------- Resultat ----------
-        res = st.session_state.get("prospectus_ai") or {}
+        res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
         if not res:
-            st.caption("Last opp en PDF og trykk «Analyser PDF» for å få vurdering.")
+            st.caption("Ingen tilstandsrapport funnet eller analysert.")
             st.stop()
 
-        # Optional top summary from model
-        if res.get("summary_md"):
-            st.markdown(res["summary_md"])
+        if _as_str(res.get("summary_md")):
+            st.markdown(_as_str(res["summary_md"]))
 
-        # Helper to build one full card as a single HTML block (prevents broken boxes)
-        def _card(title_html: str, items: list[str]) -> str:
+        # Lokalt helper for kort
+        def _card(title_html: str, items: List[str]) -> str:
             if items:
-                lis = "".join(
-                    f"<li>{st._escape_markdown(it, unsafe_allow_html=True) if hasattr(st,'_escape_markdown') else it}</li>"
-                    for it in items
-                )
-                body = f'<ul class="td-list">{lis}</ul>'
+                lis = "".join(f"<li>{html.escape(str(it))}</li>" for it in items)
+                body = f'<ul class="aiR-list">{lis}</ul>'
             else:
-                body = '<div class="td-subtle">Ingen punkter.</div>'
-            return f'<div class="td-card"><div class="td-title">{title_html}</div>{body}</div>'
+                body = '<div class="aiR-subtle">Ingen punkter.</div>'
+            return f'<div class="aiR-card"><div class="aiR-title">{title_html}</div>{body}</div>'
 
-        # Prepare sections
         tg3_html = _card(
-            '🛑 TG3 (alvorlig) <span class="td-badge danger">Høy risiko</span>',
+            '🛑 TG3 (alvorlig) <span class="aiR-badge danger">Høy risiko</span>',
             res.get("tg3") or [],
         )
         tiltak_html = _card("🛠️ Tiltak / bør pusses opp", res.get("upgrades") or [])
         tg2_html = _card(
-            '⚠️ TG2 <span class="td-badge warn">Middels risiko</span>',
+            '⚠️ TG2 <span class="aiR-badge warn">Middels risiko</span>',
             res.get("tg2") or [],
         )
         watch_html = _card("👀 Vær oppmerksom på", res.get("watchouts") or [])
-        qs_list = res.get("questions") or []
+        qs_list = cast(List[str], res.get("questions") or [])
         if qs_list:
             qs_html = _card("❓ Spørsmål til megler", qs_list[:6])
         else:
-            qs_html = '<div class="td-card"><div class="td-title">❓ Spørsmål til megler</div><div class="td-subtle">Ingen spørsmål generert.</div></div>'
+            qs_html = '<div class="aiR-card"><div class="aiR-title">❓ Spørsmål til megler</div><div class="aiR-subtle">Ingen spørsmål generert.</div></div>'
 
-        # Render grid: two rows of two, then a full-width questions card
         grid_html = f"""
-        <div class="td-grid">
-          <div class="td-cell">{tg3_html}</div>
-          <div class="td-cell">{tiltak_html}</div>
-          <div class="td-cell">{tg2_html}</div>
-          <div class="td-cell">{watch_html}</div>
-          <div class="td-cell td-span2">{qs_html}</div>
-        </div>
-        """
+    <div class="aiR-grid">
+      <div class="aiR-cell">{tg3_html}</div>
+      <div class="aiR-cell">{tiltak_html}</div>
+      <div class="aiR-cell">{tg2_html}</div>
+      <div class="aiR-cell">{watch_html}</div>
+      <div class="aiR-cell aiR-span2">{qs_html}</div>
+    </div>
+    """
         st.markdown(grid_html, unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)

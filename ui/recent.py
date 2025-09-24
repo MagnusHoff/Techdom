@@ -1,8 +1,12 @@
+# ui/recent.py
+from __future__ import annotations
+
 import streamlit as st
+from typing import Any, Dict, List, Optional, cast
 from core.history import get_recent
 
 
-def _open_analysis(finn_url: str):
+def _open_analysis(finn_url: str) -> None:
     st.session_state["listing_url"] = finn_url
     st.session_state["_scraped_url"] = None
     st.session_state["_first_compute_done"] = False
@@ -11,8 +15,40 @@ def _open_analysis(finn_url: str):
     st.rerun()
 
 
+def _as_str(v: Any, default: str = "") -> str:
+    """Trygt konverter til str, ellers default."""
+    if isinstance(v, str):
+        return v
+    if v is None:
+        return default
+    try:
+        return str(v)
+    except Exception:
+        return default
+
+
+def _as_number(v: Any) -> Optional[float]:
+    """Returner float hvis mulig, ellers None."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        t = v.replace(" ", "").replace("\u00a0", "").replace(",", ".")
+        try:
+            return float(t)
+        except Exception:
+            return None
+    return None
+
+
 def render_recent_analyses(n: int = 8, columns: int = 4) -> None:
-    items = get_recent(n)
+    raw_items = get_recent(n)
+    # Anta liste av dict, men beskytt oss i tilfelle
+    items: List[Dict[str, Any]] = []
+    if isinstance(raw_items, list):
+        for it in raw_items:
+            if isinstance(it, dict):
+                items.append(cast(Dict[str, Any], it))
+
     if not items:
         st.caption("Ingen analyser enda.")
         return
@@ -60,17 +96,22 @@ def render_recent_analyses(n: int = 8, columns: int = 4) -> None:
     st.markdown("### Andre analyser")
     cols = st.columns(columns, gap="small")
 
-    for i, rec in enumerate(items[: columns * 2]):  # 2 rows max
+    # Vis maks 2 rader
+    max_cards = columns * 2
+    for i, rec in enumerate(items[:max_cards]):
         with cols[i % columns]:
             with st.container(border=True):
-                # Build the whole card in ONE markdown call (prevents ghost boxes)
-                img = rec.get("image") or ""
-                ts = (rec.get("ts") or "")[:16].replace("T", " ")
-                title = rec.get("title") or "Uten tittel"
-                price = rec.get("price")
+                # Les felt trygt
+                img = _as_str(rec.get("image"))
+                ts = _as_str(rec.get("ts"))[:16].replace("T", " ")
+                title = _as_str(rec.get("title"), "Uten tittel")
+                price_num = _as_number(rec.get("price"))
+
                 price_html = (
-                    f"<div class='price'>Pris: {price:,.0f} kr</div>".replace(",", " ")
-                    if isinstance(price, (int, float)) and price > 0
+                    f"<div class='price'>Pris: {price_num:,.0f} kr</div>".replace(
+                        ",", " "
+                    )
+                    if (price_num is not None and price_num > 0)
                     else ""
                 )
 
@@ -87,12 +128,24 @@ def render_recent_analyses(n: int = 8, columns: int = 4) -> None:
                 """
                 st.markdown(card_html, unsafe_allow_html=True)
 
-                # Actions (buttons) stay at the bottom
+                # Actions nederst
+                finn_url = _as_str(rec.get("finn_url"))
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Åpne analyse", key=f"open_{rec.get('id')}"):
-                        _open_analysis(rec.get("finn_url"))
+                    if finn_url:
+                        if st.button(
+                            "Åpne analyse", key=f"open_{_as_str(rec.get('id'))}"
+                        ):
+                            _open_analysis(finn_url)
+                    else:
+                        # Manglende URL: vis disabled knapp
+                        st.button(
+                            "Åpne analyse",
+                            key=f"open_{_as_str(rec.get('id'))}",
+                            disabled=True,
+                        )
                 with c2:
-                    st.link_button(
-                        "FINN-annonse", rec.get("finn_url"), type="secondary"
-                    )
+                    if finn_url:
+                        st.link_button("FINN-annonse", finn_url, type="secondary")
+                    else:
+                        st.caption("Mangler FINN-URL")
