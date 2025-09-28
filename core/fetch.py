@@ -831,17 +831,29 @@ def _persist_to_s3_and_mirror(
 
     new_hash = _sha256_bytes(pdf_bytes)
 
-    # S3-opplasting (primær)
-    up = upload_prospekt(
-        local_path=_mirror_tmp_write(finnkode, pdf_bytes),
-        finnkode=finnkode,
-        url_expire=3600,
-    )
-    # upload_prospekt returnerer dict med s3_uri, url (presigned), bucket, key
-    out_dbg["s3_uri"] = up.get("s3_uri")
-    out_dbg["s3_key"] = up.get("key")
-    out_dbg["presigned_url"] = up.get("url")
-    out_dbg["pdf_uploaded"] = True
+    tmp_path = _mirror_tmp_write(finnkode, pdf_bytes)
+    up: Dict[str, Any] = {}
+    presigned_url: str | None = None
+
+    if _prospekt_s3_enabled():
+        try:
+            up = upload_prospekt(
+                local_path=tmp_path,
+                finnkode=finnkode,
+                url_expire=3600,
+            )
+        except Exception as exc:
+            # Ikke stopp hele flyten lokalt; logg feil og fortsett.
+            out_dbg["s3_error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            out_dbg["s3_uri"] = up.get("s3_uri")
+            out_dbg["s3_key"] = up.get("key")
+            presigned_url = up.get("url")
+            out_dbg["presigned_url"] = presigned_url
+            out_dbg["pdf_uploaded"] = True
+    else:
+        out_dbg["s3_disabled"] = True
+
     out_dbg["pdf_hash"] = new_hash
 
     # Lokal speiling (for dev/feilsøk)
@@ -871,7 +883,7 @@ def _persist_to_s3_and_mirror(
     )
     _save_meta(finnkode, meta)
 
-    return pdf_bytes, up.get("url"), out_dbg
+    return pdf_bytes, presigned_url or up.get("url"), out_dbg
 
 
 def _mirror_tmp_write(finnkode: str, pdf_bytes: bytes) -> Path:
