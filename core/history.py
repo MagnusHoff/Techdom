@@ -85,3 +85,8 @@ def get_recent(n: int = 6) -> list[dict]:
         if len(out) >= n:
             break
     return out
+
+
+def get_total_count() -> int:
+    """Returner totalt antall analyser lagret lokalt."""
+    return len(_load_all())

@@ -4,16 +4,16 @@ import streamlit as st
 def render_footer() -> None:
     """Render den tilpassede footer-seksjonen nederst på siden."""
     instagram_svg = (
-        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" "
-        "stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" "
-        "aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"4.5\"/>"
-        "<circle cx=\"12\" cy=\"12\" r=\"3.8\"/><circle cx=\"17\" cy=\"7\" r=\"1\"/></svg>"
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4.5"/>'
+        '<circle cx="12" cy="12" r="3.8"/><circle cx="17" cy="7" r="1"/></svg>'
     )
     mail_svg = (
-        "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" "
-        "stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" "
-        "aria-hidden=\"true\"><rect x=\"3\" y=\"5\" width=\"18\" height=\"14\" rx=\"2.2\"/>"
-        "<polyline points=\"4 7 12 12.5 20 7\"/></svg>"
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+        'aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.2"/>'
+        '<polyline points="4 7 12 12.5 20 7"/></svg>'
     )
 
     footer_html = f"""
@@ -29,7 +29,7 @@ def render_footer() -> None:
         </a>
       </div>
       <div class=\"td-footer-disclaimer\">
-        Analysene fra Techdom.ai er kun ment som veiledende informasjon. Vi kan ikke garantere fullstendig nøyaktighet, og innholdet erstatter ikke profesjonell rådgivning. Bruk alltid egne vurderinger eller søk faglig hjelp før du tar investeringsbeslutninger.
+        Techdom.ai tilbyr kun generell og veiledende informasjon. Vi garanterer ikke at analysene er fullstendige, korrekte eller oppdaterte, og vi fraskriver oss ethvert ansvar for tap eller beslutninger basert på informasjon fra plattformen. All bruk skjer på eget ansvar, og vi anbefaler å søke profesjonell rådgivning før du tar investeringsbeslutninger.
       </div>
     </div>
     """
