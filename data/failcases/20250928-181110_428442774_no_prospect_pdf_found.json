@@ -1,0 +1,76 @@
+{
+  "step": "failed_no_pdf",
+  "finn_url": "https://www.finn.no/realestate/homes/ad.html?finnkode=428442774",
+  "megler_url": "https://www.eiendomsmegler1.no/boliger/mn-32250325?cid=partner;;finn;;em1mn_salgsoppgave;;se-komplett-salgsoppgave",
+  "browser_debug": {
+    "start_url": "https://www.eiendomsmegler1.no/boliger/mn-32250325?cid=partner;;finn;;em1mn_salgsoppgave;;se-komplett-salgsoppgave",
+    "step": "failed",
+    "click_hints": [
+      "salgsoppgave",
+      "prospekt",
+      "salgsprospekt",
+      "for utskrift"
+    ],
+    "allow_only": [
+      "prospekt",
+      "salgsoppgav",
+      "salgsprospekt"
+    ],
+    "deny": [
+      "tilstandsrapport",
+      "boligsalgsrapport",
+      "fidens",
+      "nabolag",
+      "nabolagsprofil",
+      "energiattest",
+      "egenerkl",
+      "anticimex",
+      "tilstandsrapport",
+      "boligsalgsrapport",
+      "byggteknisk",
+      "fidens",
+      "egenerkl",
+      "egenerklaering",
+      "egenerklæring",
+      "energiattest",
+      "energimerke",
+      "nabolag",
+      "nabolagsprofil",
+      "anticimex",
+      "boligkjøperforsikring",
+      "meglerpakke",
+      "megleropplysninger",
+      "budskjema",
+      "seksjon",
+      "planinfo",
+      "faktura",
+      "skatt",
+      "basiskart",
+      "tegning",
+      "situasjonsplan",
+      "kommunal",
+      "avgift",
+      "gebyr",
+      "360",
+      "kart",
+      "video",
+      "bilder"
+    ],
+    "click_note": "clicked_button_force",
+    "response_hit": null,
+    "download_hit": null
+  },
+  "pdf_url": null,
+  "pdf_path": null,
+  "content_type": null,
+  "content_length": null,
+  "used_return": "prospekt_s3",
+  "driver_probe": [
+    "em1",
+    "generic_local"
+  ],
+  "error": "no_prospect_pdf_found",
+  "extra": {
+    "megler_url": "https://www.eiendomsmegler1.no/boliger/mn-32250325?cid=partner;;finn;;em1mn_salgsoppgave;;se-komplett-salgsoppgave"
+  }
+}

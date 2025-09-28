@@ -65,6 +65,12 @@ AWS_PROSPEKT_REGION = os.getenv("AWS_PROSPEKT_REGION", "eu-north-1").strip()
 AWS_PROSPEKT_ACCESS_KEY_ID = os.getenv("AWS_PROSPEKT_ACCESS_KEY_ID", "").strip()
 AWS_PROSPEKT_SECRET_ACCESS_KEY = os.getenv("AWS_PROSPEKT_SECRET_ACCESS_KEY", "").strip()
 
+# Failcase-opplasting (valgfritt)
+FAILCASE_BUCKET = os.getenv("FAILCASE_BUCKET", "").strip()
+FAILCASE_PREFIX = (
+    (os.getenv("FAILCASE_PREFIX", "failcases") or "failcases").strip().strip("/")
+)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Små helpers
@@ -185,12 +191,39 @@ def _dump_failcase(
         if extra:
             payload["extra"] = {**payload.get("extra", {}), **extra}
 
-        (base.with_suffix(".json")).write_text(
+        json_path = base.with_suffix(".json")
+        json_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         if pdf_bytes:
-            (base.with_suffix(".pdf")).write_bytes(pdf_bytes)
+            pdf_path = base.with_suffix(".pdf")
+            pdf_path.write_bytes(pdf_bytes)
+        else:
+            pdf_path = None
+
+        if _failcase_s3_enabled():
+            try:
+                client = _failcase_client()
+
+                key_json = _failcase_key(stem, ".json")
+                client.upload_file(
+                    str(json_path),
+                    FAILCASE_BUCKET,
+                    key_json,
+                    ExtraArgs={"ContentType": "application/json; charset=utf-8"},
+                )
+
+                if pdf_path and pdf_path.exists():
+                    key_pdf = _failcase_key(stem, ".pdf")
+                    client.upload_file(
+                        str(pdf_path),
+                        FAILCASE_BUCKET,
+                        key_pdf,
+                        ExtraArgs={"ContentType": "application/pdf"},
+                    )
+            except Exception:
+                pass
     except Exception:
         # Ikke la dump i seg selv velte kjøringen
         pass
@@ -280,6 +313,31 @@ def _prospekt_client():
         aws_access_key_id=AWS_PROSPEKT_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_PROSPEKT_SECRET_ACCESS_KEY,
     )
+
+
+def _failcase_s3_enabled() -> bool:
+    return bool(
+        boto3
+        and FAILCASE_BUCKET
+        and AWS_PROSPEKT_ACCESS_KEY_ID
+        and AWS_PROSPEKT_SECRET_ACCESS_KEY
+    )
+
+
+def _failcase_client():
+    assert boto3 is not None, "boto3 mangler"
+    return boto3.client(
+        "s3",
+        region_name=AWS_PROSPEKT_REGION,
+        aws_access_key_id=AWS_PROSPEKT_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_PROSPEKT_SECRET_ACCESS_KEY,
+    )
+
+
+def _failcase_key(stem: str, suffix: str) -> str:
+    if FAILCASE_PREFIX:
+        return f"{FAILCASE_PREFIX}/{stem}{suffix}"
+    return f"{stem}{suffix}"
 
 
 def _s3_head(key: str) -> Optional[dict]:

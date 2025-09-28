@@ -1,0 +1,12 @@
+{
+  "finnkode": "428959792",
+  "source_pdf_url": "https://ask.webtopsolutions.com/flow/api/Public/Cases/9351fb14-3d48-4382-9234-72ba2688280a/Files/360b24a8-eb43-4a2a-ac47-7073fe2244f5",
+  "saved_at": "2025-09-28T12:57:49.491916Z",
+  "sha256": "887a0a2b6ae7d2cf44938dacabdb11aa88017647d9dbf7a4ae99e76122d084bc",
+  "size": 24519276,
+  "s3": {
+    "bucket": null,
+    "key": null,
+    "s3_uri": null
+  }
+}

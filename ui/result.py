@@ -23,6 +23,9 @@ from core.history import add_analysis
 from core.scrape import scrape_finn
 from core.fetch import get_prospect_or_scrape  # ⬅️ kun prospekt
 
+
+DEFAULT_EQUITY_PCT = 0.15
+
 # --------------------------- PDF tekstuttrekk ---------------------------
 
 # Valgfri "rask" PDF-tekstuttrekk fra core (hvis du har en der)
@@ -102,6 +105,14 @@ def _as_float(v: Any, default: float = 0.0) -> float:
     return default
 
 
+def _default_equity(price: Any) -> int:
+    """Standardiser 15 % av kjøpesum som minimum egenkapital."""
+    p = _as_float(price, 0.0)
+    if p <= 0:
+        return 0
+    return int(round(p * DEFAULT_EQUITY_PCT))
+
+
 def _as_opt_float(v: Any) -> Optional[float]:
     try:
         f = _as_float(v, default=float("nan"))
@@ -121,11 +132,12 @@ def _interest_only_float() -> float:
         return 0.0
 
 
-def _init_params_for_new_url(_: Dict[str, Any]) -> Dict[str, Any]:
+def _init_params_for_new_url(info: Dict[str, Any]) -> Dict[str, Any]:
     """Default-verdier ved ny FINN-URL."""
+    price = _as_int(info.get("total_price"), 0)
     return {
-        "price": 0,
-        "equity": 0,
+        "price": price,
+        "equity": _default_equity(price),
         "interest": 0.0,
         "term_years": 30,
         "rent": 0,
@@ -143,6 +155,59 @@ def _clean_url(u: str) -> str:
         return urlunparse((p.scheme, p.netloc, p.path, p.params, "", ""))
     except Exception:
         return u
+
+
+def _result_metric_html(
+    label: str,
+    value: str,
+    tooltip: str,
+    align: str = "right",
+    value_class: str = "",
+) -> str:
+    """Lag HTML-snutt for resultatkort med tooltip."""
+    esc_label = html.escape(label)
+    esc_value = html.escape(value)
+    esc_tooltip = html.escape(tooltip)
+    align_class = {
+        "left": "td-align-left",
+        "center": "td-align-center",
+        "right": "td-align-right",
+    }.get(align, "td-align-right")
+    value_cls_attr = f" td-{value_class}" if value_class else ""
+    return f"""
+    <div class=\"td-result-metric\">
+      <div class=\"td-result-head\">
+        <span>{esc_label}</span>
+        <div class=\"td-result-info {align_class}\">
+          <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"
+               stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"
+               aria-hidden=\"true\" focusable=\"false\">
+            <circle cx=\"12\" cy=\"12\" r=\"10\"></circle>
+            <line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"></line>
+            <line x1=\"12\" y1=\"8\"  x2=\"12.01\" y2=\"8\"></line>
+          </svg>
+          <div class=\"td-result-tip\">{esc_tooltip}</div>
+        </div>
+      </div>
+      <div class=\"td-result-value{value_cls_attr}\">{esc_value}</div>
+    </div>
+    """
+
+
+def _cashflow_class(value: float) -> str:
+    if value < -2000:
+        return "color-red"
+    if value < 0:
+        return "color-orange"
+    return "color-green"
+
+
+def _roe_class(value_pct: float) -> str:
+    if value_pct < 5:
+        return "color-red"
+    if value_pct < 10:
+        return "color-orange"
+    return "color-green"
 
 
 # --------------------------- main view ---------------------------
@@ -229,15 +294,17 @@ def render_result() -> None:
 
         chips = []
         if pdf_url:
+            safe_pdf_url = html.escape(pdf_url, quote=True)
             chips.append(
-                f'<a class="chip" href="{_clean_url(pdf_url)}" target="_blank" rel="noopener">Salgsoppgave</a>'
+                f'<a class="chip" href="{safe_pdf_url}" target="_blank" rel="noopener">Salgsoppgave</a>'
             )
         else:
             chips.append('<span class="chip disabled">Salgsoppgave</span>')
 
         if listing_url:
+            safe_listing_url = html.escape(listing_url, quote=True)
             chips.append(
-                f'<a class="chip" href="{_clean_url(listing_url)}" target="_blank" rel="noopener">Annonse</a>'
+                f'<a class="chip" href="{safe_listing_url}" target="_blank" rel="noopener">Annonse</a>'
             )
         else:
             chips.append('<span class="chip disabled">Annonse</span>')
@@ -261,6 +328,28 @@ def render_result() -> None:
 
     # ---------- HØYRE ----------
     with right:
+        st.markdown(
+            """
+            <style>
+              [role="tooltip"], [data-testid="stTooltip"] {
+                background:#000 !important;
+                color:#fff !important;
+                border:1px solid rgba(255,255,255,.18) !important;
+                box-shadow:0 6px 16px rgba(0,0,0,.35) !important;
+              }
+              [data-testid="stTooltipContent"] {
+                color:#fff !important;
+                white-space:normal !important;
+                font-size:13px;
+                line-height:1.4;
+              }
+              [data-testid="stTooltipContent"] * {
+                color:inherit !important;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         # --- Parametere (inputfeltene) ---
         st.markdown("**Parametre**")
         c1, c2 = st.columns(2)
@@ -408,9 +497,7 @@ def render_result() -> None:
                     hoa_from_finn = _as_int(info.get("hoa_month"), 0)
 
                     # 2) Egenkapital 15 %
-                    equity_from_price = (
-                        int(round(price_from_finn * 0.15)) if price_from_finn else 0
-                    )
+                    equity_from_price = _default_equity(price_from_finn)
 
                     # 3) CSV/Geo-estimat (leie)
                     target_area = _as_opt_float(info.get("area_m2"))
@@ -461,9 +548,6 @@ def render_result() -> None:
                         current_url
                     )
                     st.session_state["prospectus_debug"] = pdf_dbg
-                    print("prospectus_debug:", pdf_dbg)  # midlertidig logg for S3-feilsøking
-                    with st.sidebar.expander("Debug", expanded=False):
-                        st.json(pdf_dbg)
 
                     if pdf_bytes:
                         if presigned_url:
@@ -513,11 +597,14 @@ def render_result() -> None:
                   .td-info { position: relative; display:flex; justify-content:flex-end; height:28px; margin-top:6px; }
                   .td-info .ic { width:18px; height:18px; opacity:.85; cursor:help; }
                   .td-info .tip {
-                    display:none; position:absolute; bottom:28px; right:0; background:#111; color:#fff;
+                    position:absolute; bottom:32px; right:0; background:#000; color:#fff;
                     padding:10px 12px; border-radius:6px; font-size:13px; line-height:1.45;
-                    white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.3); z-index:9999; width:420px; text-align:left;
+                    white-space:normal; box-shadow:0 6px 16px rgba(0,0,0,.33); z-index:9999;
+                    width:clamp(200px, 52vw, 360px); max-width:calc(100vw - 32px);
+                    border:1px solid rgba(255,255,255,.18); opacity:0; visibility:hidden;
+                    transition:opacity .12s ease;
                   }
-                  .td-info:hover .tip { display:block; }
+                  .td-info:hover .tip { opacity:1; visibility:visible; }
                 </style>
                 <div class="td-info">
                   <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -584,18 +671,89 @@ def render_result() -> None:
         )
         st.session_state["_history_logged"] = True
 
-    a, b, c = st.columns(3)
-    with a:
-        st.metric("Cashflow (mnd)", f"{_as_float(m.get('cashflow')):.0f} kr")
-        st.metric("Lånebetaling (mnd)", f"{_as_float(m.get('m_payment')):.0f} kr")
-    with b:
-        st.metric("Break-even", f"{_as_float(m.get('break_even')):.0f} kr/mnd")
-        st.metric("NOI (år)", f"{_as_float(m.get('noi_year')):.0f} kr")
-    with c:
-        st.metric(
-            "Avdrag (år)", f"{_as_float(m.get('principal_reduction_year')):.0f} kr"
-        )
-        st.metric("ROE", f"{_as_float(m.get('total_equity_return_pct')):.1f} %")
+    st.markdown(
+        """
+        <style>
+          .td-result-metric{display:flex;flex-direction:column;gap:6px;margin-bottom:20px;}
+          .td-result-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:inherit;opacity:.85;}
+          .td-result-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;cursor:help;opacity:.85;}
+          .td-result-info svg{width:18px;height:18px;}
+          .td-result-tip{position:absolute;bottom:32px;background:#000;color:#fff;padding:10px 12px;border-radius:6px;font-size:13px;line-height:1.45;box-shadow:0 6px 16px rgba(0,0,0,.33);width:clamp(200px, 60vw, 320px);max-width:calc(100vw - 32px);border:1px solid rgba(255,255,255,.18);opacity:0;visibility:hidden;transition:opacity .12s ease;text-align:left;}
+          .td-result-info:hover .td-result-tip{opacity:1;visibility:visible;}
+          .td-result-info.td-align-left .td-result-tip{left:0;right:auto;}
+          .td-result-info.td-align-center .td-result-tip{left:50%;transform:translateX(-50%);}
+          .td-result-info.td-align-right .td-result-tip{right:0;left:auto;}
+          .td-result-value{font-size:26px;font-weight:700;color:inherit;}
+          @media (max-width:600px){.td-result-value{font-size:22px;}}
+          .td-result-value.td-color-red{color:#ff4d4f;}
+          .td-result-value.td-color-orange{color:#ffa940;}
+          .td-result-value.td-color-green{color:#3dd27c;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    columns = st.columns(3)
+    metrics = [
+        (
+            columns[0],
+            "left",
+            [
+                (
+                    "Månedlig overskudd",
+                    f"{_as_float(m.get('cashflow')):.0f} kr",
+                    "Hva du sitter igjen med etter leieinntekter og kostnader.",
+                    _cashflow_class(_as_float(m.get("cashflow"))),
+                ),
+                (
+                    "Månedlig lånekostnader",
+                    f"{_as_float(m.get('m_payment')):.0f} kr",
+                    "Summen du betaler banken hver måned (renter+avdrag).",
+                ),
+            ],
+        ),
+        (
+            columns[1],
+            "center",
+            [
+                (
+                    "Leie som må til for å gå i null",
+                    f"{_as_float(m.get('break_even')):.0f} kr/mnd",
+                    "Så mye leieinntekter må du ha for at prosjektet skal lønne seg.",
+                ),
+                (
+                    "Årlig nettoinntekt",
+                    f"{_as_float(m.get('noi_year')):.0f} kr",
+                    "Leieinntekter minus driftskostnader, men før lånekostnader.",
+                ),
+            ],
+        ),
+        (
+            columns[2],
+            "right",
+            [
+                (
+                    "Årlig nedbetaling på lån",
+                    f"{_as_float(m.get('principal_reduction_year')):.0f} kr",
+                    "Så mye gjeld du betaler ned på lånet i året.",
+                ),
+                (
+                    "Avkastning på egenkapital",
+                    f"{_as_float(m.get('total_equity_return_pct')):.1f} %",
+                    "Hvor mye du tjener i forhold til pengene du selv har investert.",
+                    _roe_class(_as_float(m.get("total_equity_return_pct"))),
+                ),
+            ],
+        ),
+    ]
+
+    for col, align, items in metrics:
+        for label, value, tooltip, *rest in items:
+            value_class = rest[0] if rest else ""
+            col.markdown(
+                _result_metric_html(label, value, tooltip, align, value_class),
+                unsafe_allow_html=True,
+            )
 
     # --- AI: tall vs. salgsoppgave (PDF) ---
     st.markdown("---")

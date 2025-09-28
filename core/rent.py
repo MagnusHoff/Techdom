@@ -17,6 +17,7 @@ from core.ssb import get_city_m2_month  # kr/m² per MND for (by, segment)
 # -------------------------------
 CSV_PATH = Path("data/rent_m2.csv")  # kolonner: city,bucket,segment,kr_per_m2,updated
 ROUND_TO = 100
+ANNUAL_TO_MONTHLY_THRESHOLD = 1500.0  # over dette tolker vi tall som årlig beløp
 
 CONF_GEOJSON = 0.90
 CONF_TEXT_MATCH = 0.70
@@ -612,12 +613,20 @@ def get_rent_by_csv(
     if not used_seg:
         used_seg = seg
 
+    # Noen SSB-kilder leverer kr/m² per år – gjenkjenn via størrelse og del på 12
+    monthly_adjusted = False
+    if kr_per_m2 is not None and kr_per_m2 > ANNUAL_TO_MONTHLY_THRESHOLD:
+        kr_per_m2 = float(kr_per_m2) / 12.0
+        monthly_adjusted = True
+
     # --- Beregn brutto leie (kr/mnd)
     a = float(area_m2 or 0.0)
     gross = max(0.0, a) * float(kr_per_m2)
     rounded = int(round(gross / ROUND_TO)) * ROUND_TO
 
     note_parts.append(f"Oppslag: {used_bucket} / {used_seg}")
+    if monthly_adjusted:
+        note_parts.append("Konverterte kvadratmeterpris fra år til måned (÷12)")
 
     return RentEstimate(
         gross_rent=rounded,
