@@ -210,3 +210,6 @@ __pycache__/
 *.pyc
 .env
 .streamlit/
+
+# Ignorer arkiv-mappen
+Archive/
