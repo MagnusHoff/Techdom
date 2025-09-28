@@ -874,7 +874,7 @@ def render_result() -> None:
         res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
         if not res:
             st.caption("Ingen salgsoppgave funnet eller analysert.")
-            st.stop()
+            return
 
         if _as_str(res.get("summary_md")):
             st.markdown(_as_str(res["summary_md"]))

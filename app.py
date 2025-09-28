@@ -69,6 +69,7 @@ def get_secret(name: str, default: str = "") -> str:
 from ui.header import render_header
 from ui.landing import render_landing
 from ui.result import render_result
+from ui.footer import render_footer
 
 # --- CSS (frivillig) ---
 for css_candidate in ("styles.css", "Assets/styles.css"):
@@ -103,3 +104,5 @@ elif page == "result":
     render_result()
 else:
     st.error(f"Ukjent side: {page}")
+
+render_footer()
