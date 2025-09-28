@@ -10,35 +10,24 @@ from urllib.parse import urljoin, urlparse, parse_qs, urlunparse
 import requests
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from PyPDF2 import PdfReader, PdfWriter
+
+from PyPDF2 import PdfReader, PdfWriter  # fallback + trimming
 
 from core.http_headers import BROWSER_HEADERS
+from core.sessions import new_session  # <-- felles session-oppsett
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Requests / HTML
+#  Requests / HTML (delt session)
 # ──────────────────────────────────────────────────────────────────────────────
-def _new_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update(BROWSER_HEADERS)
-    s.max_redirects = 10
-    return s
-
-
-def _get_soup(
-    sess: requests.Session, url: str, referer: str | None = None
-) -> tuple[BeautifulSoup, str]:
-    headers: Dict[str, str] = {}
-    if referer:
-        headers["Referer"] = referer
-    r = sess.get(url, headers=headers, timeout=15, allow_redirects=True)
-    r.raise_for_status()
-    html_txt = r.text
-    return BeautifulSoup(html_txt, "html.parser"), html_txt
-
-
-def fetch_html(url: str) -> str:
-    r = requests.get(url, headers=BROWSER_HEADERS, timeout=15)
+def fetch_html(
+    url: str, *, sess: requests.Session | None = None, timeout: int = 15
+) -> str:
+    """
+    Hent HTML med felles new_session()-oppsett for stabil UA/proxy/cookies.
+    """
+    s = sess or new_session()
+    r = s.get(url, headers=BROWSER_HEADERS, timeout=timeout, allow_redirects=True)
     r.raise_for_status()
     return r.text
 
@@ -47,9 +36,7 @@ def fetch_html(url: str) -> str:
 #  Små helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _attr_to_str(val: Any) -> str | None:
-    """
-    BeautifulSoup-attributter kan være lister. Normaliser til str|None.
-    """
+    """BeautifulSoup-attributter kan være lister. Normaliser til str|None."""
     if val is None:
         return None
     try:
@@ -103,11 +90,35 @@ def _to_float(x: str | float | int | None) -> Optional[float]:
 #  PDF-tekst fra bytes (debug/verdi-ekstraksjon)
 # ──────────────────────────────────────────────────────────────────────────────
 def extract_pdf_text_from_bytes(pdf_bytes: bytes, max_pages: int = 40) -> str:
+    """
+    Prøver PyMuPDF (fitz) først for mer robust tekst, faller tilbake til PyPDF2.
+    """
+    # 1) PyMuPDF (fitz)
+    try:
+        import fitz  # type: ignore
+
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            chunks: List[str] = []
+            upto = min(doc.page_count, max_pages)
+            for i in range(upto):
+                try:
+                    t = doc.load_page(i).get_text("text") or ""
+                except Exception:
+                    t = ""
+                if t.strip():
+                    chunks.append(t)
+            if chunks:
+                return "\n".join(chunks).strip()
+    except Exception:
+        pass
+
+    # 2) PyPDF2 fallback
     try:
         bio = io.BytesIO(pdf_bytes)
         reader = PdfReader(bio)
-        chunks: List[str] = []
-        for page in reader.pages[:max_pages]:
+        chunks = []
+        upto = min(len(reader.pages), max_pages)
+        for page in reader.pages[:upto]:
             try:
                 t = page.extract_text() or ""
             except Exception:
@@ -212,9 +223,11 @@ def refine_salgsoppgave_from_bundle(
             end = cut_at
 
     writer = PdfWriter()
+    out_pages = 0  # robust teller (noen PyPDF2-versjoner har ikke writer.pages)
     for i in range(0, max(1, end)):
         try:
             writer.add_page(reader.pages[i])
+            out_pages += 1
         except Exception:
             continue
 
@@ -224,7 +237,7 @@ def refine_salgsoppgave_from_bundle(
         out = buf.getvalue()
         meta.update(
             {
-                "pages_out": len(writer.pages),
+                "pages_out": out_pages,
                 "cut_at": cut_at,
                 "scores_head": scores[:10],
             }
@@ -392,9 +405,14 @@ def _num(s: Any) -> Optional[int]:
 
 
 def scrape_finn(url: str) -> Dict[str, object]:
+    """
+    Skraper nøkkelinformasjon fra FINN-objektside: bilde, adresse, totalpris,
+    evt. felleskost, areal (BRA/P-rom/boligareal), antall rom og lat/lon.
+    """
     out: Dict[str, object] = {"source_url": url}
     try:
-        html_text = fetch_html(url)
+        sess = new_session()
+        html_text = fetch_html(url, sess=sess)
         soup = BeautifulSoup(html_text, "html.parser")
         text = soup.get_text(" ", strip=True)
 

@@ -1,4 +1,4 @@
-# drivers/privatmegleren.py
+# core/drivers/privatmegleren.py
 from __future__ import annotations
 
 import os
@@ -10,23 +10,43 @@ from typing import Optional, Dict, Any, Tuple, List
 from bs4 import BeautifulSoup, Tag
 from urllib.parse import urlparse, urljoin
 
+from .base import Driver
 from core.http_headers import BROWSER_HEADERS
-from ..config import SETTINGS
-
-# Valgfritt: hvis du har lagt inn denne helperen i core.scrape,
-# bruker vi den til å klippe ut kun "salgsoppgaven" fra vedleggs-PDF.
-try:
-    from core.scrape import refine_salgsoppgave_from_bundle  # type: ignore
-except Exception:
-    refine_salgsoppgave_from_bundle = None  # type: ignore[assignment]
+from core.config import SETTINGS
 
 PDF_MAGIC = b"%PDF-"
 
-# Kjente "dårlige" PDF-er som ikke er salgsoppgave
+# Kjente “dårlige” PDF-er som ikke er salgsoppgave
 PM_BAD_PDFS = {
     "https://privatmegleren.no/docs/klikk.pdf",
     "http://privatmegleren.no/docs/klikk.pdf",
 }
+
+# --- Kun salgsoppgave/prospekt ---
+POSITIVE_HINTS_RX = re.compile(
+    r"(salgsoppgav|prospekt|digital[\-_]?salgsoppgave|utskriftsvennlig|komplett|se\s+pdf|last\s+ned\s+pdf)",
+    re.I,
+)
+
+# Ekskluder andre dokumenttyper
+NEGATIVE_HINTS_RX = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|takst|fidens|estates|ns[\s\-_]*3600|"
+    r"energiattest|nabolag|nabolagsprofil|contentassets/nabolaget|egenerkl|"
+    r"budskjema|kjøpekontrakt|vilkår|terms|cookies)",
+    re.I,
+)
+
+MIN_PAGES = 6
+MIN_BYTES = 200_000  # moderat terskel
+
+
+def _as_str(v: object) -> str:
+    """Trygg konvertering av BS4-attributtverdi til str."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
+        return v[0]
+    return ""
 
 
 def _is_blacklisted_pdf(url: str) -> bool:
@@ -37,58 +57,11 @@ def _is_blacklisted_pdf(url: str) -> bool:
         return False
 
 
-def _looks_like_pdf(b: bytes) -> bool:
+def _looks_like_pdf(b: bytes | None) -> bool:
     return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
-def _abs(base_url: str, href: str | None) -> str | None:
-    if not href:
-        return None
-    return urljoin(base_url, href)
-
-
-def _origin_of(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _get(
-    sess: requests.Session, url: str, referer: str, timeout: int
-) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    origin = _origin_of(referer) or _origin_of(url)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": origin,
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
-    )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-
-
-def _head(
-    sess: requests.Session, url: str, referer: str, timeout: int
-) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    origin = _origin_of(referer) or _origin_of(url)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": origin,
-        }
-    )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
-
-
-# --- NEXT.js helpers ---
+# --- NEXT.js helpers (uendret der det gir mening) ---
 def _read_next_data(soup: BeautifulSoup) -> dict | None:
     tag = soup.find("script", id="__NEXT_DATA__")
     if not isinstance(tag, Tag):
@@ -164,79 +137,108 @@ def _try_buildid_fetch(
     return pdfs
 
 
+# --- HTTP helpers ---
+def _abs(base_url: str, href: str | None) -> str | None:
+    if not href:
+        return None
+    return urljoin(base_url, href)
+
+
+def _origin_of(u: str) -> str:
+    try:
+        p = urlparse(u)
+        return f"{p.scheme}://{p.netloc}"
+    except Exception:
+        return ""
+
+
+def _get(
+    sess: requests.Session, url: str, referer: str, timeout: int
+) -> requests.Response:
+    headers = dict(BROWSER_HEADERS)
+    origin = _origin_of(referer) or _origin_of(url)
+    headers.update(
+        {
+            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+            "Referer": referer,
+            "Origin": origin,
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-site",
+        }
+    )
+    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+
+
+def _head(
+    sess: requests.Session, url: str, referer: str, timeout: int
+) -> requests.Response:
+    headers = dict(BROWSER_HEADERS)
+    origin = _origin_of(referer) or _origin_of(url)
+    headers.update(
+        {
+            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+            "Referer": referer,
+            "Origin": origin,
+        }
+    )
+    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
+
+
+# --- Kandidatinnsamling: KUN prospekt/salgsoppgave ---
+def _allowed_candidate(label: str, url: str) -> bool:
+    lo = f"{label} {url}".lower()
+    if _is_blacklisted_pdf(url):
+        return False
+    if NEGATIVE_HINTS_RX.search(lo):
+        return False
+    # Må ha positive prospekt-signaler i label/URL eller avslutte med .pdf
+    return POSITIVE_HINTS_RX.search(lo) is not None or url.lower().endswith(".pdf")
+
+
 def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
     urls: List[str] = []
 
-    # 1) <a>, tekst + href
+    # 1) <a> – kun med positive hint
     if hasattr(soup, "find_all"):
         for a in soup.find_all("a"):
             if not isinstance(a, Tag):
                 continue
-            txt = (a.get_text(" ", strip=True) or "").lower()
-            href = (
-                a.get("href") or a.get("data-href") or a.get("download") or ""
-            ).strip()
+            txt = a.get_text(" ", strip=True) or ""
+            raw = a.get("href") or a.get("data-href") or a.get("download") or ""
+            href = _as_str(raw).strip()
             if not href:
                 continue
-            absu = _abs(base_url, href)
-            if not absu or _is_blacklisted_pdf(absu):
+            u = _abs(base_url, href)
+            if not u:
                 continue
-            lo = txt + " " + absu.lower()
-            if any(
-                k in lo
-                for k in (
-                    "salgsoppgav",
-                    "prospekt",
-                    "vedlegg",
-                    "digitalformat",
-                    "pdf",
-                    "dokument",
-                    "dokumenter",
-                    "all informasjon",
-                )
-            ) or absu.lower().endswith(".pdf"):
-                urls.append(absu)
+            if _allowed_candidate(txt, u):
+                urls.append(u)
 
-    # 2) knapper/div/span med data-attributt
+    # 2) knapper/div/span med data-attrs – samme filter
     if hasattr(soup, "find_all"):
         for el in soup.find_all(["button", "div", "span"]):
             if not isinstance(el, Tag):
                 continue
-            txt = (el.get_text(" ", strip=True) or "").lower()
+            txt = el.get_text(" ", strip=True) or ""
             for attr in ("data-href", "data-file", "data-url", "data-download"):
-                href = (el.get(attr) or "").strip()
+                raw = el.get(attr) or ""
+                href = _as_str(raw).strip()
                 if not href:
                     continue
-                absu = _abs(base_url, href)
-                if not absu or _is_blacklisted_pdf(absu):
-                    continue
-                lo = txt + " " + absu.lower()
-                if any(
-                    k in lo
-                    for k in (
-                        "salgsoppgav",
-                        "prospekt",
-                        "vedlegg",
-                        "digitalformat",
-                        "pdf",
-                        "dokument",
-                        "dokumenter",
-                        "all informasjon",
-                    )
-                ) or absu.lower().endswith(".pdf"):
-                    urls.append(absu)
+                u = _abs(base_url, href)
+                if u and _allowed_candidate(txt, u):
+                    urls.append(u)
 
-    # 3) Regex i rå HTML (fanger JSON i scripts også)
+    # 3) Regex i rå HTML – ta kun .pdf-lenker som ikke trigges av negative hint
     try:
         html = soup.decode()
     except Exception:
         html = ""
     for m in re.finditer(r'https?://[^\s"\'<>]+\.pdf(?:\?[^\s<>\'"]*)?', html, re.I):
-        u = m.group(0)
-        if u:
-            u = u.replace("\\/", "/")
-            if not _is_blacklisted_pdf(u):
-                urls.append(u)
+        u = m.group(0).replace("\\/", "/")
+        if _allowed_candidate("", u):
+            urls.append(u)
 
     # uniq
     seen: set[str] = set()
@@ -248,27 +250,7 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
     return out
 
 
-def _is_gated(html_text: str) -> bool:
-    """Heuristikk: skjema for å få salgsoppgaven (navn/telefon)."""
-    lo = (html_text or "").lower()
-    # typiske tekster og felt
-    hints = [
-        "få salgsoppgaven",
-        "send salgsoppaven",
-        "send salgsoppgaven",
-        "motta salgsoppgaven",
-        "salgsoppgaven på e-post",
-        "navn",
-        "telefon",
-        "mobil",
-        "postadresse",
-        "samtykke",
-    ]
-    score = sum(1 for h in hints if h in lo)
-    return score >= 3  # justér ved behov
-
-
-# Bonus: løft riktige kandidater (objekt-ID og navn i URL), straff "klikk.pdf"
+# Bonus: løft riktige kandidater (objekt-ID og prospekt-ord), straff "klikk.pdf"
 OBJ_ID_RX = re.compile(r"/(\d{6,})\b")
 
 
@@ -276,39 +258,80 @@ def _score_candidate(url: str, page_url: str) -> int:
     s = (url or "").lower()
     sc = 0
     if s.endswith(".pdf"):
+        sc += 25
+    if POSITIVE_HINTS_RX.search(s):
+        sc += 40
+    if "prospekt" in s:
         sc += 30
-    if "salgsoppgav" in s or "prospekt" in s:
+    if "salgsoppgav" in s:
         sc += 30
-    if "vedlegg" in s:
-        sc += 15
-    if "dokument" in s:
-        sc += 10
-
     # bonus hvis URL inneholder samme objekt-ID som siden
     m = OBJ_ID_RX.search(page_url)
     if m and m.group(1) in s:
         sc += 40
-
     # straff for kjente dårlige
     base = os.path.basename(s)
     if base == "klikk.pdf" or "/docs/klikk.pdf" in s:
         sc -= 500
-
     return sc
 
 
-class PrivatMeglerenDriver:
+# --- Innholdsvalidering: PDF må ligne prospekt, og ikke inneholde TR-ord først ---
+def _first_pages_text(b: bytes, max_pages: int = 3) -> str:
+    try:
+        from PyPDF2 import PdfReader
+        import io
+
+        r = PdfReader(io.BytesIO(b))  # type: ignore[name-defined]
+        out: List[str] = []
+        for p in r.pages[:max_pages]:
+            try:
+                t = (p.extract_text() or "").lower()
+            except Exception:
+                t = ""
+            if t:
+                out.append(t)
+        return "\n".join(out)
+    except Exception:
+        return ""
+
+
+def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
+    if not _looks_like_pdf(b):
+        return False
+    if not b or len(b) < MIN_BYTES:
+        return False
+    # minimumssider – prospekt er vanligvis >5–6 sider
+    try:
+        from PyPDF2 import PdfReader
+        import io
+
+        n_pages = len(PdfReader(io.BytesIO(b)).pages)  # type: ignore[name-defined]
+    except Exception:
+        n_pages = 0
+    if n_pages < MIN_PAGES:
+        return False
+    lo = (url or "").lower()
+    if NEGATIVE_HINTS_RX.search(lo):
+        return False
+    first_txt = _first_pages_text(b, 3)
+    if first_txt and NEGATIVE_HINTS_RX.search(first_txt):
+        return False
+    return True
+
+
+class PrivatMeglerenDriver(Driver):
     name = "privatmegleren"
 
     def matches(self, url: str) -> bool:
-        return "privatmegleren.no" in url.lower()
+        return "privatmegleren.no" in (url or "").lower()
 
     def try_fetch(
         self, sess: requests.Session, page_url: str
     ) -> Tuple[bytes | None, str | None, dict]:
         dbg: Dict[str, Any] = {"driver": self.name, "step": "start", "driver_meta": {}}
 
-        # Bygg varianter av URL som ofte inneholder dokumentseksjonen
+        # Prøv vanlige undersider hvor dokumentseksjon ligger
         base = page_url.rstrip("/")
         variants = [
             base,
@@ -321,7 +344,7 @@ class PrivatMeglerenDriver:
         max_tries = 2
 
         for view_url in variants:
-            # 0) last side (cookies + markup)
+            # 0) last side
             try:
                 r0 = _get(sess, view_url, view_url, SETTINGS.REQ_TIMEOUT)
                 r0.raise_for_status()
@@ -333,111 +356,64 @@ class PrivatMeglerenDriver:
                 ] = f"{type(e).__name__}"
                 continue
 
-            gated = _is_gated(html_text)
-            dbg["driver_meta"][f"gated_{view_url}"] = gated
-
-            # 1) NEXT-data: direkte PDF-lenker hvis mulig
+            # 1) NEXT-data: direkte PDF-lenker hvis mulig (+/_next/data/)
             try:
                 blob = _read_next_data(soup)
-                if isinstance(blob, dict):
-                    pdfs = _pdfs_from_next(blob)
-                else:
-                    pdfs = []
+                pdfs = _pdfs_from_next(blob) if isinstance(blob, dict) else []
                 if not pdfs:
-                    # Prøv /_next/data/{buildId}/{path}.json
                     pdfs = _try_buildid_fetch(sess, view_url, soup, referer=view_url)
             except Exception:
                 pdfs = []
 
-            # 2) Vanlige kandidater fra DOM/script
+            # 2) Vanlige kandidater fra DOM/script (KUN prospekt)
             dom_pdfs = _gather_pdf_candidates(soup, view_url)
 
-            # 3) Samle og prioriter (med scoring og blacklist-filter)
+            # 3) Samle og filtrer KUN prospekt-lenker
             candidates: List[str] = []
             for u in pdfs + dom_pdfs:
                 if not u or _is_blacklisted_pdf(u):
+                    continue
+                # Krev positive prospekt-hint og at ingen negative hint finnes
+                lo = u.lower()
+                if NEGATIVE_HINTS_RX.search(lo):
+                    continue
+                if not (POSITIVE_HINTS_RX.search(lo) or lo.endswith(".pdf")):
                     continue
                 if u not in candidates:
                     candidates.append(u)
 
             if not candidates:
-                # ingen kandidater på denne varianten, gå videre
                 continue
 
             candidates.sort(key=lambda u: _score_candidate(u, view_url), reverse=True)
 
-            # 4) HEAD/GET m/ retry + timing
+            # 4) HEAD/GET med validering av prospekt-innhold
             for url in candidates:
-                # Prøv HEAD
+                # HEAD
                 try:
                     h = _head(sess, url, view_url, SETTINGS.REQ_TIMEOUT)
                     ct = (h.headers.get("Content-Type") or "").lower()
                     final = str(h.url)
-                    if _is_blacklisted_pdf(final):
+                    if _is_blacklisted_pdf(final) or NEGATIVE_HINTS_RX.search(
+                        final.lower()
+                    ):
                         continue
-                    if h.ok and (
+                    is_pdfish = h.ok and (
                         ct.startswith("application/pdf")
                         or final.lower().endswith(".pdf")
-                    ):
-                        # Bekreft med GET (med små retries)
-                        for attempt in range(1, max_tries + 1):
-                            t0 = time.monotonic()
-                            rr = _get(sess, final, view_url, SETTINGS.REQ_TIMEOUT)
-                            elapsed_ms = int((time.monotonic() - t0) * 1000)
-                            ct2 = (rr.headers.get("Content-Type") or "").lower()
-                            ok_pdf = rr.ok and (
-                                ("application/pdf" in ct2)
-                                or _looks_like_pdf(rr.content)
-                            )
-                            dbg["driver_meta"][f"get_{attempt}_{final}"] = {
-                                "status": rr.status_code,
-                                "content_type": rr.headers.get("Content-Type"),
-                                "content_length": rr.headers.get("Content-Length"),
-                                "elapsed_ms": elapsed_ms,
-                                "final_url": str(rr.url),
-                                "bytes": len(rr.content) if rr.content else 0,
-                            }
-                            if ok_pdf:
-                                # Hvis gated og dette ser ut som VEDLEGG, forsøk å rense
-                                if (
-                                    gated
-                                    and "vedlegg" in final.lower()
-                                    and refine_salgsoppgave_from_bundle
-                                ):
-                                    try:
-                                        clean_bytes, meta = refine_salgsoppgave_from_bundle(rr.content)  # type: ignore[misc]
-                                        if clean_bytes:
-                                            dbg["driver_meta"]["refine"] = meta
-                                            dbg["step"] = "ok_vedlegg_refined"
-                                            return clean_bytes, final, dbg
-                                    except Exception:
-                                        pass
-                                dbg["step"] = "ok_direct"
-                                return rr.content, final, dbg
-                            if attempt < max_tries and rr.status_code in (
-                                429,
-                                500,
-                                502,
-                                503,
-                                504,
-                            ):
-                                time.sleep(0.5 * attempt)
-                                continue
-                            break
+                    )
                 except Exception:
-                    pass
+                    final, is_pdfish = url, False
 
-                # Fallback: direkte GET med retries
+                target = final if is_pdfish else url
+
+                # GET bekreft (med små retries)
                 for attempt in range(1, max_tries + 1):
                     try:
                         t0 = time.monotonic()
-                        rr = _get(sess, url, view_url, SETTINGS.REQ_TIMEOUT)
+                        rr = _get(sess, target, view_url, SETTINGS.REQ_TIMEOUT)
                         elapsed_ms = int((time.monotonic() - t0) * 1000)
-                        ct2 = (rr.headers.get("Content-Type") or "").lower()
-                        ok_pdf = rr.ok and (
-                            ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
-                        )
-                        dbg["driver_meta"][f"get_{attempt}_{url}"] = {
+                        dbg["driver_meta"][f"get_{attempt}_{target}"] = {
                             "status": rr.status_code,
                             "content_type": rr.headers.get("Content-Type"),
                             "content_length": rr.headers.get("Content-Length"),
@@ -445,22 +421,8 @@ class PrivatMeglerenDriver:
                             "final_url": str(rr.url),
                             "bytes": len(rr.content) if rr.content else 0,
                         }
-                        if ok_pdf:
-                            # Hvis gated og dette er VEDLEGG, prøv rensing
-                            if (
-                                gated
-                                and "vedlegg" in url.lower()
-                                and refine_salgsoppgave_from_bundle
-                            ):
-                                try:
-                                    clean_bytes, meta = refine_salgsoppgave_from_bundle(rr.content)  # type: ignore[misc]
-                                    if clean_bytes:
-                                        dbg["driver_meta"]["refine"] = meta
-                                        dbg["step"] = "ok_vedlegg_refined"
-                                        return clean_bytes, str(rr.url), dbg
-                                except Exception:
-                                    pass
-                            dbg["step"] = "ok_direct"
+                        if rr.ok and _is_prospect_pdf(rr.content, str(rr.url)):
+                            dbg["step"] = "ok_prospect"
                             return rr.content, str(rr.url), dbg
                         if attempt < max_tries and rr.status_code in (
                             429,
@@ -478,6 +440,5 @@ class PrivatMeglerenDriver:
                             continue
                         break
 
-        # Ingen PDF ble bekreftet på noen variant
         dbg["step"] = "no_pdf_confirmed"
         return None, None, dbg

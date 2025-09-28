@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import io
 import html
+import re
+from urllib.parse import urlparse, parse_qs, urlunparse
 from typing import Any, Dict, Optional, List, cast
 
 import streamlit as st
@@ -19,16 +21,15 @@ from core.rates import get_interest_estimate
 from core.rent import get_rent_by_csv
 from core.history import add_analysis
 from core.scrape import scrape_finn
-from core.fetch import get_tr_or_scrape
+from core.fetch import get_prospect_or_scrape  # ⬅️ kun prospekt
+
+# --------------------------- PDF tekstuttrekk ---------------------------
 
 # Valgfri "rask" PDF-tekstuttrekk fra core (hvis du har en der)
 try:
     from core.scrape import extract_pdf_text_from_bytes as _EXTRACT_PDF_TEXT_FROM_BYTES  # type: ignore
 except Exception:
     _EXTRACT_PDF_TEXT_FROM_BYTES = None  # type: ignore
-
-
-# --------------------------- PDF tekstuttrekk ---------------------------
 
 
 def extract_pdf_text_from_bytes(data: bytes, max_pages: int = 40) -> str:
@@ -135,6 +136,15 @@ def _init_params_for_new_url(_: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _clean_url(u: str) -> str:
+    """Dropp tracking/fragment for visning."""
+    try:
+        p = urlparse(u)
+        return urlunparse((p.scheme, p.netloc, p.path, p.params, "", ""))
+    except Exception:
+        return u
+
+
 # --------------------------- main view ---------------------------
 
 
@@ -166,6 +176,15 @@ def render_result() -> None:
         st.session_state["params"] = _init_params_for_new_url(info)
         st.session_state["_first_compute_done"] = False
         st.session_state["_history_logged"] = False
+        # Nullstill tidligere prospekt-ting
+        for key in (
+            "prospectus_pdf_bytes",
+            "prospectus_pdf_url",
+            "prospectus_ai",
+            "prospectus_debug",
+        ):
+            st.session_state.pop(key, None)
+        st.session_state["prospectus_source_url"] = url
     else:
         info = cast(Dict[str, Any], st.session_state.get("_scraped_info", {}) or {})
 
@@ -178,17 +197,12 @@ def render_result() -> None:
     st.markdown(
         """
         <style>
-          /* Hele gruppen – én flex-rad vi kontrollerer selv */
           #hdr_chips { display:flex; justify-content:flex-end; }
-
-          /* Helt inntil hverandre (endre gap her hvis du vil ha 1–2px luft) */
           #hdr_chips_row { display:flex; gap:5px; align-items:center; }
-
-          /* Selve chippen */
           a.chip, span.chip {
             display:inline-flex; align-items:center; justify-content:center;
-            padding:7px 16px;                 /* størrelse */
-            font-size:14px; font-weight:600;  /* tekst */
+            padding:7px 16px;
+            font-size:14px; font-weight:600;
             line-height:1;
             color:#E7ECFF !important;
             text-decoration:none !important;
@@ -204,7 +218,6 @@ def render_result() -> None:
         unsafe_allow_html=True,
     )
 
-    # Venstre: adresse. Høyre: tre chips i én rad
     hdr_left, hdr_right = st.columns([0.68, 0.32], gap="small")
     with hdr_left:
         if address:
@@ -217,19 +230,19 @@ def render_result() -> None:
         chips = []
         if pdf_url:
             chips.append(
-                f'<a class="chip" href="{pdf_url}" target="_blank" rel="noopener">Salgsoppgave</a>'
+                f'<a class="chip" href="{_clean_url(pdf_url)}" target="_blank" rel="noopener">Salgsoppgave</a>'
             )
         else:
             chips.append('<span class="chip disabled">Salgsoppgave</span>')
 
         if listing_url:
             chips.append(
-                f'<a class="chip" href="{listing_url}" target="_blank" rel="noopener">Annonse</a>'
+                f'<a class="chip" href="{_clean_url(listing_url)}" target="_blank" rel="noopener">Annonse</a>'
             )
         else:
             chips.append('<span class="chip disabled">Annonse</span>')
 
-        # Alltid grå ut "Alle detaljer" (ikke klikkbar)
+        # Alltid grå ut "Alle detaljer" (placeholder)
         chips.append('<span class="chip disabled">Alle detaljer</span>')
 
         st.markdown(
@@ -321,7 +334,7 @@ def render_result() -> None:
                 disabled=busy,
             )
 
-        # --- Felles CSS for liten spinner (står ved siden av "Hent data") ---
+        # --- Felles CSS for liten spinner (ved siden av "Hent data") ---
         st.markdown(
             """
             <style>
@@ -339,7 +352,6 @@ def render_result() -> None:
             unsafe_allow_html=True,
         )
 
-        # 'busy' = noe kjører (henting eller analyse). Brukes for å disable inputs/knapper og vise spinneren.
         busy = bool(st.session_state.get("_fetching")) or bool(
             st.session_state.get("_updating")
         )
@@ -356,7 +368,7 @@ def render_result() -> None:
                 st.session_state["_queued_params"] = dict(params)
                 st.rerun()
 
-        # ---------------- K2: HENT DATA (én spinner vises her når busy) ----------------
+        # ---------------- K2: HENT DATA ----------------
         with k2:
             # Nullstill lagret PDF/AI når FINN-url endres
             current_url = url.strip()
@@ -444,22 +456,25 @@ def render_result() -> None:
                     # 4) Rente-estimat
                     params["interest"] = _interest_only_float()
 
-                    # 5) Hent TR eller scrape automatisk
-                    pdf_bytes, pdf_url, pdf_dbg = get_tr_or_scrape(current_url)
+                    # 5) Hent PROSPEKT: bruk bytes + presigned URL direkte fra get_prospect_or_scrape()
+                    pdf_bytes, presigned_url, pdf_dbg = get_prospect_or_scrape(
+                        current_url
+                    )
                     st.session_state["prospectus_debug"] = pdf_dbg
 
                     if pdf_bytes:
+                        if presigned_url:
+                            st.session_state["prospectus_pdf_url"] = presigned_url
+                        else:
+                            st.session_state.pop("prospectus_pdf_url", None)
+
                         st.session_state["prospectus_pdf_bytes"] = pdf_bytes
-                        st.session_state["prospectus_pdf_url"] = pdf_url
                         st.session_state["prospectus_source_url"] = current_url
 
                         text = extract_pdf_text_from_bytes(pdf_bytes)
                         if text:
                             st.session_state["prospectus_ai"] = analyze_prospectus(text)
-                            st.toast(
-                                "Tilstandsrapport/salgsoppgave hentet og analysert.",
-                                icon="✅",
-                            )
+                            st.toast("Salgsoppgave hentet og analysert.", icon="✅")
                         else:
                             st.session_state.pop("prospectus_ai", None)
                             st.caption(
@@ -474,7 +489,7 @@ def render_result() -> None:
                         ):
                             st.session_state.pop(key, None)
                         st.caption(
-                            "Fant ikke PDF automatisk – du kan laste opp PDF manuelt under."
+                            "Fant ikke salgsoppgave automatisk – du kan laste opp PDF manuelt under."
                         )
 
                     # 6) Oppdater felter
@@ -586,11 +601,9 @@ def render_result() -> None:
     st.markdown(
         """
         <style>
-          /* ===== Hooks du kan justere fritt ===== */
-          #ai-metrics     { margin-top: 0px; }    /* venstre seksjon */
-          #ai-prospectus  { margin-top: 0px; }    /* høyre seksjon  */
+          #ai-metrics     { margin-top: 0px; }
+          #ai-prospectus  { margin-top: 0px; }
 
-          /* ===== Venstre analyse (tall) – egne klasser ===== */
           .aiL-grid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:16px; align-items:stretch; }
           .aiL-card{
             background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
@@ -601,7 +614,6 @@ def render_result() -> None:
           .aiL-title{ font-weight:700; font-size:16px; margin:0 0 4px 0 }
           .aiL-subtle{ opacity:.85; font-size:13px }
 
-          /* ===== Høyre analyse (tilstandsrapport) – egne klasser ===== */
           .aiR-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:16px; align-items:stretch; }
           @media (max-width:1000px){ .aiR-grid{ grid-template-columns:1fr } }
           .aiR-cell{ min-height:100%; display:flex }
@@ -692,15 +704,15 @@ def render_result() -> None:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ------------------- HØYRE: AI-analyse (tilstandsrapport) -------------------
+    # ------------------- HØYRE: AI-analyse (salgsoppgave) -------------------
     with right_ai:
         st.markdown('<div id="ai-prospectus">', unsafe_allow_html=True)
 
-        st.subheader("📄 AI-analyse (tilstandsrapport)")
+        st.subheader("📄 AI-analyse (salgsoppgave)")
 
         res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
         if not res:
-            st.caption("Ingen tilstandsrapport funnet eller analysert.")
+            st.caption("Ingen salgsoppgave funnet eller analysert.")
             st.stop()
 
         if _as_str(res.get("summary_md")):

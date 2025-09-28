@@ -1,41 +1,54 @@
+# core/drivers/obosmegleren.py
 from __future__ import annotations
-import re
+
 import io
+import re
 from typing import Tuple, Dict, Any, List, Optional
-import requests
+
 from PyPDF2 import PdfReader
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
-from ..sessions import new_session
-from ..config import SETTINGS
-from ..browser_fetch import BROWSER_UA, _response_looks_like_pdf
+from .base import Driver
+from core.config import SETTINGS
+from core.browser_fetch import BROWSER_UA, _response_looks_like_pdf
 
 PDF_MAGIC = b"%PDF-"
 PDF_RX = re.compile(r"\.pdf(?:[\?#][^\s\"']*)?$", re.I)
 # Webmegler-ender (attachment uten .pdf i URL)
 PDF_URL_HINTS = re.compile(r"(wngetfile\.ashx|/getdocument|/getfile|/download)", re.I)
 
-# Streng filtrering
-BLOCKLIST_RX = re.compile(
-    r"(nabolag|nabolagsprofil|contentassets/nabolaget|energiattest|egenerkl|salgsoppgave)",
+# --- Kun prospekt/salgsoppgave ---
+POSITIVE_HINTS = re.compile(
+    r"(salgsoppgav|prospekt|utskriftsvennlig|komplett|digital[_\-]?salgsoppgave|se\s+pdf|last\s+ned\s+pdf)",
     re.I,
 )
-# TR-hint i URL
-TR_URL_RX = re.compile(r"(tilstandsrapport|boligsalgsrapport|fidens|estates)", re.I)
 
+# Alt dette skal ekskluderes
+NEGATIVE_HINTS = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|takst|fidens|estates|energiattest|nabolag|"
+    r"nabolagsprofil|contentassets/nabolaget|egenerkl|budskjema|kjøpekontrakt|vilkår|terms|cookies)",
+    re.I,
+)
+
+# Tekster vi aktivt klikker på i UI
 CLICK_TEXTS = [
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    "takst",
-    "se tilstandsrapport",
+    "salgsoppgave",
+    "prospekt",
+    "komplett salgsoppgave",
+    "utskriftsvennlig",
+    "se pdf",
+    "last ned pdf",
 ]
 
+MIN_PAGES = 6
+MIN_BYTES = 200_000  # konservativ grense, OBOS-prospekter kan variere
 
-def _looks_like_pdf(b: bytes) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b[:4] == PDF_MAGIC
+
+def _looks_like_pdf(b: bytes | None) -> bool:
+    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
-def _min_pages(b: bytes, min_pages: int = 2) -> bool:
+def _min_pages(b: bytes, min_pages: int = MIN_PAGES) -> bool:
     try:
         r = PdfReader(io.BytesIO(b))
         return len(r.pages) >= min_pages
@@ -43,49 +56,58 @@ def _min_pages(b: bytes, min_pages: int = 2) -> bool:
         return False
 
 
-def _first_pages_have_tr(b: bytes, n: int = 3) -> bool:
+def _first_pages_text(b: bytes, n: int = 3) -> str:
     try:
         r = PdfReader(io.BytesIO(b))
-        txt = []
+        parts: List[str] = []
         for p in r.pages[:n]:
             try:
                 t = (p.extract_text() or "").lower()
             except Exception:
                 t = ""
             if t:
-                txt.append(t)
-        blob = "\n".join(txt)
-        return ("tilstandsrapport" in blob) or ("boligsalgsrapport" in blob)
+                parts.append(t)
+        return "\n".join(parts)
     except Exception:
-        return False
+        return ""
 
 
-def _url_allowed(u: str) -> bool:
+def _url_is_candidate(u: str, ctype: str = "") -> bool:
     if not u:
         return False
     lo = u.lower()
-    if BLOCKLIST_RX.search(lo):
+    if NEGATIVE_HINTS.search(lo):
         return False
-    return True
-
-
-def _looks_like_pdf_url(u: str, ctype: str = "") -> bool:
-    lo = (u or "").lower()
     return (
         "application/pdf" in (ctype or "").lower()
         or PDF_RX.search(lo) is not None
         or PDF_URL_HINTS.search(lo) is not None
+        or POSITIVE_HINTS.search(lo) is not None
     )
 
 
-class ObosMeglerenDriver:
+def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
+    if not _looks_like_pdf(b):
+        return False
+    if not b or len(b) < MIN_BYTES or not _min_pages(b, MIN_PAGES):
+        return False
+    lo = (url or "").lower()
+    if NEGATIVE_HINTS.search(lo):
+        return False
+    first_txt = _first_pages_text(b, 3)
+    if first_txt and NEGATIVE_HINTS.search(first_txt):
+        return False
+    return True
+
+
+class ObosMeglerenDriver(Driver):
     name = "obosmegleren"
 
     def matches(self, url: str) -> bool:
         return "obos.no/brukt-bolig/" in (url or "").lower()
 
     def try_fetch(
-        self, sess: requests.Session, page_url: str
+        self, sess, page_url: str
     ) -> Tuple[bytes | None, str | None, Dict[str, Any]]:
         dbg: Dict[str, Any] = {
             "driver": self.name,
@@ -104,7 +126,7 @@ class ObosMeglerenDriver:
                 pdf_bytes: Optional[bytes] = None
                 pdf_url: Optional[str] = None
 
-                # --- Sniff alle responses (viktig for wngetfile.ashx) ---
+                # --- Sniff responses (wngetfile.ashx, direkte .pdf osv.) ---
                 def handle_response(resp):
                     nonlocal pdf_bytes, pdf_url
                     if pdf_bytes is not None:
@@ -115,9 +137,7 @@ class ObosMeglerenDriver:
                     except Exception:
                         url, ctype = "", ""
 
-                    if not url or not _url_allowed(url):
-                        return
-                    if not _looks_like_pdf_url(url, ctype):
+                    if not _url_is_candidate(url, ctype):
                         return
 
                     if _response_looks_like_pdf(resp):
@@ -125,13 +145,13 @@ class ObosMeglerenDriver:
                             body = resp.body()
                         except Exception:
                             body = None
-                        if body and _looks_like_pdf(body):
+                        if body and _is_prospect_pdf(body, url):
                             pdf_bytes, pdf_url = body, url
                             dbg["response_hit"] = url
 
                 page.on("response", handle_response)
 
-                # --- Gå til siden ---
+                # --- Naviger til siden ---
                 try:
                     page.goto(
                         page_url,
@@ -156,19 +176,17 @@ class ObosMeglerenDriver:
                 except Exception:
                     pass
 
-                # Åpne "Last ned dokumenter" accordion hvis foldet
+                # Åpne "Last ned dokumenter" / "Dokumenter"
                 try:
-                    # lett variant: klikk på elementer som inneholder "last ned dokumenter"
                     nodes = page.locator("button, [role='button'], summary, a")
-                    n = nodes.count()
-                    for i in range(min(n, 200)):
+                    for i in range(min(nodes.count(), 200)):
                         el = nodes.nth(i)
                         try:
                             raw = el.inner_text(timeout=250) or ""
                         except Exception:
                             raw = ""
                         txt = raw.strip().lower()
-                        if "last ned dokument" in txt or "dokumenter" in txt:
+                        if ("last ned dokument" in txt) or ("dokumenter" in txt):
                             try:
                                 el.click(timeout=1200)
                                 dbg["opened_documents"] = True
@@ -178,55 +196,55 @@ class ObosMeglerenDriver:
                 except Exception:
                     pass
 
-                # Klikk på Tilstandsrapport-lenker/knapper
+                # Klikk KUN på salgsoppgave/prospekt-lenker
                 attempts: List[Dict[str, Any]] = []
                 try:
                     cands = page.locator("a[href], button, [role='button']")
-                    n = cands.count()
-                    for i in range(min(n, 300)):
+                    for i in range(min(cands.count(), 300)):
                         el = cands.nth(i)
                         try:
                             raw = el.inner_text(timeout=250) or ""
                         except Exception:
                             raw = ""
                         low = raw.strip().lower()
-                        hit = any(k in low for k in CLICK_TEXTS)
+                        hit = any(
+                            k in low for k in CLICK_TEXTS
+                        ) and not NEGATIVE_HINTS.search(low)
                         if len(attempts) < 120:
                             attempts.append(
                                 {
                                     "index": i,
-                                    "text_preview": (
-                                        raw[:90] + ("…" if len(raw) > 90 else "")
-                                    ),
+                                    "text_preview": raw[:90]
+                                    + ("…" if len(raw) > 90 else ""),
                                     "match": hit,
                                 }
                             )
                         if not hit:
                             continue
 
-                        # 1) Prøv direkte via href (noen viser direkte PDF eller wngetfile)
+                        # 1) Direkte via href
                         href = ""
                         try:
                             href = el.get_attribute("href") or ""
                         except Exception:
                             href = ""
-                        if href and _url_allowed(href):
+                        if href and _url_is_candidate(href):
                             try:
-                                rr = page.context.request.get(
+                                rr = context.request.get(
                                     href,
                                     headers={
                                         "Accept": "application/pdf,application/octet-stream,*/*"
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
+                                if rr.ok and _is_prospect_pdf(rr.body(), href):
                                     pdf_bytes, pdf_url = rr.body(), href
                                     dbg["click_direct_href"] = href
                                     break
                             except Exception:
                                 pass
 
-                        # 2) Ellers klikk for å trigge XHR/download (typisk wngetfile.ashx)
+                        # 2) Klikk for å trigge XHR/download
                         try:
                             el.scroll_into_view_if_needed(timeout=600)
                         except Exception:
@@ -251,7 +269,7 @@ class ObosMeglerenDriver:
 
                 dbg["click_attempts"] = attempts
 
-                # Vent litt for å fange sen XHR
+                # Vent litt for sen XHR
                 try:
                     page.wait_for_load_state("networkidle", timeout=3000)
                 except Exception:
@@ -264,7 +282,7 @@ class ObosMeglerenDriver:
                     # lenker i DOM
                     try:
                         urls = page.evaluate(
-                            "(() => Array.from(document.querySelectorAll('a[href]')).map(a=>a.href))()"
+                            "Array.from(document.querySelectorAll('a[href]')).map(a=>a.href)"
                         )
                         if isinstance(urls, list):
                             harvested.extend([u for u in urls if isinstance(u, str)])
@@ -274,64 +292,61 @@ class ObosMeglerenDriver:
                     # __NEXT_DATA__ JSON
                     try:
                         txt = page.evaluate(
-                            "(() => { const el=document.getElementById('__NEXT_DATA__'); return el?el.textContent:null; })()"
+                            "(() => (document.getElementById('__NEXT_DATA__')||{}).textContent)()"
                         )
                     except Exception:
                         txt = None
                     if isinstance(txt, str) and txt:
-                        for m in re.finditer(
+                        harvested += re.findall(
                             r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?', txt, re.I
-                        ):
-                            harvested.append(m.group(0))
-                        for m in re.finditer(
+                        )
+                        harvested += re.findall(
                             r'https?://[^"\'\s]+?(wngetfile\.ashx|/getdocument|/getfile|/download)[^"\'\s]*',
                             txt,
                             re.I,
-                        ):
-                            harvested.append(m.group(0))
+                        )
 
                     # scripts
                     try:
                         scripts = page.locator("script")
-                        n = scripts.count()
-                        for i in range(min(n, 60)):
+                        for i in range(min(scripts.count(), 60)):
                             try:
                                 content = scripts.nth(i).inner_text(timeout=200) or ""
                             except Exception:
                                 continue
-                            for m in re.finditer(
+                            harvested += re.findall(
                                 r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?',
                                 content,
                                 re.I,
-                            ):
-                                harvested.append(m.group(0))
-                            for m in re.finditer(
+                            )
+                            harvested += re.findall(
                                 r'https?://[^"\'\s]+?(wngetfile\.ashx|/getdocument|/getfile|/download)[^"\'\s]*',
                                 content,
                                 re.I,
-                            ):
-                                harvested.append(m.group(0))
+                            )
                     except Exception:
                         pass
 
-                    # uniq + filtrer
-                    seen = set()
-                    uniq = []
+                    # uniq + filtrer + ranger (prospekt først)
+                    seen: set[str] = set()
+                    uniq: List[str] = []
                     for u in harvested:
-                        if isinstance(u, str) and u not in seen and _url_allowed(u):
+                        if (
+                            isinstance(u, str)
+                            and u not in seen
+                            and _url_is_candidate(u)
+                        ):
                             seen.add(u)
                             uniq.append(u)
 
-                    # Prioriter wngetfile.ashx og TR-aktige URLer først
-                    def _score(u: str) -> int:
-                        sc = 0
-                        if "wngetfile.ashx" in u.lower():
-                            sc += 200
-                        if TR_URL_RX.search(u):
-                            sc += 50
-                        if u.lower().endswith(".pdf"):
-                            sc += 20
-                        return sc
+                    def _score(u: str) -> tuple:
+                        lo = u.lower()
+                        return (
+                            1 if POSITIVE_HINTS.search(lo) else 0,
+                            0 if NEGATIVE_HINTS.search(lo) else 1,
+                            lo.endswith(".pdf"),
+                            -len(lo),
+                        )
 
                     uniq.sort(key=_score, reverse=True)
 
@@ -344,20 +359,20 @@ class ObosMeglerenDriver:
                                 },
                                 timeout=SETTINGS.REQ_TIMEOUT * 1000,
                             )
-                            if rr.ok and _looks_like_pdf(rr.body()):
+                            if rr.ok and _is_prospect_pdf(rr.body(), u):
                                 pdf_bytes, pdf_url = rr.body(), u
                                 dbg["harvest_hit"] = u
                                 break
                         except Exception:
                             continue
 
-                # Nedlastings-event (siden åpner “tom side + tillat nedlasting”)
+                # Nedlastings-event (siste mulighet)
                 if not pdf_bytes:
                     try:
                         dl = page.wait_for_event("download", timeout=2500)
                         if dl:
                             u = dl.url or ""
-                            if _url_allowed(u):
+                            if _url_is_candidate(u):
                                 rr = context.request.get(
                                     u,
                                     headers={
@@ -365,7 +380,7 @@ class ObosMeglerenDriver:
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
+                                if rr.ok and _is_prospect_pdf(rr.body(), u):
                                     pdf_bytes, pdf_url = rr.body(), u
                                     dbg["download_hit"] = u
                     except Exception:
@@ -378,21 +393,7 @@ class ObosMeglerenDriver:
                     dbg["step"] = "no_pdf_found"
                     return None, None, dbg
 
-                # Valider min. sider
-                if not _min_pages(pdf_bytes, 2):
-                    dbg["step"] = "pdf_rejected_min_pages"
-                    return None, None, dbg
-
-                # Hvis URL ikke har klare TR-ord → sjekk tekst
-                tr_ok = True
-                if not TR_URL_RX.search(pdf_url or ""):
-                    tr_ok = _first_pages_have_tr(pdf_bytes)
-                dbg["tr_text_found"] = tr_ok
-                if not tr_ok:
-                    dbg["step"] = "pdf_rejected_not_tr"
-                    return None, None, dbg
-
-                dbg["step"] = "ok"
+                dbg["step"] = "ok_prospect"
                 return pdf_bytes, pdf_url, dbg
 
         except Exception as e:

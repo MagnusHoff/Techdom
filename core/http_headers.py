@@ -1,14 +1,13 @@
 # core/http_headers.py
+"""
+Standard HTTP-headere for scraping.
+Bruker alltid USER_AGENT fra config, så alt styres via .env / config.py.
+"""
 
-# Én sann kilde til User-Agent og standard nettleser-headere.
-BROWSER_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/127.0.0.0 Safari/537.36"
-)
+from .config import SETTINGS
 
 DEFAULT_HEADERS = {
-    "User-Agent": BROWSER_UA,
+    "User-Agent": SETTINGS.USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "nb-NO,nb;q=0.9,en-US;q=0.8,en;q=0.7",
     "Cache-Control": "no-cache",

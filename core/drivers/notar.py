@@ -1,96 +1,122 @@
+# core/drivers/notar.py
 from __future__ import annotations
-import re
-import io
-from typing import Optional, Tuple, Dict, Any, List
-import requests
-from bs4 import BeautifulSoup, Tag
-from PyPDF2 import PdfReader
 
-from ..http_headers import BROWSER_HEADERS
-from ..sessions import new_session
-from ..config import SETTINGS
-from ..browser_fetch import BROWSER_UA, _response_looks_like_pdf  # reuse helpers
+import io
+import re
+from typing import Tuple, Dict, Any, List, Optional
+
+from PyPDF2 import PdfReader
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
+from .base import Driver
+from core.http_headers import BROWSER_HEADERS
+from core.config import SETTINGS
+from core.browser_fetch import BROWSER_UA, _response_looks_like_pdf
+
 PDF_MAGIC = b"%PDF-"
-PDF_RX = re.compile(r"\.pdf(?:[\?#][^\s\"']*)?$", re.I)
+
+# Godartede (prospekt) signaler vi ser etter i URL/label
+POSITIVE_HINTS = re.compile(
+    r"(salgsoppgav|prospekt|utskriftsvennlig|komplett|digital[_\-]?salgsoppgave|se\s+pdf|last\s+ned\s+pdf)",
+    re.I,
+)
+
+# Alt dette skal vi IKKE plukke opp
+NEGATIVE_HINTS = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|takst|fidens|estates|energiattest|nabolag|"
+    r"nabolagsprofil|contentassets/nabolaget|egenerkl|budskjema|kjøpekontrakt|vilkår|terms|cookies)",
+    re.I,
+)
+
+# Nettverks-URL-mønstre Notar ofte bruker for dokumenter (inkl. webmegler-proxy),
+# men vi filtrerer i tillegg på POSITIVE/NEGATIVE over.
 PDF_URL_HINTS = re.compile(
-    r"(wngetfile\.ashx|/getdocument|/getfile|/download|/proxy/webmegler/.+/wngetfile\.ashx)",
+    r"(wngetfile\.ashx|/getdocument|/getfile|/download|/proxy/webmegler/.+/wngetfile\.ashx|\.pdf(?:[\?#][^\s\"']*)?$)",
     re.I,
 )
 
-# --- STRAMME REGLER ---
-BLOCKLIST = re.compile(
-    r"(nabolag|nabolagsprofil|contentassets/nabolaget|energiattest|egenerkl|salgsoppgave)",
-    re.I,
-)
-
-WHITELIST_HINT = re.compile(
-    r"(tilstandsrapport|boligsalgsrapport|fidens|estates|nordvik-vitec-documents)",
-    re.I,
-)
-
+# Tekster vi klikker på i UI
 CLICK_TEXTS = [
-    "tilstandsrapport",
-    "se tilstandsrapport",
-    "boligsalgsrapport",
-    "takst",
-    "fidens",
-    "tilstandsrapport for",  # noen bygger hele filnavnet inn
+    "salgsoppgave",
+    "prospekt",
+    "utskriftsvennlig",
+    "komplett salgsoppgave",
+    "se pdf",
+    "last ned pdf",
 ]
 
+MIN_PAGES = 6  # rene prospekter er normalt > ~6 sider
+MIN_BYTES = 250_000  # vær konservativ men unngå bittesmå kvitteringer
 
-def _looks_like_pdf(b: bytes) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b[:4] == PDF_MAGIC
+
+def _looks_like_pdf(b: bytes | None) -> bool:
+    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
-def _min_pages(b: bytes, nmin: int = 2) -> bool:
+def _pdf_pages(b: bytes | None) -> int:
+    if not b:
+        return 0
     try:
-        return len(PdfReader(io.BytesIO(b)).pages) >= nmin
+        return len(PdfReader(io.BytesIO(b)).pages)
     except Exception:
-        return False
+        return 0
 
 
-def _url_allowed(u: str) -> bool:
-    lo = (u or "").lower()
-    if not u:
-        return False
-    if BLOCKLIST.search(lo):
-        return False
-    # whitelist-hint er sterkt ønsket – men hvis mangler: innholdssjekk senere
-    return True
-
-
-def _tr_urlish(u: str) -> bool:
-    return bool(WHITELIST_HINT.search((u or "")))
-
-
-def _first_text_pages_have_tr(b: bytes, max_pages: int = 3) -> bool:
+def _pdf_text_first_pages(b: bytes, first: int = 3) -> str:
     try:
-        r = PdfReader(io.BytesIO(b))
-        pages = []
-        for i, p in enumerate(r.pages[:max_pages]):
+        rdr = PdfReader(io.BytesIO(b))
+        txt: List[str] = []
+        for p in rdr.pages[: min(first, len(rdr.pages))]:
             try:
                 t = p.extract_text() or ""
             except Exception:
                 t = ""
             if t:
-                pages.append(t.lower())
-        txt = "\n".join(pages)
-        return ("tilstandsrapport" in txt) or ("boligsalgsrapport" in txt)
+                txt.append(t.lower())
+        return "\n".join(txt)
     except Exception:
+        return ""
+
+
+def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
+    """
+    Kun salgsoppgave/prospekt: må se 'pdf'-magick, nok sider/størrelse,
+    og verken URL eller innhold skal inneholde TR/negative hint.
+    """
+    if not _looks_like_pdf(b):
+        return False
+    if not b or len(b) < MIN_BYTES or _pdf_pages(b) < MIN_PAGES:
         return False
 
+    lo_url = (url or "").lower()
+    if NEGATIVE_HINTS.search(lo_url):
+        return False
 
-class NotarDriver:
+    first_txt = _pdf_text_first_pages(b, first=3)
+    if first_txt and NEGATIVE_HINTS.search(first_txt):
+        return False
+
+    # positivt signal hjelper men er ikke krav (noen prospekter har ikke ordene i URL)
+    return True
+
+
+def _url_is_candidate(u: str) -> bool:
+    if not u:
+        return False
+    lo = u.lower()
+    if NEGATIVE_HINTS.search(lo):
+        return False
+    return bool(PDF_URL_HINTS.search(lo) or POSITIVE_HINTS.search(lo))
+
+
+class NotarDriver(Driver):
     name = "notar"
 
     def matches(self, url: str) -> bool:
-        u = (url or "").lower()
-        return "notar.no/bolig-til-salgs/" in u
+        return "notar.no/bolig-til-salgs/" in (url or "").lower()
 
     def try_fetch(
-        self, sess: requests.Session, page_url: str
+        self, sess, page_url: str
     ) -> Tuple[bytes | None, str | None, Dict[str, Any]]:
         dbg: Dict[str, Any] = {
             "driver": self.name,
@@ -98,7 +124,6 @@ class NotarDriver:
             "page_url": page_url,
         }
 
-        # Primært Playwright-flow fordi Notar ofte laster dokumentlenker via JS
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
@@ -107,10 +132,10 @@ class NotarDriver:
                 )
                 page = context.new_page()
 
-                # ---- response-sniff ----
                 pdf_bytes: bytes | None = None
                 pdf_url: str | None = None
 
+                # --- Sniff nettverksresponser for mulige prospekter ---
                 def handle_response(resp):
                     nonlocal pdf_bytes, pdf_url
                     if pdf_bytes is not None:
@@ -121,16 +146,15 @@ class NotarDriver:
                     except Exception:
                         url, ct = "", ""
 
-                    if not url or not _url_allowed(url):
+                    if not _url_is_candidate(url):
                         return
 
-                    looks_pdf = (
-                        ("application/pdf" in ct)
-                        or PDF_RX.search(url)
-                        or PDF_URL_HINTS.search(url)
+                    looks_pdfish = (
+                        "application/pdf" in ct
                         or _response_looks_like_pdf(resp)
+                        or PDF_URL_HINTS.search(url)
                     )
-                    if not looks_pdf:
+                    if not looks_pdfish:
                         return
 
                     try:
@@ -138,14 +162,13 @@ class NotarDriver:
                     except Exception:
                         body = None
 
-                    if body and _looks_like_pdf(body):
-                        # whitelist-hint preferert; hvis ikke → innholdssjekk senere
+                    if body and _is_prospect_pdf(body, url):
                         pdf_bytes, pdf_url = body, url
                         dbg["response_hit"] = url
 
                 page.on("response", handle_response)
 
-                # ---- goto ----
+                # --- Last objektsiden ---
                 try:
                     page.goto(
                         page_url,
@@ -155,40 +178,34 @@ class NotarDriver:
                 except PWTimeoutError:
                     page.goto(page_url, timeout=SETTINGS.REQ_TIMEOUT * 1000)
 
-                # cookie-accept (best effort)
-                try:
-                    # enkle tekstmatcher
-                    for sel in [
-                        "#onetrust-accept-btn-handler",
-                        "button:has-text('Godta')",
-                        "button:has-text('Aksepter')",
-                        "button:has-text('Tillat alle')",
-                    ]:
-                        try:
-                            el = page.locator(sel)
-                            if el.count() > 0:
-                                el.first.click(timeout=900)
-                                break
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
+                # Cookie-accept (best effort)
+                for sel in [
+                    "#onetrust-accept-btn-handler",
+                    "button:has-text('Godta')",
+                    "button:has-text('Aksepter')",
+                    "button:has-text('Tillat alle')",
+                ]:
+                    try:
+                        el = page.locator(sel)
+                        if el.count() > 0:
+                            el.first.click(timeout=900)
+                            break
+                    except Exception:
+                        pass
 
-                # Scroll for lazy content
+                # Litt scroll for lazy sections
                 try:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(350)
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(350)
                 except Exception:
                     pass
 
-                # Åpne "Dokumenter" / accordion dersom finnes
+                # Åpne ev. «Dokumenter»-seksjon
                 try:
-                    # Notar bruker ofte "Dokumenter" som knapp/accordion
                     btns = page.locator("button, [role='button'], a")
-                    n = btns.count()
-                    for i in range(min(n, 200)):
+                    for i in range(min(btns.count(), 200)):
                         b = btns.nth(i)
                         try:
                             t = (b.inner_text(timeout=250) or "").strip().lower()
@@ -196,8 +213,8 @@ class NotarDriver:
                             t = ""
                         if not t:
                             continue
-                        if "dokument" in t and (
-                            "se" in t or "vis" in t or "åpne" in t or "dokumenter" in t
+                        if "dokument" in t and any(
+                            x in t for x in ("se", "vis", "åpne")
                         ):
                             try:
                                 b.click(timeout=1500)
@@ -208,58 +225,56 @@ class NotarDriver:
                 except Exception:
                     pass
 
-                # Klikk på TR-relaterte knapper/lenker
+                # --- Klikk bare på ting som ser ut som salgsoppgave/prospekt ---
                 attempts: List[Dict[str, Any]] = []
                 try:
                     candidates = page.locator("a, button, [role='button']")
-                    n = candidates.count()
-                    for i in range(min(n, 250)):
+                    for i in range(min(candidates.count(), 250)):
                         el = candidates.nth(i)
                         try:
                             raw = el.inner_text(timeout=250) or ""
                         except Exception:
                             raw = ""
                         txt = raw.strip().lower()
-                        matched = any(h in txt for h in CLICK_TEXTS)
+                        matched = any(
+                            h in txt for h in CLICK_TEXTS
+                        ) and not NEGATIVE_HINTS.search(txt)
                         if len(attempts) < 120:
                             attempts.append(
                                 {
                                     "index": i,
-                                    "text_preview": (
-                                        raw[:90] + ("…" if len(raw) > 90 else "")
-                                    ),
+                                    "text_preview": raw[:90]
+                                    + ("…" if len(raw) > 90 else ""),
                                     "match": matched,
                                 }
                             )
                         if not matched:
                             continue
 
-                        # Prøv direkte href først
+                        # Direkte href?
                         href = ""
                         try:
                             href = el.get_attribute("href") or ""
                         except Exception:
-                            href = ""
+                            pass
 
-                        if href and _url_allowed(href):
+                        if href and _url_is_candidate(href):
                             try:
-                                rr = page.context.request.get(
+                                rr = context.request.get(
                                     href,
                                     headers={
                                         "Accept": "application/pdf,application/octet-stream,*/*"
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok:
-                                    body = rr.body()
-                                    if _looks_like_pdf(body):
-                                        pdf_bytes, pdf_url = body, href
-                                        dbg["click_direct_href"] = href
-                                        break
+                                if rr.ok and _is_prospect_pdf(rr.body(), href):
+                                    pdf_bytes, pdf_url = rr.body(), href
+                                    dbg["click_direct_href"] = href
+                                    break
                             except Exception:
                                 pass
 
-                        # Ellers klikk for å trigge XHR/download
+                        # Klikk for å trigge evt. viewer/download
                         try:
                             el.scroll_into_view_if_needed(timeout=600)
                         except Exception:
@@ -267,7 +282,6 @@ class NotarDriver:
                         try:
                             el.click(timeout=1800)
                             dbg["click_hit"] = {"index": i, "text": raw[:200]}
-                            # liten pause for XHR
                             page.wait_for_timeout(1200)
                             if pdf_bytes:
                                 break
@@ -285,20 +299,20 @@ class NotarDriver:
 
                 dbg["click_attempts"] = attempts
 
-                # Vent på network idle kort
+                # --- Vent litt for sene XHR ---
                 try:
                     page.wait_for_load_state("networkidle", timeout=3000)
                 except Exception:
                     page.wait_for_timeout(800)
 
-                # Fallback: harvest URL’er fra DOM/__NEXT_DATA__/script
+                # --- Fallback: harvest fra DOM / __NEXT_DATA__ / scripts ---
                 if not pdf_bytes:
                     harvested: List[str] = []
 
                     # a[href]
                     try:
                         urls = page.evaluate(
-                            "(() => Array.from(document.querySelectorAll('a[href]')).map(a=>a.href))()"
+                            "Array.from(document.querySelectorAll('a[href]')).map(a=>a.href)"
                         )
                         if isinstance(urls, list):
                             harvested.extend([u for u in urls if isinstance(u, str)])
@@ -308,58 +322,63 @@ class NotarDriver:
                     # __NEXT_DATA__
                     try:
                         txt = page.evaluate(
-                            "(() => { const el=document.getElementById('__NEXT_DATA__'); return el?el.textContent:null; })()"
+                            "(() => (document.getElementById('__NEXT_DATA__')||{}).textContent)()"
                         )
                     except Exception:
                         txt = None
                     if isinstance(txt, str) and txt:
-                        for m in re.finditer(
-                            r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?', txt, re.I
-                        ):
-                            harvested.append(m.group(0))
-                        for m in re.finditer(
+                        harvested += re.findall(
+                            r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?', txt, flags=re.I
+                        )
+                        harvested += re.findall(
                             r'https?://[^"\'\s]+?(wngetfile\.ashx|/getdocument|/getfile|/download)[^"\'\s]*',
                             txt,
-                            re.I,
-                        ):
-                            harvested.append(m.group(0))
+                            flags=re.I,
+                        )
 
-                    # <script> bodies
+                    # <script>
                     try:
                         scripts = page.locator("script")
-                        n = scripts.count()
-                        for i in range(min(n, 60)):
+                        for i in range(min(scripts.count(), 60)):
                             try:
                                 content = scripts.nth(i).inner_text(timeout=200) or ""
                             except Exception:
                                 continue
-                            for m in re.finditer(
+                            harvested += re.findall(
                                 r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?',
                                 content,
-                                re.I,
-                            ):
-                                harvested.append(m.group(0))
-                            for m in re.finditer(
+                                flags=re.I,
+                            )
+                            harvested += re.findall(
                                 r'https?://[^"\'\s]+?(wngetfile\.ashx|/getdocument|/getfile|/download)[^"\'\s]*',
                                 content,
-                                re.I,
-                            ):
-                                harvested.append(m.group(0))
+                                flags=re.I,
+                            )
                     except Exception:
                         pass
 
-                    # uniq + filtrering
+                    # uniq + filtrer + ranger (prospekt-vennlige først)
                     seen = set()
                     uniq: List[str] = []
                     for u in harvested:
-                        if isinstance(u, str) and u not in seen and _url_allowed(u):
+                        if (
+                            isinstance(u, str)
+                            and u not in seen
+                            and _url_is_candidate(u)
+                        ):
                             seen.add(u)
                             uniq.append(u)
 
-                    # Prøv de mest lovende først (TR-hint)
-                    uniq.sort(
-                        key=lambda u: (1 if _tr_urlish(u) else 0, len(u)), reverse=True
-                    )
+                    def _score(u: str) -> tuple:
+                        lo = u.lower()
+                        return (
+                            1 if POSITIVE_HINTS.search(lo) else 0,
+                            0 if NEGATIVE_HINTS.search(lo) else 1,
+                            lo.endswith(".pdf"),
+                            -len(lo),
+                        )
+
+                    uniq.sort(key=_score, reverse=True)
 
                     for u in uniq[:20]:
                         try:
@@ -370,20 +389,20 @@ class NotarDriver:
                                 },
                                 timeout=SETTINGS.REQ_TIMEOUT * 1000,
                             )
-                            if rr.ok and _looks_like_pdf(rr.body()):
+                            if rr.ok and _is_prospect_pdf(rr.body(), u):
                                 pdf_bytes, pdf_url = rr.body(), u
                                 dbg["harvest_hit"] = u
                                 break
                         except Exception:
                             continue
 
-                # download-event fallback
+                # Nedlasting-event (siste sjanse)
                 if not pdf_bytes:
                     try:
                         dl = page.wait_for_event("download", timeout=2000)
                         if dl:
                             u = dl.url or ""
-                            if _url_allowed(u):
+                            if _url_is_candidate(u):
                                 rr = context.request.get(
                                     u,
                                     headers={
@@ -391,7 +410,7 @@ class NotarDriver:
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
+                                if rr.ok and _is_prospect_pdf(rr.body(), u):
                                     pdf_bytes, pdf_url = rr.body(), u
                                     dbg["download_hit"] = u
                     except Exception:
@@ -404,21 +423,7 @@ class NotarDriver:
                     dbg["step"] = "no_pdf_found"
                     return None, None, dbg
 
-                # Valider sider + (helst) TR-tekst
-                if not _min_pages(pdf_bytes, 2):
-                    dbg["step"] = "pdf_rejected_min_pages"
-                    return None, None, dbg
-
-                # Hvis URL mangler klare TR-ord → innholdssjekk
-                tr_ok = True
-                if not _tr_urlish(pdf_url):
-                    tr_ok = _first_text_pages_have_tr(pdf_bytes)
-                dbg["tr_text_found"] = tr_ok
-                if not tr_ok:
-                    dbg["step"] = "pdf_rejected_not_tr"
-                    return None, None, dbg
-
-                dbg["step"] = "ok"
+                dbg["step"] = "ok_prospect"
                 return pdf_bytes, pdf_url, dbg
 
         except Exception as e:

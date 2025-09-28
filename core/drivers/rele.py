@@ -1,76 +1,108 @@
+# core/drivers/rele.py
 from __future__ import annotations
 import re, io
 from typing import Tuple, Dict, Any, Optional, List
-import requests
+
 from PyPDF2 import PdfReader
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
-from ..sessions import new_session
+from .base import Driver
 from ..config import SETTINGS
 from ..browser_fetch import BROWSER_UA, _response_looks_like_pdf
 
 PDF_MAGIC = b"%PDF-"
 PDF_RX = re.compile(r"\.pdf(?:[\?#][^\s\"']*)?$", re.I)
 
-# Rele/Vitec leverer som regel via dette proxyet (uten .pdf i URL)
+# Rele/Vitec leverer ofte via proxy-endepunkter (ofte uten .pdf i URL)
 PDF_URL_HINTS = re.compile(
-    r"(/proxy/vitec/|/document/|/download|wngetfile\.ashx)",
+    r"(/proxy/vitec/|/document/|/download|wngetfile\.ashx)", re.I
+)
+
+# Vi vil KUN ha prospekt/salgsoppgave
+POSITIVE_RX = re.compile(
+    r"(prospekt|salgsoppgav|digital[_\- ]salgsoppgave|utskriftsvennlig|komplett)",
     re.I,
 )
 
-# Blokker uønskede dokumenter
-BLOCKLIST_RX = re.compile(
-    r"(nabolag|nabolagsprofil|contentassets/nabolaget|energiattest|egenerkl|salgsoppgave)",
+# Alt dette skal IKKE hentes
+NEGATIVE_RX = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|ns[\s_\-]?3600|bygningssakkyndig|tilstandsgrader|"
+    r"energiattest|energimerke|nabolag|nabolagsprofil|egenerkl|budskjema|vilkår|terms|cookies)",
     re.I,
 )
 
-# TR-hint i URL (kan ofte mangle – da sjekker vi innhold)
-TR_URL_RX = re.compile(
-    r"(tilstandsrapport|boligsalgsrapport|fidens|estates|ns\s*3600|vitec)", re.I
+# Innholdscues som avslører TR (brukes for å avvise feil PDF)
+TR_CONTENT_RX = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|ns[\s_\-]?3600|bygningssakkyndig|tilstandsgrader|nøkkeltakst)",
+    re.I,
 )
 
-# Tekster vi klikker på i UI
+# Tekster vi klikker på i UI for å få prospekt
 CLICK_TEXTS = [
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    "takst",
-    "se tilstandsrapport",
+    "prospekt",
+    "salgsoppgave",
+    "se salgsoppgave",
+    "last ned prospekt",
+    "last ned salgsoppgave",
+    "digital salgsoppgave",
+    "utskriftsvennlig",
+    "komplett",
 ]
 
+MIN_PAGES = 6
+MIN_BYTES = 200_000  # moderat terskel for ekte prospekt
 
-def _looks_like_pdf(b: bytes) -> bool:
+
+def _looks_like_pdf(b: Optional[bytes]) -> bool:
     return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
-def _min_pages(b: bytes, n: int = 2) -> bool:
+def _pdf_pages(b: bytes) -> int:
     try:
-        r = PdfReader(io.BytesIO(b))
-        return len(r.pages) >= n
+        return len(PdfReader(io.BytesIO(b)).pages)
     except Exception:
-        return False
+        return 0
 
 
-def _first_pages_have_tr(b: bytes, first: int = 3) -> bool:
+def _first_pages_text(b: bytes, first: int = 3) -> str:
     try:
         r = PdfReader(io.BytesIO(b))
-        txt = []
-        for p in r.pages[:first]:
+        out: List[str] = []
+        for p in r.pages[: min(first, len(r.pages))]:
             try:
-                t = (p.extract_text() or "").lower()
+                t = p.extract_text() or ""
             except Exception:
                 t = ""
             if t:
-                txt.append(t)
-        blob = "\n".join(txt)
-        return ("tilstandsrapport" in blob) or ("boligsalgsrapport" in blob)
+                out.append(t.lower())
+        return "\n".join(out)
     except Exception:
-        return False
+        return ""
 
 
-def _url_allowed(u: str) -> bool:
-    if not u:
+def _is_prospect_pdf(b: bytes, url: str | None = None) -> bool:
+    if not _looks_like_pdf(b):
         return False
-    return not BLOCKLIST_RX.search(u.lower())
+    if len(b) < MIN_BYTES:
+        return False
+    if _pdf_pages(b) < MIN_PAGES:
+        return False
+    # URL må ikke ha tydelige negative signaler
+    if url and NEGATIVE_RX.search(url):
+        return False
+    # Innholdet skal IKKE se ut som TR
+    txt = _first_pages_text(b, 3)
+    if TR_CONTENT_RX.search(txt):
+        return False
+    return True
+
+
+def _allowed_url(u: str, label: str = "") -> bool:
+    s = f"{label} {u}".lower()
+    if NEGATIVE_RX.search(s):
+        return False
+    # Krev positive signaler i label/URL for å begrense oss til prospekt
+    return POSITIVE_RX.search(s) is not None
 
 
 def _looks_like_pdf_url(u: str, ctype: str = "") -> bool:
@@ -82,7 +114,7 @@ def _looks_like_pdf_url(u: str, ctype: str = "") -> bool:
     )
 
 
-class ReleDriver:
+class ReleDriver(Driver):
     name = "rele"
 
     def matches(self, url: str) -> bool:
@@ -90,7 +122,7 @@ class ReleDriver:
         return "ds.meglerhuset-rele.no/" in lo or "meglerhuset-rele" in lo
 
     def try_fetch(
-        self, sess: requests.Session, page_url: str
+        self, sess, page_url: str
     ) -> Tuple[bytes | None, str | None, Dict[str, Any]]:
         dbg: Dict[str, Any] = {
             "driver": self.name,
@@ -109,7 +141,7 @@ class ReleDriver:
                 pdf_bytes: Optional[bytes] = None
                 pdf_url: Optional[str] = None
 
-                # --- Sniff alle responses (proxy/vitec/document) ---
+                # --- Sniff responses og fang potensielle prospekt-PDF-er ---
                 def handle_response(resp):
                     nonlocal pdf_bytes, pdf_url
                     if pdf_bytes is not None:
@@ -120,9 +152,11 @@ class ReleDriver:
                     except Exception:
                         url, ctype = "", ""
 
-                    if not url or not _url_allowed(url):
+                    # må se ut som PDF-respons, og ikke åpenbart "feil" dokumenttype
+                    if not url or not _looks_like_pdf_url(url, ctype):
                         return
-                    if not _looks_like_pdf_url(url, ctype):
+                    # tillat bare hvis URL/label har positive hint eller er nøytral – vi verifiserer innhold etterpå
+                    if NEGATIVE_RX.search(url):
                         return
 
                     if _response_looks_like_pdf(resp):
@@ -130,13 +164,13 @@ class ReleDriver:
                             body = resp.body()
                         except Exception:
                             body = None
-                        if body and _looks_like_pdf(body):
+                        if body and _is_prospect_pdf(body, url):
                             pdf_bytes, pdf_url = body, url
                             dbg["response_hit"] = url
 
                 page.on("response", handle_response)
 
-                # --- Gå til siden (approved/.../latest) ---
+                # --- Last siden ---
                 try:
                     page.goto(
                         page_url,
@@ -146,7 +180,7 @@ class ReleDriver:
                 except PWTimeoutError:
                     page.goto(page_url, timeout=SETTINGS.REQ_TIMEOUT * 1000)
 
-                # Godta cookies (best effort)
+                # Godta cookies (best-effort)
                 try:
                     for sel in [
                         "#onetrust-accept-btn-handler",
@@ -161,14 +195,14 @@ class ReleDriver:
                 except Exception:
                     pass
 
-                # Scroll litt (lazy innhold)
+                # Litt scrolling for lazy content
                 try:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight/3)")
                     page.wait_for_timeout(400)
                 except Exception:
                     pass
 
-                # Klikk på "Tilstandsrapport (PDF)"-knappen
+                # Klikk på prospekt/salgsoppgave-lenker/knapper
                 attempts: List[Dict[str, Any]] = []
                 try:
                     cands = page.locator("a[href], button, [role='button']")
@@ -185,22 +219,21 @@ class ReleDriver:
                             attempts.append(
                                 {
                                     "index": i,
-                                    "text_preview": (
-                                        raw[:90] + ("…" if len(raw) > 90 else "")
-                                    ),
+                                    "text_preview": raw[:90]
+                                    + ("…" if len(raw) > 90 else ""),
                                     "match": hit,
                                 }
                             )
                         if not hit:
                             continue
 
-                        # 1) Direkte via href
+                        # Direkte via href
                         href = ""
                         try:
                             href = el.get_attribute("href") or ""
                         except Exception:
                             href = ""
-                        if href and _url_allowed(href):
+                        if href and _allowed_url(href, raw):
                             try:
                                 rr = page.context.request.get(
                                     href,
@@ -209,14 +242,14 @@ class ReleDriver:
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
+                                if rr.ok and _is_prospect_pdf(rr.body(), href):
                                     pdf_bytes, pdf_url = rr.body(), href
                                     dbg["click_direct_href"] = href
                                     break
                             except Exception:
                                 pass
 
-                        # 2) Klikk for å trigge proxy/vitec download
+                        # Klikk for å trigge proxy/vitec/wngetfile
                         try:
                             el.scroll_into_view_if_needed(timeout=600)
                         except Exception:
@@ -240,42 +273,50 @@ class ReleDriver:
                     pass
                 dbg["click_attempts"] = attempts
 
-                # Vent på eventuelle XHR
+                # Vent for sene XHR
                 try:
                     page.wait_for_load_state("networkidle", timeout=3000)
                 except Exception:
                     page.wait_for_timeout(800)
 
-                # Fallback: høst URL’er fra DOM/__NEXT_DATA__/scripts
+                # Fallback: harvest URL-er fra DOM/__NEXT_DATA__/scripts
                 if not pdf_bytes:
                     harvested: List[str] = []
+
+                    # DOM lenker
                     try:
                         urls = page.evaluate(
-                            "(() => Array.from(document.querySelectorAll('a[href]')).map(a=>a.href))()"
+                            "Array.from(document.querySelectorAll('a[href]')).map(a=>({href:a.href,text:a.innerText||''}))"
                         )
                         if isinstance(urls, list):
-                            harvested.extend([u for u in urls if isinstance(u, str)])
+                            for it in urls:
+                                if not isinstance(it, dict):
+                                    continue
+                                href = it.get("href") or ""
+                                txt = it.get("text") or ""
+                                if href and _allowed_url(href, txt):
+                                    harvested.append(href)
                     except Exception:
                         pass
 
+                    # __NEXT_DATA__ JSON
                     try:
                         txt = page.evaluate(
-                            "(() => { const el=document.getElementById('__NEXT_DATA__'); return el?el.textContent:null; })()"
+                            "(() => (document.getElementById('__NEXT_DATA__')||{}).textContent)()"
                         )
                     except Exception:
                         txt = None
                     if isinstance(txt, str) and txt:
                         for m in re.finditer(
-                            r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?', txt, re.I
-                        ):
-                            harvested.append(m.group(0))
-                        for m in re.finditer(
-                            r'https?://[^"\'\s]+?(/proxy/vitec/|/document/|/download|wngetfile\.ashx)[^"\'\s]*',
+                            r'https?://[^"\'\s]+?(?:\.pdf(?:\?[^"\'\s]*)?|/proxy/vitec/|/document/|/download|wngetfile\.ashx)[^"\'\s]*',
                             txt,
                             re.I,
                         ):
-                            harvested.append(m.group(0))
+                            u = m.group(0)
+                            if _allowed_url(u):
+                                harvested.append(u)
 
+                    # <script> innhold
                     try:
                         scripts = page.locator("script")
                         n = scripts.count()
@@ -285,37 +326,33 @@ class ReleDriver:
                             except Exception:
                                 continue
                             for m in re.finditer(
-                                r'https?://[^"\'\s]+?\.pdf(?:\?[^"\'\s]*)?',
+                                r'https?://[^"\'\s]+?(?:\.pdf(?:\?[^"\'\s]*)?|/proxy/vitec/|/document/|/download|wngetfile\.ashx)[^"\'\s]*',
                                 content,
                                 re.I,
                             ):
-                                harvested.append(m.group(0))
-                            for m in re.finditer(
-                                r'https?://[^"\'\s]+?(/proxy/vitec/|/document/|/download|wngetfile\.ashx)[^"\'\s]*',
-                                content,
-                                re.I,
-                            ):
-                                harvested.append(m.group(0))
+                                u = m.group(0)
+                                if _allowed_url(u):
+                                    harvested.append(u)
                     except Exception:
                         pass
 
+                    # uniq + prioritér prospekt-signaler og vitec-proxy
                     seen = set()
-                    uniq = []
+                    uniq: List[str] = []
                     for u in harvested:
-                        if isinstance(u, str) and u not in seen and _url_allowed(u):
+                        if isinstance(u, str) and u not in seen:
                             seen.add(u)
                             uniq.append(u)
 
-                    # Score: prioriter vitec-proxy + TR-hint
                     def _score(u: str) -> int:
                         lo = u.lower()
                         sc = 0
                         if "/proxy/vitec/" in lo:
-                            sc += 220
-                        if "/document/" in lo:
+                            sc += 200
+                        if "/document/" in lo or "wngetfile.ashx" in lo:
                             sc += 120
-                        if TR_URL_RX.search(lo):
-                            sc += 60
+                        if POSITIVE_RX.search(lo):
+                            sc += 80
                         if lo.endswith(".pdf"):
                             sc += 20
                         return sc
@@ -331,20 +368,20 @@ class ReleDriver:
                                 },
                                 timeout=SETTINGS.REQ_TIMEOUT * 1000,
                             )
-                            if rr.ok and _looks_like_pdf(rr.body()):
+                            if rr.ok and _is_prospect_pdf(rr.body(), u):
                                 pdf_bytes, pdf_url = rr.body(), u
                                 dbg["harvest_hit"] = u
                                 break
                         except Exception:
                             continue
 
-                # Nedlastings-event (tom side + tillat nedlasting)
+                # Nedlastings-event som siste utvei
                 if not pdf_bytes:
                     try:
                         dl = page.wait_for_event("download", timeout=2500)
                         if dl:
                             u = dl.url or ""
-                            if _url_allowed(u):
+                            if _allowed_url(u):
                                 rr = context.request.get(
                                     u,
                                     headers={
@@ -352,7 +389,7 @@ class ReleDriver:
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
+                                if rr.ok and _is_prospect_pdf(rr.body(), u):
                                     pdf_bytes, pdf_url = rr.body(), u
                                     dbg["download_hit"] = u
                     except Exception:
@@ -365,41 +402,12 @@ class ReleDriver:
                     dbg["step"] = "no_pdf_found"
                     return None, None, dbg
 
-                # Valider minst 2 sider
-                if not _min_pages(pdf_bytes, 2):
-                    dbg["step"] = "pdf_rejected_min_pages"
+                # Endelig validering (belt & braces)
+                if not _is_prospect_pdf(pdf_bytes, pdf_url):
+                    dbg["step"] = "pdf_rejected_not_prospect"
                     return None, None, dbg
 
-                # Hvis URL ikke har klare TR-ord → innholdssjekk
-                tr_ok = True
-                if not TR_URL_RX.search(pdf_url or ""):
-                    tr_ok = _first_pages_have_tr(pdf_bytes)
-                dbg["tr_text_found"] = tr_ok
-                if not tr_ok:
-                    dbg["step"] = "pdf_rejected_not_tr"
-                    return None, None, dbg
-
-                # Markér at dette faktisk ER tilstandsrapporten slik at fetch.py skipper klipping
-                reason = None
-                # a) vi klikket på en knapp/lenke som inneholdt "tilstandsrapport"
-                if any(
-                    "tilstandsrapport" in (a.get("text_preview", "").lower())
-                    for a in (dbg.get("click_attempts") or [])
-                ):
-                    reason = "clicked_label"
-                # b) URL har tydelige TR-hint
-                elif TR_URL_RX.search(pdf_url or ""):
-                    reason = "url_hint"
-                # c) innholdssjekk bekreftet TR
-                elif tr_ok:
-                    reason = "content_match"
-
-                if reason:
-                    dbg.setdefault("meta", {})
-                    dbg["meta"]["is_tilstandsrapport"] = True
-                    dbg["meta"]["reason"] = reason
-
-                dbg["step"] = "ok"
+                dbg["step"] = "ok_prospect"
                 return pdf_bytes, pdf_url, dbg
 
         except Exception as e:

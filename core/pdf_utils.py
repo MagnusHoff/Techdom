@@ -5,30 +5,47 @@ import io
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Dict, List, Protocol, Any
+from typing import (
+    Optional,
+    Tuple,
+    Dict,
+    List,
+    Protocol,
+    Any,
+    Union,
+    Sequence,
+    TYPE_CHECKING,
+    cast,
+)
 
-IMPL_VERSION = "anchor_v5_strict_toc_gated_2025-09-23"
+IMPL_VERSION = "prospekt_only_tr_locator_2025-09-24"
 
 # ---- Primær-PDF verktøy (PyPDF2 for IO / fallback-tekst) ----
 try:
     from PyPDF2 import PdfReader, PdfWriter  # pip install PyPDF2
 except Exception:  # pragma: no cover
-    PdfReader = None  # type: ignore
-    PdfWriter = None  # type: ignore
+    PdfReader = None  # type: ignore[assignment]
+    PdfWriter = None  # type: ignore[assignment]
 
 # ---- Bedre tekstekstraksjon (PyMuPDF/Fitz) (valgfritt) ----
 try:
-    import fitz  # PyMuPDF
-except Exception:
-    fitz = None  # type: ignore
+    import fitz  # type: ignore  # PyMuPDF
+except Exception:  # pragma: no cover
+    fitz = None  # type: ignore[assignment]
 
 # ---- OCR fallback (valgfritt) ----
 try:
-    import pytesseract
-    from PIL import Image
-except Exception:
-    pytesseract = None  # type: ignore
-    Image = None  # type: ignore
+    import pytesseract  # type: ignore
+    from PIL import Image  # type: ignore
+except Exception:  # pragma: no cover
+    pytesseract = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
+
+# Statiske typekontroller skal ikke kreve at valgfri deps er installert
+if TYPE_CHECKING:  # noqa: SIM108
+    import fitz as _fitz  # type: ignore
+    import pytesseract as _pytesseract  # type: ignore
+    from PIL import Image as _PILImage  # type: ignore
 
 
 # --------------------------
@@ -54,7 +71,7 @@ CUE_PATTERNS = [
     r"\btaksthuset\b",
     r"\bnorconsult\b",
     r"\bbyggmester\b",
-    r"\bnor1[\s-]?takst\b",
+    r"\bnøkkeltakst\b",
     r"\btakstmann\b",
 ]
 
@@ -84,12 +101,11 @@ STRONG_TERMINATOR_PATTERNS = [
     r"\begenerkl(æring|aering)\b",
     r"\bselgers\s+egenerkl(æring|aering)\b",
     r"\bboligselgerforsikring\b",
-    r"\bbud(skjem|reglement)\b",
-    r"\bkjøpetilbud\b",
+    r"\bbud(skjem|reglement)\b|\bkjøpetilbud\b",
     r"\benergiattest\b",
     r"\bnabolagsprofil\b",
     r"\bmeglerpakke\b",
-    r"\bforbrukerinformasjon\s+om\s+budgivning\b",
+    r"\bforbrukerinformasjon\s+om\s+budgivning\b|\bbudgivning\b",
     r"\b(liste over )?løsøre\b",
     r"\b(bilder|foto)\b",
 ]
@@ -138,6 +154,9 @@ LOW_STREAK_STOP = 4  # sider uten TR-cues før vi antar slutt
 MIN_BLOCK_SCORE = 8
 OCR_SCALE = 2.0
 
+# Praktisk alias for Path-strenger i typehint
+StrPath = Union[str, Path]
+
 
 # --------------------------
 # Typer
@@ -147,13 +166,28 @@ class _PdfPage(Protocol):
 
 
 class _PdfLike(Protocol):
-    pages: List[_PdfPage] | Any  # Any for løse stubs
+    pages: Sequence[_PdfPage] | Any  # Any for løse stubs
 
 
 @dataclass
 class PageText:
     text: str
     engine: str  # 'fitz', 'pypdf2', 'ocr' eller 'none'
+
+
+# --------------------------
+# I/O-helpere for bytes/Path
+# --------------------------
+def _read_bytes(source: Union[StrPath, bytes, bytearray]) -> bytes:
+    """
+    Sikker lesing av PDF-innhold som tilfredsstiller Pylance.
+    Unngår å sende en Union til Path(...).
+    """
+    if isinstance(source, (bytes, bytearray)):
+        return bytes(source)
+    # her er source statisk begrenset til StrPath
+    spath: StrPath = cast(StrPath, source)
+    return Path(spath).read_bytes()
 
 
 # --------------------------
@@ -184,18 +218,26 @@ def _extract_text_ocr(doc: Any, i: int) -> str:
         mat = fitz.Matrix(OCR_SCALE, OCR_SCALE)
         pix = page.get_pixmap(matrix=mat, alpha=False)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        txt = pytesseract.image_to_string(img, lang="nor+eng")
+        # Norsk først, eng fallback
+        try:
+            _ = pytesseract.get_languages(config="")
+            lang = "nor+eng"
+        except Exception:
+            lang = "eng"
+        txt = pytesseract.image_to_string(img, lang=lang)
         return txt or ""
     except Exception:
         return ""
 
 
-def _get_page_texts(pdf_bytes: bytes, ocr: bool = True) -> List[PageText]:
+def _get_page_texts_from_bytes(
+    pdf_bytes: Union[bytes, bytearray], ocr: bool = True
+) -> List[PageText]:
     texts: List[PageText] = []
 
     if fitz is not None:
         try:
-            with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            with fitz.open(stream=bytes(pdf_bytes), filetype="pdf") as doc:
                 for i in range(doc.page_count):
                     t = _extract_text_pymupdf(doc, i)
                     texts.append(PageText(t or "", "fitz" if t else "none"))
@@ -211,7 +253,7 @@ def _get_page_texts(pdf_bytes: bytes, ocr: bool = True) -> List[PageText]:
 
     if PdfReader is not None:
         try:
-            reader: _PdfLike = PdfReader(io.BytesIO(pdf_bytes))  # type: ignore[call-arg]
+            reader: _PdfLike = PdfReader(io.BytesIO(bytes(pdf_bytes)))  # type: ignore[call-arg]
             n = len(reader.pages)  # type: ignore[arg-type]
             for i in range(n):
                 t = _extract_text_pypdf2(reader, i)
@@ -221,6 +263,16 @@ def _get_page_texts(pdf_bytes: bytes, ocr: bool = True) -> List[PageText]:
             pass
 
     return []
+
+
+def read_pdf_by_page(
+    source: Union[str, Path, bytes, bytearray], *, ocr: bool = True
+) -> List[PageText]:
+    """
+    Praktisk API for UI/LLM: les PDF fra path/bytes → liste av PageText.
+    """
+    data = _read_bytes(source)
+    return _get_page_texts_from_bytes(data, ocr=ocr)
 
 
 # --------------------------
@@ -268,13 +320,13 @@ def _score_page(txt: str) -> int:
         sc += 5
     if re.search(r"\btg\s*[0-3]\b|\btilstandsgrad\b", lo):
         sc += 4
-    if re.search(r"\bbygningsdeler\b|\bbyggteknisk|\bbyggemåte\b", lo):  # + byggemåte
+    if re.search(r"\bbygningsdeler\b|\bbyggteknisk|\bbyggemåte\b", lo):
         sc += 3
     if re.search(r"\bsammendrag\b|\boppsummering\b|\bkonklusjon\b", lo):
         sc += 2
     if re.search(
         r"\bnorsk\s*takst\b|\bnito\s*takst\b|\banticimex\b|\btaksthuset\b|\bbyggmester\b|norconsult|takstmann|\bnøkkeltakst\b",
-        lo,  # + nøkkeltakst
+        lo,
     ):
         sc += 2
 
@@ -662,8 +714,12 @@ def _walk_span_from(
 # API
 # --------------------------
 def detect_tilstandsrapport_span(
-    pdf_bytes: bytes,
+    pdf_bytes: Union[bytes, bytearray],
 ) -> Tuple[Optional[int], Optional[int], Dict]:
+    """
+    Finn side-intervallet (start, end) for TR i en *salgsoppgave/prospekt*.
+    Returnerer (start_idx, end_idx, meta).
+    """
     info: Dict[str, Any] = {
         "num_pages": None,
         "engine_hint": None,
@@ -674,7 +730,7 @@ def detect_tilstandsrapport_span(
         "details": {},
     }
 
-    texts = _get_page_texts(pdf_bytes, ocr=True)
+    texts = _get_page_texts_from_bytes(pdf_bytes, ocr=True)
     n = len(texts)
     info["num_pages"] = n
     if n == 0:
@@ -730,6 +786,10 @@ def detect_tilstandsrapport_span(
 
 
 def extract_tilstandsrapport(input_path: str | Path, output_path: str | Path) -> bool:
+    """
+    Lokal hjelpefunksjon for *klipping* dersom du ønsker å lagre TR separat.
+    Fetch-løypen din bruker ikke denne (prospekt-only), men vi beholder API-et.
+    """
     if PdfReader is None or PdfWriter is None:  # pragma: no cover
         return False
 
@@ -760,6 +820,39 @@ def extract_tilstandsrapport(input_path: str | Path, output_path: str | Path) ->
     return True
 
 
+# ---- Nytt: Lettvekts-API for LLM --------------------------------------------
+def extract_tr_text(
+    pdf_source: Union[str, Path, bytes, bytearray], *, ocr: bool = True
+) -> Dict[str, Any]:
+    """
+    Praktisk funksjon for UI/LLM:
+      - Leser hele prospektet (path eller bytes)
+      - Finner TR-span
+      - Returnerer side-tekster + sammenslått tekst for TR
+    Return:
+      {
+        "start": int|None,
+        "end": int|None,
+        "pages_text": [PageText, ...],   # for hele prospektet (kan caches)
+        "text": "…",                     # kun TR, eller "" hvis ikke funnet
+        "meta": {...}                    # detect_tilstandsrapport_span meta
+      }
+    """
+    data = _read_bytes(pdf_source)
+    pages = _get_page_texts_from_bytes(data, ocr=ocr)
+    s, e, meta = detect_tilstandsrapport_span(data)
+    if s is None or e is None:
+        return {
+            "start": None,
+            "end": None,
+            "pages_text": pages,
+            "text": "",
+            "meta": meta,
+        }
+    text = "\n\n".join((pages[i].text or "") for i in range(s, e + 1))
+    return {"start": s, "end": e, "pages_text": pages, "text": text, "meta": meta}
+
+
 # === Diagnose ================================================================
 from collections import Counter
 
@@ -772,7 +865,7 @@ def diagnose_tilstandsrapport(
         raise FileNotFoundError(f"Fant ikke PDF: {p}")
 
     data = p.read_bytes()
-    texts = _get_page_texts(data, ocr=ocr)
+    texts = _get_page_texts_from_bytes(data, ocr=ocr)
     n = len(texts)
     if n == 0:
         print("Ingen sider/ingen tekstmotor tilgjengelig.")

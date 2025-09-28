@@ -4,7 +4,8 @@ import re
 import unicodedata
 from typing import Optional, Tuple, Dict, Any, List
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
-from typing import Iterable
+
+from .config import SETTINGS  # ✅ UA, timeouts, HTTP proxy
 
 # -- Browser fetch heuristics / blacklist --
 PM_BAD_PDFS = {
@@ -21,8 +22,8 @@ def _is_blacklisted_pdf(url: str) -> bool:
         return False
 
 
-# Konsistent UA
-BROWSER_UA = (
+# Konsistent UA: ta fra SETTINGS
+BROWSER_UA = SETTINGS.USER_AGENT or (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/127.0.0.0 Safari/537.36"
@@ -39,82 +40,68 @@ def _norm_text(s: str) -> str:
     return s.strip().lower()
 
 
-# === PRIORITERINGSORDLISTER ===
+# === PROSPEKT-ONLY PRIORITERINGER ===
+# Vi ønsker KUN salgsoppgave/prospekt. Alt annet (TR, egenerkl., energiattest, nabolag osv.) skal vekk.
 
-# Ekstra – tilstandsrapport-labels (for andre meglere med separate PDF-er)
-TILSTAND_LABELS = [
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    "tilstandsrapport bolig",
-    "tilstandsrapport (ns 3600)",
-    "boligsalgsrapport (ns 3600)",
-    "takstrapport",
+PROSPEKT_LABELS_EXACT = [
+    "salgsoppgave",
+    "komplett salgsoppgave",
+    "prospekt",
+    "salgsprospekt",
+    "salgspresentasjon",
+    "for utskrift",
+    "utskrift",
+    "last ned pdf",
+    "se pdf",
 ]
 
-# Høy prioritet for «Vedlegg til salgsoppgave» (PrivatMegleren)
-EXACT_LABELS = [
-    "vedlegg til salgsoppgave",
-    "vedlegg",
-    "salgsoppgave vedlegg",
-    "se vedlegg",
-] + TILSTAND_LABELS  # prøv også eksakt treff på tilstandsrapport
-
-# Dette er *klikk*-keywords (fall-back). Første element viktigst.
+# Dette er *klikk*-keywords (fallback). Første element viktigst.
 KEYWORDS = [
-    # løft tilstandsrapport først (for meglere som har egne PDFer)
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    # deretter vedleggs-/prospekt-ord
-    "vedlegg til salgsoppgave",
-    "vedlegg",
     "salgsoppgave",
+    "komplett salgsoppgave",
     "prospekt",
+    "salgsprospekt",
+    "salgspresentasjon",
+    "for utskrift",
+    "utskrift",
     "digitalformat",
     "se pdf",
     "last ned pdf",
-    "komplett",
-    "utskrift",
     "dokument",
     "dokumenter",
 ]
 
 # Dette er *lenke/URL* scoring (for kandidater)
 POSITIVE_WORDS = [
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    "vedlegg til salgsoppgave",
-    "vedlegg",
     "salgsoppgave",
     "komplett salgsoppgave",
     "prospekt",
+    "salgsprospekt",
+    "salgspresentasjon",
     "digitalformat",
     "for utskrift",
     "utskrift",
     "pdf",
 ]
 
-# Skal IKKE trigge (verken klikk eller høy score)
+# Skal IKKE trigge – vi vil eksplisitt unngå disse
 NEGATIVE_WORDS = [
-    "all informasjon om eiendommen",
-    "boliginformasjon",
-    "vil du vite mer",
-    "kontakt megler",
-    "meld interesse",
-    "meld på visning",
-    "bilder",
-    "video",
-    "360",
-    "kart",
-    "budskjema",
+    "tilstandsrapport",
+    "boligsalgsrapport",
+    "byggteknisk",
+    "fidens",
     "egenerkl",
     "egenerklaering",
     "egenerklæring",
     "energiattest",
     "energimerke",
+    "nabolag",
     "nabolagsprofil",
+    "anticimex",
+    "boligkjøperforsikring",
     "meglerpakke",
     "megleropplysninger",
-    "finans",
+    "budskjema",
     "seksjon",
     "planinfo",
     "faktura",
@@ -125,6 +112,10 @@ NEGATIVE_WORDS = [
     "kommunal",
     "avgift",
     "gebyr",
+    "360",
+    "kart",
+    "video",
+    "bilder",
 ]
 
 # === PDF-gjenkjenning ===
@@ -154,47 +145,25 @@ def _response_looks_like_pdf(resp) -> bool:
 
 
 def _score_pdf_candidate(href: str, text: str) -> int:
+    # Prospekt-only scoring (TR og vennene deres straffes hardt)
     lo = _norm_text((href or "") + " " + (text or ""))
     sc = 0
-    # tungt pluss for reelle pdf/hint-url
     if href and href.lower().endswith(".pdf"):
         sc += 80
     if PDF_URL_HINTS.search(href or ""):
         sc += 120
 
-    # EKSTRA: svært høy score for tilstandsrapport/boligsalgsrapport
-    if any(w in lo for w in ("tilstandsrapport", "boligsalgsrapport")):
-        sc += 1000
-
-    # fortsatt høyt for «vedlegg til salgsoppgave» (samle-PDF)
-    if "vedlegg til salgsoppgave" in lo:
-        sc += 300
-
+    # Høyt for prospekt-ord
     for w in POSITIVE_WORDS:
         if w in lo:
-            sc += 20
+            sc += 40
+
+    # STRAFF for TR/egenerkl./energiattest/nabolag
     for w in NEGATIVE_WORDS:
         if w in lo:
-            sc -= 500
+            sc -= 1000
+
     return sc
-
-
-def _pick_best_pdf_href(anchors: List[dict]) -> Optional[str]:
-    best, best_sc = None, -(10**9)
-    for a in anchors:
-        href = (a.get("href") or "").strip()
-        text = (a.get("text") or "").strip()
-        if not href:
-            continue
-        sc = _score_pdf_candidate(href, text)
-        if sc > best_sc:
-            best_sc, best = sc, href
-    return best
-
-
-# URL-varianter vi prøver på megler-sider
-DOC_ANCHOR_VARIANTS = ["#salgsoppgave", "#dokumenter"]
-PATH_VARIANTS = ["salgsoppgave", "dokumenter"]  # legger til på slutten av path
 
 
 def _text_like(el_text: str) -> bool:
@@ -203,9 +172,14 @@ def _text_like(el_text: str) -> bool:
         return False
     if any(n in t for n in NEGATIVE_WORDS):
         return False
-    if any(t == lab or lab in t for lab in EXACT_LABELS):
+    if any(t == lab or lab in t for lab in PROSPEKT_LABELS_EXACT):
         return True
     return any(k in t for k in KEYWORDS)
+
+
+# URL-varianter vi prøver på megler-sider
+DOC_ANCHOR_VARIANTS = ["#salgsoppgave", "#dokumenter"]
+PATH_VARIANTS = ["salgsoppgave", "dokumenter"]  # legger til på slutten av path
 
 
 def _maybe_accept_cookies(page) -> None:
@@ -347,12 +321,7 @@ def _click_exact_label_in(
                                     "text": raw[:200],
                                     "direct_href": href,
                                 }
-                                return {
-                                    "bytes": (
-                                        body if body and body[:4] == b"%PDF" else body
-                                    ),
-                                    "url": href,
-                                }
+                                return {"bytes": body, "url": href}
                     except Exception:
                         pass
                 # ellers klikk
@@ -416,8 +385,8 @@ def _click_exact_label_in(
 
 
 def _click_exact_label(page, dbg: Dict[str, Any]):
-    """Klikk en av våre høyest prioriterte labels (main + iframes)."""
-    res = _click_exact_label_in(page, EXACT_LABELS, dbg, where="main")
+    """Klikk en av våre høyest prioriterte prospekt-labels (main + iframes)."""
+    res = _click_exact_label_in(page, PROSPEKT_LABELS_EXACT, dbg, where="main")
     if res:
         return res
     try:
@@ -428,7 +397,7 @@ def _click_exact_label(page, dbg: Dict[str, Any]):
             except Exception:
                 pass
             res = _click_exact_label_in(
-                fr, EXACT_LABELS, dbg, where=getattr(fr, "url", "frame")
+                fr, PROSPEKT_LABELS_EXACT, dbg, where=getattr(fr, "url", "frame")
             )
             if res:
                 return res
@@ -773,6 +742,10 @@ def _click_candidates_in_frames(page, dbg: Dict[str, Any]) -> None:
 def _fetch_pdf_bytes_via_context_request(context, url: str) -> bytes | None:
     if _is_blacklisted_pdf(url):
         return None
+    # Ikke hent TR-URLer
+    lo = (url or "").lower()
+    if any(bad in lo for bad in NEGATIVE_WORDS):
+        return None
     try:
         r = context.request.get(
             url, headers={"Accept": "application/pdf,application/octet-stream,*/*"}
@@ -788,38 +761,47 @@ def _fetch_pdf_bytes_via_context_request(context, url: str) -> bytes | None:
 
 # -------- HOVEDFUNKSJON --------
 def fetch_pdf_with_browser(
-    start_url: str, *, timeout: int = 25000
+    start_url: str, *, timeout: int | None = None
 ) -> Tuple[bytes | None, str | None, Dict[str, Any]]:
     """
-    Forsterket Playwright-fallback:
+    Forsterket Playwright-fallback for *prospekt*:
       - prøver url-varianter (/salgsoppgave, /dokumenter, #salgsoppgave)
       - aksepterer cookies
-      - klikker relevante knapper/lenker (også i iframes)
-      - sniffer nettverk for PDF-responser + JSON/XHR som inneholder PDF-URLer (og ashx/download-hints)
+      - klikker relevante knapper/lenker (også i iframes) – men **aldri** TR/egenerkl./energiattest
+      - sniffer nettverk for PDF-responser + JSON/XHR som inneholder PDF-URLer
       - høster URLer fra DOM/__NEXT_DATA__/scripts (og i iframes)
       - binærhenter via context.request.get()
     Returnerer (pdf_bytes, pdf_url, debug)
     """
+    timeout = timeout or SETTINGS.PLAYWRIGHT_TIMEOUT
     dbg: Dict[str, Any] = {"url": start_url, "step": "start", "notes": []}
     pdf_bytes: Optional[bytes] = None
     pdf_url: Optional[str] = None
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # Proxy-støtte via SETTINGS.HTTP_PROXY (hvis satt)
+            launch_kwargs: Dict[str, Any] = {"headless": True}
+            if SETTINGS.HTTP_PROXY:
+                launch_kwargs["proxy"] = {"server": SETTINGS.HTTP_PROXY}
+
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(accept_downloads=True, user_agent=BROWSER_UA)
             page = context.new_page()
 
-            # ---- Sniff network for PDFs (inkl. JSON/XHR som peker til PDF) ----
+            # ---- Sniff network for PDFs (inkl. JSON/XHR) ----
             def handle_response(resp):
                 nonlocal pdf_bytes, pdf_url
                 try:
                     ctype = (resp.headers or {}).get("content-type", "").lower()
                 except Exception:
                     ctype = ""
-                url = resp.url
+                url = resp.url or ""
 
-                # 1) Direkte PDF-respons eller hintede endepunkter
+                # aldri aksepter TR/egenerkl./energiattest
+                if any(bad in url.lower() for bad in NEGATIVE_WORDS):
+                    return
+
                 try:
                     if (
                         (PDF_MIME_HINT in ctype)
@@ -842,13 +824,16 @@ def fetch_pdf_with_browser(
                 except Exception:
                     pass
 
-                # 2) JSON/XHR som kan inneholde lenker
+                # JSON/XHR med lenker
                 try:
-                    if (
-                        "application/json" in ctype
-                        or "text/plain" in ctype
-                        or "application/javascript" in ctype
-                        or "text/javascript" in ctype
+                    if any(
+                        t in ctype
+                        for t in (
+                            "application/json",
+                            "text/plain",
+                            "application/javascript",
+                            "text/javascript",
+                        )
                     ):
                         txt = None
                         try:
@@ -861,47 +846,44 @@ def fetch_pdf_with_browser(
                                 txt = ""
                         if not txt or pdf_bytes is not None:
                             return
-                        # .pdf-lenker
                         for m in re.finditer(
                             r'https?://[^\s"\'<>]+\.pdf(?:\?[^\s<>\'"]*)?', txt, re.I
                         ):
                             u = m.group(0)
-                            if not u or pdf_bytes is not None:
+                            if any(bad in u.lower() for bad in NEGATIVE_WORDS):
                                 continue
                             if _is_blacklisted_pdf(u):
-                                dbg["notes"].append(f"skip:blacklisted:{u}")
                                 continue
                             try:
                                 rr = page.context.request.get(u, timeout=timeout)
                                 if rr.ok:
-                                    b = rr.body()
-                                    if b and b[:4] == b"%PDF":
-                                        pdf_bytes = b
+                                    b2 = rr.body()
+                                    if b2 and b2[:4] == b"%PDF":
+                                        pdf_bytes = b2
                                         pdf_url = u
                                         dbg["notes"].append(f"net:json_link_pdf:{u}")
                                         return
                             except Exception:
                                 continue
-                        # hint-URLer (ashx/download)
                         for m in re.finditer(
                             r'https?://[^\s"\'<>]+?(wngetfile\.ashx|/getdocument|/getfile|/download)[^\s<>\'"]*',
                             txt,
                             re.I,
                         ):
                             u = m.group(0)
-                            if pdf_bytes is not None:
-                                break
+                            if any(bad in u.lower() for bad in NEGATIVE_WORDS):
+                                continue
                             if _is_blacklisted_pdf(u):
-                                dbg["notes"].append(f"skip:blacklisted:{u}")
                                 continue
                             try:
                                 rr = page.context.request.get(u, timeout=timeout)
                                 if rr.ok:
-                                    b = rr.body()
-                                    if b and (
-                                        b[:4] == b"%PDF" or _response_looks_like_pdf(rr)
+                                    b2 = rr.body()
+                                    if b2 and (
+                                        b2[:4] == b"%PDF"
+                                        or _response_looks_like_pdf(rr)
                                     ):
-                                        pdf_bytes = b
+                                        pdf_bytes = b2
                                         pdf_url = u
                                         dbg["notes"].append(f"net:json_link_hint:{u}")
                                         return
@@ -912,7 +894,7 @@ def fetch_pdf_with_browser(
 
             page.on("response", handle_response)
 
-            # ---- Prøv å gå til flere varianter av URL ----
+            # ---- Prøv URL-varianter ----
             base = start_url.split("#")[0].rstrip("/")
             variants: List[str] = [start_url]
             for seg in PATH_VARIANTS:
@@ -938,7 +920,7 @@ def fetch_pdf_with_browser(
 
                 _maybe_accept_cookies(page)
 
-                # Scroll litt for å trigge lazy innhold
+                # Scroll for å trigge lazy innhold
                 try:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight/3)")
                     page.wait_for_timeout(400)
@@ -947,7 +929,7 @@ def fetch_pdf_with_browser(
                 except Exception:
                     pass
 
-                # Klikk eksakt label først (main + iframes)
+                # Klikk eksakt prospekt-label først (main + iframes)
                 _clicked_specific = _click_exact_label(page, dbg)
                 if isinstance(_clicked_specific, dict) and "bytes" in _clicked_specific:
                     dbg["step"] = "browser_ok_sniff"
@@ -959,18 +941,17 @@ def fetch_pdf_with_browser(
                     _click_candidates(page, dbg)
                     _click_candidates_in_frames(page, dbg)
 
-                # Vent på nettverksidle eller kort pause for XHR
+                # Vent litt på XHR
                 try:
                     page.wait_for_load_state("networkidle", timeout=4000)
                 except Exception:
                     page.wait_for_timeout(1200)
 
-                # Hvis sniff allerede fant PDF
                 if pdf_bytes and pdf_url:
                     dbg["step"] = "browser_ok_sniff"
                     break
 
-                # --- NYTT: prøv ankre (href + tekst) og hent beste kandidater først ---
+                # Høsting av ankere og direkte henting
                 anchors_all = _harvest_anchors_with_text(
                     page
                 ) + _harvest_anchors_with_text_from_frames(page)
@@ -985,6 +966,9 @@ def fetch_pdf_with_browser(
                         href = a.get("href", "")
                         if not href or _is_blacklisted_pdf(href):
                             continue
+                        # ikke hent TR/energiattest osv
+                        if any(bad in href.lower() for bad in NEGATIVE_WORDS):
+                            continue
                         b = _fetch_pdf_bytes_via_context_request(context, href)
                         if b:
                             dbg["notes"].append(f"anchor_hit:{href}")
@@ -993,7 +977,7 @@ def fetch_pdf_with_browser(
                             browser.close()
                             return b, href, dbg
 
-                # --- HØST URLER UTEN KLIKK (main + iframes) ---
+                # Høst URLer uten klikk (main + iframes)
                 urls_dom = _harvest_pdf_urls_from_dom(page)
                 urls_next = _harvest_pdf_urls_from_next(page)
                 urls_js = _harvest_pdf_urls_from_scripts(page)
@@ -1018,6 +1002,9 @@ def fetch_pdf_with_browser(
 
                     # Prøv å hente første som funker
                     for pu in harvested:
+                        # ekskluder TR/energiattest osv
+                        if any(bad in pu.lower() for bad in NEGATIVE_WORDS):
+                            continue
                         b = _fetch_pdf_bytes_via_context_request(context, pu)
                         if b:
                             dbg["notes"].append(f"harvest_hit:{pu}")
@@ -1026,13 +1013,15 @@ def fetch_pdf_with_browser(
                             browser.close()
                             return b, pu, dbg
 
-                # Som ekstra forsøk: vent på download-event (noen sider åpner tom side + attachment)
+                # Download-event fallback
                 try:
-                    dl = page.wait_for_event("download", timeout=2000)
+                    dl = page.wait_for_event("download", timeout=2500)
                     try:
                         src = dl.url
                         if src and (PDF_RX.search(src) or PDF_URL_HINTS.search(src)):
-                            if not _is_blacklisted_pdf(src):
+                            if not _is_blacklisted_pdf(src) and not any(
+                                bad in src.lower() for bad in NEGATIVE_WORDS
+                            ):
                                 b = _fetch_pdf_bytes_via_context_request(context, src)
                                 if b:
                                     dbg["notes"].append(f"download_event_hit:{src}")
@@ -1072,19 +1061,21 @@ def fetch_pdf_with_browser_filtered(
     click_text_contains: list[str],
     allow_only_if_url_contains: list[str] | None = None,
     deny_if_url_contains: list[str] | None = None,
-    timeout_ms: int = 30000,
+    timeout_ms: int | None = None,
 ) -> tuple[bytes | None, str | None, dict]:
     """
     Naviger til start_url, klikk på en knapp/lenke som inneholder en av tekstene i
     `click_text_contains`, og sniff deretter network-responsene. Returner KUN PDF
     dersom URL matcher `allow_only_if_url_contains` og IKKE matcher `deny_if_url_contains`.
+    Prospekt-only: TR/energiattest/egenerkl./nabolag er implisitt **deny** uansett.
     """
-    dbg: dict[str, any] = {
+    timeout_ms = timeout_ms or SETTINGS.PLAYWRIGHT_TIMEOUT
+    dbg: dict[str, Any] = {
         "start_url": start_url,
         "step": "start",
         "click_hints": click_text_contains,
-        "allow_only": allow_only_if_url_contains or [],
-        "deny": deny_if_url_contains or [],
+        "allow_only": (allow_only_if_url_contains or []),
+        "deny": (deny_if_url_contains or []) + NEGATIVE_WORDS,  # tvungen deny
         "click_note": None,
         "response_hit": None,
         "download_hit": None,
@@ -1092,8 +1083,6 @@ def fetch_pdf_with_browser_filtered(
 
     def _norm(s: str) -> str:
         try:
-            import unicodedata
-
             s = unicodedata.normalize("NFKD", s)
             s = "".join(ch for ch in s if not unicodedata.combining(ch))
         except Exception:
@@ -1101,7 +1090,7 @@ def fetch_pdf_with_browser_filtered(
         return (s or "").strip().lower()
 
     allow = [a.lower() for a in (allow_only_if_url_contains or [])]
-    deny = [d.lower() for d in (deny_if_url_contains or [])]
+    deny = [d.lower() for d in (deny_if_url_contains or [])] + NEGATIVE_WORDS
     hints = [_norm(t) for t in (click_text_contains or []) if t]
 
     def _url_allowed(u: str) -> bool:
@@ -1116,10 +1105,13 @@ def fetch_pdf_with_browser_filtered(
     pdf_url: str | None = None
 
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
-
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            # Proxy-støtte via SETTINGS.HTTP_PROXY
+            launch_kwargs: Dict[str, Any] = {"headless": True}
+            if SETTINGS.HTTP_PROXY:
+                launch_kwargs["proxy"] = {"server": SETTINGS.HTTP_PROXY}
+
+            browser = p.chromium.launch(**launch_kwargs)
             context = browser.new_context(accept_downloads=True, user_agent=BROWSER_UA)
             page = context.new_page()
 
@@ -1166,7 +1158,7 @@ def fetch_pdf_with_browser_filtered(
             except PWTimeoutError:
                 page.goto(start_url, timeout=timeout_ms)
 
-            # cookie-accept (beste-effort)
+            # cookie-accept
             try:
                 _maybe_accept_cookies(page)
             except Exception:
@@ -1207,11 +1199,9 @@ def fetch_pdf_with_browser_filtered(
                                     if rr.ok:
                                         b = rr.body()
                                         if b and b[:4] == b"%PDF":
-                                            dbg["click_note"] = "direct_href_fetch"
-                                            return_value = (b, absu)
-                                            # sett resultater
                                             nonlocal pdf_bytes, pdf_url
-                                            pdf_bytes, pdf_url = return_value
+                                            pdf_bytes, pdf_url = b, absu
+                                            dbg["click_note"] = "direct_href_fetch"
                                             return True
                                 except Exception:
                                     pass

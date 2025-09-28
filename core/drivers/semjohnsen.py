@@ -1,22 +1,43 @@
+# core/drivers/semjohnsen.py
 from __future__ import annotations
 import re, io
 from typing import Tuple, Dict, Any, Optional, List
-import requests
+
 from PyPDF2 import PdfReader
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
+from .base import Driver
 from ..config import SETTINGS
 from ..browser_fetch import BROWSER_UA, _response_looks_like_pdf
 
 PDF_MAGIC = b"%PDF-"
 PDF_RX = re.compile(r"\.pdf(?:[\?#][^\s\"']*)?$", re.I)
 
-# Sem & Johnsen bruker Sanity CDN til «Utskriftsvennlig salgsoppgave»
+# Sem & Johnsen bruker Sanity CDN for «Utskriftsvennlig/Komplett salgsoppgave»
 SANITY_PDF_RX = re.compile(
     r"https?://cdn\.sanity\.io/files/[^\s\"']+?\.pdf(?:\?[^\"']*)?", re.I
 )
 
-# Tekster vi klikker på
+# Vi vil KUN ha prospekt/salgsoppgave
+POSITIVE_RX = re.compile(
+    r"(salgsoppgav|prospekt|utskriftsvennlig|komplett|for\s*utskrift|se\s*pdf|last\s*ned\s*pdf)",
+    re.I,
+)
+
+# Dette skal IKKE hentes
+NEGATIVE_RX = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|ns[\s_\-]?3600|bygningssakkyndig|tilstandsgrader|"
+    r"energiattest|energimerke|nabolag|nabolagsprofil|egenerkl|budskjema|vilkår|terms|cookies)",
+    re.I,
+)
+
+# Innholdscues for TR (for å avvise feil PDF selv om URL ser OK ut)
+TR_CONTENT_RX = re.compile(
+    r"(tilstandsrapport|boligsalgsrapport|ns[\s_\-]?3600|bygningssakkyndig|tilstandsgrader|nøkkeltakst)",
+    re.I,
+)
+
+# Tekster vi klikker på for å få prospekt
 CLICK_TEXTS = [
     "utskriftsvennlig salgsoppgave",
     "komplett salgsoppgave",
@@ -26,27 +47,80 @@ CLICK_TEXTS = [
     "for utskrift",
 ]
 
+# Moderat, men realistisk for samle-PDF
+MIN_PAGES = 6
+MIN_BYTES = 200_000
 
-def _looks_like_pdf(b: bytes) -> bool:
+
+def _looks_like_pdf(b: Optional[bytes]) -> bool:
     return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
-def _min_pages(b: bytes, n: int = 4) -> bool:
+def _pdf_pages(b: bytes) -> int:
+    try:
+        return len(PdfReader(io.BytesIO(b)).pages)
+    except Exception:
+        return 0
+
+
+def _first_pages_text(b: bytes, first: int = 3) -> str:
     try:
         r = PdfReader(io.BytesIO(b))
-        return len(r.pages) >= n
+        out: List[str] = []
+        for p in r.pages[: min(first, len(r.pages))]:
+            try:
+                t = p.extract_text() or ""
+            except Exception:
+                t = ""
+            if t:
+                out.append(t.lower())
+        return "\n".join(out)
     except Exception:
+        return ""
+
+
+def _is_prospect_pdf(b: bytes, url: str | None = None) -> bool:
+    if not _looks_like_pdf(b):
         return False
+    if len(b) < MIN_BYTES:
+        return False
+    if _pdf_pages(b) < MIN_PAGES:
+        return False
+    # Avvis åpenbare negative signaler i URL
+    if url and NEGATIVE_RX.search(url):
+        return False
+    # Innholdet skal ikke se ut som TR
+    txt = _first_pages_text(b, 3)
+    if TR_CONTENT_RX.search(txt):
+        return False
+    return True
 
 
-class SemJohnsenDriver:
+def _allowed_url(u: str, label: str = "") -> bool:
+    s = f"{label} {u}".lower()
+    if NEGATIVE_RX.search(s):
+        return False
+    # Krev positive signaler i label/URL for å begrense oss til prospekt
+    return POSITIVE_RX.search(s) is not None
+
+
+def _looks_like_pdf_url(u: str, ctype: str = "") -> bool:
+    lo = (u or "").lower()
+    return (
+        "application/pdf" in (ctype or "").lower()
+        or PDF_RX.search(lo) is not None
+        or SANITY_PDF_RX.search(lo) is not None
+    )
+
+
+class SemJohnsenDriver(Driver):
     name = "semjohnsen"
 
     def matches(self, url: str) -> bool:
         return "sem-johnsen.no/boliger/" in (url or "").lower()
 
     def try_fetch(
-        self, sess: requests.Session, page_url: str
+        self, sess, page_url: str
     ) -> Tuple[bytes | None, str | None, Dict[str, Any]]:
         dbg: Dict[str, Any] = {
             "driver": self.name,
@@ -65,7 +139,7 @@ class SemJohnsenDriver:
                 pdf_bytes: Optional[bytes] = None
                 pdf_url: Optional[str] = None
 
-                # Sniff PDF-responser (særlig Sanity-URL)
+                # Sniff PDF-responser (Sanity og generelle PDF-ruter) – valider som prospekt
                 def handle_response(resp):
                     nonlocal pdf_bytes, pdf_url
                     if pdf_bytes is not None:
@@ -75,19 +149,16 @@ class SemJohnsenDriver:
                         ctype = (resp.headers or {}).get("content-type", "").lower()
                     except Exception:
                         url, ctype = "", ""
-                    if not url:
+                    if not url or not _looks_like_pdf_url(url, ctype):
                         return
-                    if (
-                        "application/pdf" in ctype
-                        or PDF_RX.search(url)
-                        or SANITY_PDF_RX.search(url)
-                        or _response_looks_like_pdf(resp)
-                    ):
+                    if NEGATIVE_RX.search(url):
+                        return
+                    if _response_looks_like_pdf(resp):
                         try:
                             body = resp.body()
                         except Exception:
                             body = None
-                        if body and _looks_like_pdf(body):
+                        if body and _is_prospect_pdf(body, url):
                             pdf_bytes, pdf_url = body, url
                             dbg["response_hit"] = url
 
@@ -125,7 +196,7 @@ class SemJohnsenDriver:
                 except Exception:
                     pass
 
-                # Klikk på «Utskriftsvennlig/Komplett salgsoppgave»
+                # Klikk på «Utskriftsvennlig/Komplett salgsoppgave» (kun positive)
                 attempts: List[Dict[str, Any]] = []
                 try:
                     cands = page.locator("a[href], button, [role='button']")
@@ -136,7 +207,8 @@ class SemJohnsenDriver:
                             raw = el.inner_text(timeout=250) or ""
                         except Exception:
                             raw = ""
-                        low = raw.strip().lower()
+                        label = raw.strip()
+                        low = label.lower()
                         hit = any(k in low for k in CLICK_TEXTS)
                         if len(attempts) < 120:
                             attempts.append(
@@ -151,14 +223,13 @@ class SemJohnsenDriver:
                         if not hit:
                             continue
 
-                        # Direkte via href (Sanity-lenke)
+                        # Direkte via href (Sanity/annen PDF)
                         href = ""
                         try:
                             href = el.get_attribute("href") or ""
                         except Exception:
                             href = ""
-                        if href:
-                            # forsøk direkte binærhent
+                        if href and _allowed_url(href, label):
                             try:
                                 rr = page.context.request.get(
                                     href,
@@ -167,8 +238,9 @@ class SemJohnsenDriver:
                                     },
                                     timeout=SETTINGS.REQ_TIMEOUT * 1000,
                                 )
-                                if rr.ok and _looks_like_pdf(rr.body()):
-                                    pdf_bytes, pdf_url = rr.body(), href
+                                body = rr.body() if rr.ok else None
+                                if body and _is_prospect_pdf(body, href):
+                                    pdf_bytes, pdf_url = body, href
                                     dbg["click_direct_href"] = href
                                     break
                             except Exception:
@@ -204,15 +276,21 @@ class SemJohnsenDriver:
                 except Exception:
                     page.wait_for_timeout(800)
 
-                # Harvest som ekstra sikkerhet (DOM + scripts + __NEXT_DATA__)
+                # Harvest som ekstra sikkerhet (DOM + scripts)
                 if not pdf_bytes:
                     harvested: List[str] = []
                     try:
                         urls = page.evaluate(
-                            "(() => Array.from(document.querySelectorAll('a[href]')).map(a=>a.href))()"
+                            "Array.from(document.querySelectorAll('a[href]')).map(a=>({href:a.href,text:a.innerText||''}))"
                         )
                         if isinstance(urls, list):
-                            harvested.extend([u for u in urls if isinstance(u, str)])
+                            for it in urls:
+                                if not isinstance(it, dict):
+                                    continue
+                                href = it.get("href") or ""
+                                text = it.get("text") or ""
+                                if href and _allowed_url(href, text):
+                                    harvested.append(href)
                     except Exception:
                         pass
                     try:
@@ -230,7 +308,9 @@ class SemJohnsenDriver:
                                 content,
                                 re.I,
                             ):
-                                harvested.append(m.group(0))
+                                u = m.group(0)
+                                if _allowed_url(u):
+                                    harvested.append(u)
                     except Exception:
                         pass
 
@@ -242,11 +322,17 @@ class SemJohnsenDriver:
                             seen.add(u)
                             uniq.append(u)
 
-                    # Prioriter Sanity-URLer
+                    # Prioriter Sanity-URLer + positive signaler
                     def _score(u: str) -> int:
-                        return (200 if "cdn.sanity.io/files/" in (u.lower()) else 0) + (
-                            20 if u.lower().endswith(".pdf") else 0
-                        )
+                        lo = u.lower()
+                        sc = 0
+                        if "cdn.sanity.io/files/" in lo:
+                            sc += 200
+                        if POSITIVE_RX.search(lo):
+                            sc += 60
+                        if lo.endswith(".pdf"):
+                            sc += 20
+                        return sc
 
                     uniq.sort(key=_score, reverse=True)
 
@@ -259,8 +345,9 @@ class SemJohnsenDriver:
                                 },
                                 timeout=SETTINGS.REQ_TIMEOUT * 1000,
                             )
-                            if rr.ok and _looks_like_pdf(rr.body()):
-                                pdf_bytes, pdf_url = rr.body(), u
+                            body = rr.body() if rr.ok else None
+                            if body and _is_prospect_pdf(body, u):
+                                pdf_bytes, pdf_url = body, u
                                 dbg["harvest_hit"] = u
                                 break
                         except Exception:
@@ -273,13 +360,12 @@ class SemJohnsenDriver:
                     dbg["step"] = "no_pdf_found"
                     return None, None, dbg
 
-                # Samle-PDF sanity check: minst 4 sider
-                if not _min_pages(pdf_bytes, 4):
-                    dbg["step"] = "pdf_rejected_min_pages"
+                # Endelig prospekt-validering
+                if not _is_prospect_pdf(pdf_bytes, pdf_url):
+                    dbg["step"] = "pdf_rejected_not_prospect"
                     return None, None, dbg
 
-                # Viktig: IKKE sett meta.is_tilstandsrapport her (dette er samle-PDF).
-                # Hint til postprosess: si fra at dette er "prospekt/combined"
+                # Hint til videre pipeline: dette er samle/prospekt fra Sanity
                 dbg.setdefault("meta", {})
                 dbg["meta"]["combined_prospectus"] = True
                 dbg["meta"]["source"] = "sanity_cdn"

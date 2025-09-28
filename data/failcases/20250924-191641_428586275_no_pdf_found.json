@@ -1,0 +1,1361 @@
+{
+  "step": "failed",
+  "finn_url": "https://www.finn.no/realestate/homes/ad.html?finnkode=428586275",
+  "megler_url": "https://www.proaktiv.no/kjope-eiendom/74250136",
+  "driver_name": "proaktiv",
+  "driver_debug": {
+    "driver": "proaktiv",
+    "step": "no_pdf_confirmed",
+    "driver_meta": {
+      "cands:https://www.proaktiv.no/kjope-eiendom/74250136": [
+        "https://interessent.webmegler.no/interessent/salgsoppgave?tenantId=231&oppdragsId=600007911",
+        "https://interessent.webmegler.no/interessent/visningspaamelding?tenantId=231&oppdragsId=600007911"
+      ],
+      "cands:https://www.proaktiv.no/kjope-eiendom/74250136#dokumenter": [
+        "https://interessent.webmegler.no/interessent/salgsoppgave?tenantId=231&oppdragsId=600007911",
+        "https://interessent.webmegler.no/interessent/visningspaamelding?tenantId=231&oppdragsId=600007911"
+      ],
+      "get_1_https://interessent.webmegler.no/interessent/salgsoppgave?tenantId=231&oppdragsId=600007911": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "content_length": null,
+        "elapsed_ms": 629,
+        "final_url": "https://interessent.webmegler.no/interessent/salgsoppgave?tenantId=231&oppdragsId=600007911",
+        "bytes": 11140
+      },
+      "get_1_https://interessent.webmegler.no/interessent/visningspaamelding?tenantId=231&oppdragsId=600007911": {
+        "status": 200,
+        "content_type": "text/html; charset=utf-8",
+        "content_length": null,
+        "elapsed_ms": 562,
+        "final_url": "https://interessent.webmegler.no/interessent/visningspaamelding?tenantId=231&oppdragsId=600007911",
+        "bytes": 17975
+      }
+    }
+  },
+  "browser_debug": {
+    "url": "https://www.proaktiv.no/kjope-eiendom/74250136",
+    "step": "browser_failed",
+    "notes": [],
+    "click_attempts": [
+      {
+        "selector": "button",
+        "index": 0,
+        "text_preview": "i dag",
+        "match": false
+      },
+      {
+        "selector": "button",
+        "index": 1,
+        "text_preview": "nullstill",
+        "match": false
+      },
+      {
+        "selector": "button",
+        "index": 2,
+        "text_preview": "Close",
+        "match": false
+      },
+      {
+        "selector": "[role='button']",
+        "index": 0,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "[role='button']",
+        "index": 1,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 0,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 1,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 2,
+        "text_preview": "Verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 3,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 4,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 5,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 6,
+        "text_preview": "Verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 7,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 8,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 9,
+        "text_preview": "Selge bolig",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 10,
+        "text_preview": "Vår salgsprosess",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 11,
+        "text_preview": "Kundeuttalelser",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 12,
+        "text_preview": "Mitt eiendomssalg",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 13,
+        "text_preview": "Protreff",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 14,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 15,
+        "text_preview": "E-takst",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 16,
+        "text_preview": "Finn eiendomsmegler",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 17,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 18,
+        "text_preview": "Drammen, Lier & Holmestrand",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 19,
+        "text_preview": "Lillestrøm",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 20,
+        "text_preview": "Lørenskog",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 21,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 22,
+        "text_preview": "Voss",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 23,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 24,
+        "text_preview": "Sandnes",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 25,
+        "text_preview": "Sola",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 26,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 27,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 28,
+        "text_preview": "Skien",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 29,
+        "text_preview": "Haugesund",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 30,
+        "text_preview": "Kjedeledelse",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 31,
+        "text_preview": "Sarpsborg",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 32,
+        "text_preview": "Jæren",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 33,
+        "text_preview": "Bolig til salgs",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 34,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 35,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 36,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 37,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 38,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 39,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 40,
+        "text_preview": "Nybygg",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 41,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 42,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 43,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 44,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 45,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 46,
+        "text_preview": "Næring",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 47,
+        "text_preview": "Tjenester",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 48,
+        "text_preview": "Eiendom",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 49,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 50,
+        "text_preview": "Boligmagasin",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 51,
+        "text_preview": "Boligartikler",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 52,
+        "text_preview": "Boliggalleri",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 53,
+        "text_preview": "Boligkjøperrådgivning",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 54,
+        "text_preview": "Prosjektmegling",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 55,
+        "text_preview": "Ledige stillinger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 56,
+        "text_preview": "Om oss",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 57,
+        "text_preview": "Presse",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 58,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 59,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 60,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 61,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 62,
+        "text_preview": "Selge bolig",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 63,
+        "text_preview": "Vår salgsprosess",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 64,
+        "text_preview": "Kundeuttalelser",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 65,
+        "text_preview": "Mitt eiendomssalg",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 66,
+        "text_preview": "Protreff",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 67,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 68,
+        "text_preview": "E-takst",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 69,
+        "text_preview": "Bolig til salgs",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 70,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 71,
+        "text_preview": "Viken",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 72,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 73,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 74,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 75,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 76,
+        "text_preview": "Bodø",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 77,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 78,
+        "text_preview": "Nybygg",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 79,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 80,
+        "text_preview": "Viken",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 81,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 82,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 83,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 84,
+        "text_preview": "Bodø",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 85,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 86,
+        "text_preview": "Boligmagasin",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 87,
+        "text_preview": "Boligartikler",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 88,
+        "text_preview": "Boliggalleri",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 89,
+        "text_preview": "Boligkjøperrådgivning",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 90,
+        "text_preview": "Prosjektmegling",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 91,
+        "text_preview": "Ledige stillinger",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 92,
+        "text_preview": "Om oss",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 93,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "selector": "a",
+        "index": 94,
+        "text_preview": "",
+        "match": false
+      }
+    ],
+    "frame_click_attempts": [
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "button",
+        "index": 0,
+        "text_preview": "i dag",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "button",
+        "index": 1,
+        "text_preview": "nullstill",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "button",
+        "index": 2,
+        "text_preview": "Close",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "[role='button']",
+        "index": 0,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "[role='button']",
+        "index": 1,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 0,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 1,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 2,
+        "text_preview": "Verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 3,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 4,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 5,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 6,
+        "text_preview": "Verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 7,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 8,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 9,
+        "text_preview": "Selge bolig",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 10,
+        "text_preview": "Vår salgsprosess",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 11,
+        "text_preview": "Kundeuttalelser",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 12,
+        "text_preview": "Mitt eiendomssalg",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 13,
+        "text_preview": "Protreff",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 14,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 15,
+        "text_preview": "E-takst",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 16,
+        "text_preview": "Finn eiendomsmegler",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 17,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 18,
+        "text_preview": "Drammen, Lier & Holmestrand",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 19,
+        "text_preview": "Lillestrøm",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 20,
+        "text_preview": "Lørenskog",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 21,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 22,
+        "text_preview": "Voss",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 23,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 24,
+        "text_preview": "Sandnes",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 25,
+        "text_preview": "Sola",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 26,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 27,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 28,
+        "text_preview": "Skien",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 29,
+        "text_preview": "Haugesund",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 30,
+        "text_preview": "Kjedeledelse",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 31,
+        "text_preview": "Sarpsborg",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 32,
+        "text_preview": "Jæren",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 33,
+        "text_preview": "Bolig til salgs",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 34,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 35,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 36,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 37,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 38,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 39,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 40,
+        "text_preview": "Nybygg",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 41,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 42,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 43,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 44,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 45,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 46,
+        "text_preview": "Næring",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 47,
+        "text_preview": "Tjenester",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 48,
+        "text_preview": "Eiendom",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 49,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 50,
+        "text_preview": "Boligmagasin",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 51,
+        "text_preview": "Boligartikler",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 52,
+        "text_preview": "Boliggalleri",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 53,
+        "text_preview": "Boligkjøperrådgivning",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 54,
+        "text_preview": "Prosjektmegling",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 55,
+        "text_preview": "Ledige stillinger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 56,
+        "text_preview": "Om oss",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 57,
+        "text_preview": "Presse",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 58,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 59,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 60,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 61,
+        "text_preview": "",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 62,
+        "text_preview": "Selge bolig",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 63,
+        "text_preview": "Vår salgsprosess",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 64,
+        "text_preview": "Kundeuttalelser",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 65,
+        "text_preview": "Mitt eiendomssalg",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 66,
+        "text_preview": "Protreff",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 67,
+        "text_preview": "Gratis verdivurdering",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 68,
+        "text_preview": "E-takst",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 69,
+        "text_preview": "Bolig til salgs",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 70,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 71,
+        "text_preview": "Viken",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 72,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 73,
+        "text_preview": "Ålesund",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 74,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 75,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 76,
+        "text_preview": "Bodø",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 77,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 78,
+        "text_preview": "Nybygg",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 79,
+        "text_preview": "Oslo",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 80,
+        "text_preview": "Viken",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 81,
+        "text_preview": "Trondheim",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 82,
+        "text_preview": "Bergen",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 83,
+        "text_preview": "Stavanger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 84,
+        "text_preview": "Bodø",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 85,
+        "text_preview": "Se alle områder",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 86,
+        "text_preview": "Boligmagasin",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 87,
+        "text_preview": "Boligartikler",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 88,
+        "text_preview": "Boliggalleri",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 89,
+        "text_preview": "Boligkjøperrådgivning",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 90,
+        "text_preview": "Prosjektmegling",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 91,
+        "text_preview": "Ledige stillinger",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 92,
+        "text_preview": "Om oss",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 93,
+        "text_preview": "Kontakt",
+        "match": false
+      },
+      {
+        "frame_url": "https://proaktiv.no/bolig-til-salgs/vestland/bergen/enebolig/74250136",
+        "selector": "a",
+        "index": 94,
+        "text_preview": "",
+        "match": false
+      }
+    ]
+  },
+  "pdf_url": null,
+  "pdf_path": null,
+  "content_type": null,
+  "content_length": null,
+  "tilstandsrapport_path": null,
+  "tilstands_pages": null,
+  "tilstands_size": null,
+  "combined_deleted": false,
+  "used_return": "combined",
+  "tilstands_engine": null,
+  "tilstands_method": null,
+  "tilstands_impl": null,
+  "error": "no_pdf_found",
+  "extra": {
+    "megler_url": "https://www.proaktiv.no/kjope-eiendom/74250136"
+  }
+}
