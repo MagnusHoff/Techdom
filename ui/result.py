@@ -461,6 +461,7 @@ def render_result() -> None:
                         current_url
                     )
                     st.session_state["prospectus_debug"] = pdf_dbg
+                    print("prospectus_debug:", pdf_dbg)  # midlertidig logg for S3-feilsøking
 
                     if pdf_bytes:
                         if presigned_url:
