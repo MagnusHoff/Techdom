@@ -4,6 +4,11 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json, uuid, tempfile, shutil
 
+from core import counters
+
+
+_LAST_KNOWN_TOTAL: int | None = None
+
 HISTORY_PATH = Path("data/analysis_history.jsonl")
 HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -47,6 +52,7 @@ def add_analysis(
     Lagrer/oppdaterer en analyse. Duplikater (samme finn_url) fjernes – nyeste beholdes.
     'title' forventes å være adressen (vi lager ingen egen 'address'-felt).
     """
+    global _LAST_KNOWN_TOTAL
     items = _load_all()
     # fjern eldre med samme URL
     items = [r for r in items if r.get("finn_url") != finn_url]
@@ -66,6 +72,12 @@ def add_analysis(
     # sorter nyeste først
     items.sort(key=lambda r: r.get("ts", ""), reverse=True)
     _save_all(items)
+    try:
+        new_total = counters.increment_total_count()
+        if isinstance(new_total, int):
+            _LAST_KNOWN_TOTAL = new_total
+    except Exception:
+        pass
     return analysis_id
 
 
@@ -88,5 +100,16 @@ def get_recent(n: int = 6) -> list[dict]:
 
 
 def get_total_count() -> int:
-    """Returner totalt antall analyser lagret lokalt."""
+    """Returner totalt antall analyser, preferer ekstern teller hvis mulig."""
+    global _LAST_KNOWN_TOTAL
+    try:
+        default = _LAST_KNOWN_TOTAL if _LAST_KNOWN_TOTAL is not None else -1
+        external = counters.fetch_total_count(default=default)
+    except Exception:
+        external = _LAST_KNOWN_TOTAL if _LAST_KNOWN_TOTAL is not None else -1
+    if isinstance(external, int) and external >= 0:
+        _LAST_KNOWN_TOTAL = external
+        return external
+    if _LAST_KNOWN_TOTAL is not None:
+        return _LAST_KNOWN_TOTAL
     return len(_load_all())
