@@ -8,6 +8,7 @@ from urllib.parse import urlparse, parse_qs, urlunparse
 from typing import Any, Dict, Optional, List, cast
 
 import streamlit as st
+from pydantic import ValidationError
 
 # PDF-leser: prøv pypdf først, fallback til PyPDF2
 try:
@@ -22,6 +23,12 @@ from core.rent import get_rent_by_csv
 from core.history import add_analysis
 from core.scrape import scrape_finn
 from core.fetch import get_prospect_or_scrape  # ⬅️ kun prospekt
+from core.analysis_contracts import (
+    InputContract,
+    build_calculated_metrics,
+    build_decision_result,
+    map_decision_to_ui,
+)
 
 
 DEFAULT_EQUITY_PCT = 0.15
@@ -157,57 +164,30 @@ def _clean_url(u: str) -> str:
         return u
 
 
-def _result_metric_html(
-    label: str,
-    value: str,
-    tooltip: str,
-    align: str = "right",
-    value_class: str = "",
-) -> str:
-    """Lag HTML-snutt for resultatkort med tooltip."""
-    esc_label = html.escape(label)
-    esc_value = html.escape(value)
-    esc_tooltip = html.escape(tooltip)
-    align_class = {
-        "left": "td-align-left",
-        "center": "td-align-center",
-        "right": "td-align-right",
-    }.get(align, "td-align-right")
-    value_cls_attr = f" td-{value_class}" if value_class else ""
-    return f"""
-    <div class=\"td-result-metric\">
-      <div class=\"td-result-head\">
-        <span>{esc_label}</span>
-        <div class=\"td-result-info {align_class}\">
-          <svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"
-               stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"
-               aria-hidden=\"true\" focusable=\"false\">
-            <circle cx=\"12\" cy=\"12\" r=\"10\"></circle>
-            <line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"></line>
-            <line x1=\"12\" y1=\"8\"  x2=\"12.01\" y2=\"8\"></line>
-          </svg>
-          <div class=\"td-result-tip\">{esc_tooltip}</div>
-        </div>
-      </div>
-      <div class=\"td-result-value{value_cls_attr}\">{esc_value}</div>
-    </div>
-    """
+def _input_contract_from_params(params: Dict[str, Any]) -> InputContract:
+    return InputContract(
+        kjopesum=_as_float(params.get("price", 0)),
+        egenkapital=_as_float(params.get("equity", 0)),
+        rente_pct_pa=_as_float(params.get("interest", 0.0)),
+        lanetid_ar=_as_int(params.get("term_years", 30), 30),
+        brutto_leie_mnd=_as_float(params.get("rent", 0)),
+        felleskost_mnd=_as_float(params.get("hoa", 0)),
+        vedlikehold_pct_av_leie=_as_float(params.get("maint_pct", 0.0)),
+        andre_kost_mnd=_as_float(params.get("other_costs", 0)),
+    )
 
 
-def _cashflow_class(value: float) -> str:
-    if value < -2000:
-        return "color-red"
-    if value < 0:
-        return "color-orange"
-    return "color-green"
-
-
-def _roe_class(value_pct: float) -> str:
-    if value_pct < 5:
-        return "color-red"
-    if value_pct < 10:
-        return "color-orange"
-    return "color-green"
+def _color_class(color: Any) -> str:
+    if isinstance(color, str):
+        key = color.strip().lower()
+    else:
+        key = ""
+    return {
+        "red": "red",
+        "orange": "orange",
+        "green": "green",
+        "neutral": "neutral",
+    }.get(key, "neutral")
 
 
 # --------------------------- main view ---------------------------
@@ -228,6 +208,8 @@ def render_result() -> None:
     st.session_state.setdefault("_history_logged", False)
     st.session_state.setdefault("prospectus_ai", {})
     st.session_state.setdefault("show_details_modal", False)
+    st.session_state.setdefault("decision_result", None)
+    st.session_state.setdefault("decision_ui", {})
 
     # En felles "busy"-flag for å låse inputs/knapper
     busy = bool(st.session_state.get("_updating") or st.session_state.get("_fetching"))
@@ -238,6 +220,8 @@ def render_result() -> None:
         st.session_state["_scraped_url"] = url
         st.session_state["_scraped_info"] = info
         st.session_state["computed"] = None
+        st.session_state["decision_result"] = None
+        st.session_state["decision_ui"] = {}
         st.session_state["params"] = _init_params_for_new_url(info)
         st.session_state["_first_compute_done"] = False
         st.session_state["_history_logged"] = False
@@ -640,6 +624,15 @@ def render_result() -> None:
             _as_float(p.get("vacancy_pct")),
             _as_int(p.get("other_costs")),
         )
+        try:
+            input_contract = _input_contract_from_params(p)
+            calc_metrics = build_calculated_metrics(input_contract)
+            decision = build_decision_result(input_contract, calc_metrics)
+            st.session_state["decision_result"] = decision
+            st.session_state["decision_ui"] = map_decision_to_ui(decision)
+        except ValidationError:
+            st.session_state["decision_result"] = None
+            st.session_state["decision_ui"] = {}
         st.session_state["params"] = p
         st.session_state["computed"] = m
         st.session_state["ai_text"] = ai_explain(p, m)  # type: ignore[arg-type]
@@ -671,90 +664,6 @@ def render_result() -> None:
         )
         st.session_state["_history_logged"] = True
 
-    st.markdown(
-        """
-        <style>
-          .td-result-metric{display:flex;flex-direction:column;gap:6px;margin-bottom:20px;}
-          .td-result-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:inherit;opacity:.85;}
-          .td-result-info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;cursor:help;opacity:.85;}
-          .td-result-info svg{width:18px;height:18px;}
-          .td-result-tip{position:absolute;bottom:32px;background:#000;color:#fff;padding:10px 12px;border-radius:6px;font-size:13px;line-height:1.45;box-shadow:0 6px 16px rgba(0,0,0,.33);width:clamp(200px, 60vw, 320px);max-width:calc(100vw - 32px);border:1px solid rgba(255,255,255,.18);opacity:0;visibility:hidden;transition:opacity .12s ease;text-align:left;}
-          .td-result-info:hover .td-result-tip{opacity:1;visibility:visible;}
-          .td-result-info.td-align-left .td-result-tip{left:0;right:auto;}
-          .td-result-info.td-align-center .td-result-tip{left:50%;transform:translateX(-50%);}
-          .td-result-info.td-align-right .td-result-tip{right:0;left:auto;}
-          .td-result-value{font-size:26px;font-weight:700;color:inherit;}
-          @media (max-width:600px){.td-result-value{font-size:22px;}}
-          .td-result-value.td-color-red{color:#ff4d4f;}
-          .td-result-value.td-color-orange{color:#ffa940;}
-          .td-result-value.td-color-green{color:#3dd27c;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    columns = st.columns(3)
-    metrics = [
-        (
-            columns[0],
-            "left",
-            [
-                (
-                    "Månedlig overskudd",
-                    f"{_as_float(m.get('cashflow')):.0f} kr",
-                    "Hva du sitter igjen med etter leieinntekter og kostnader.",
-                    _cashflow_class(_as_float(m.get("cashflow"))),
-                ),
-                (
-                    "Månedlig lånekostnader",
-                    f"{_as_float(m.get('m_payment')):.0f} kr",
-                    "Summen du betaler banken hver måned (renter+avdrag).",
-                ),
-            ],
-        ),
-        (
-            columns[1],
-            "center",
-            [
-                (
-                    "Leie som må til for å gå i null",
-                    f"{_as_float(m.get('break_even')):.0f} kr/mnd",
-                    "Så mye leieinntekter må du ha for at prosjektet skal lønne seg.",
-                ),
-                (
-                    "Årlig nettoinntekt",
-                    f"{_as_float(m.get('noi_year')):.0f} kr",
-                    "Leieinntekter minus driftskostnader, men før lånekostnader.",
-                ),
-            ],
-        ),
-        (
-            columns[2],
-            "right",
-            [
-                (
-                    "Årlig nedbetaling på lån",
-                    f"{_as_float(m.get('principal_reduction_year')):.0f} kr",
-                    "Så mye gjeld du betaler ned på lånet i året.",
-                ),
-                (
-                    "Avkastning på egenkapital",
-                    f"{_as_float(m.get('total_equity_return_pct')):.1f} %",
-                    "Hvor mye du tjener i forhold til pengene du selv har investert.",
-                    _roe_class(_as_float(m.get("total_equity_return_pct"))),
-                ),
-            ],
-        ),
-    ]
-
-    for col, align, items in metrics:
-        for label, value, tooltip, *rest in items:
-            value_class = rest[0] if rest else ""
-            col.markdown(
-                _result_metric_html(label, value, tooltip, align, value_class),
-                unsafe_allow_html=True,
-            )
-
     # --- AI: tall vs. salgsoppgave (PDF) ---
     st.markdown("---")
 
@@ -765,15 +674,66 @@ def render_result() -> None:
           #ai-metrics     { margin-top: 0px; }
           #ai-prospectus  { margin-top: 0px; }
 
-          .aiL-grid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:16px; align-items:stretch; }
+          .aiL-scorecard{
+            background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
+            border:1px solid rgba(255,255,255,.12);
+            border-radius:16px;
+            padding:18px 20px;
+            display:flex;
+            flex-direction:column;
+            gap:14px;
+          }
+          .aiL-scoreheader{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+          .aiL-scorevalue{font-size:46px; font-weight:800; line-height:1;}
+          .aiL-scorelabel{font-size:12px; opacity:.7; letter-spacing:.06em; text-transform:uppercase;}
+          .aiL-chip{
+            display:inline-flex; align-items:center; gap:6px;
+            font-size:13px; font-weight:600;
+            padding:4px 12px; border-radius:999px;
+            border:1px solid rgba(255,255,255,.16);
+            background:rgba(255,255,255,.08);
+            text-transform:uppercase; letter-spacing:.02em;
+          }
+          .aiL-chip.red{ color:#ff6b6b; border-color:rgba(239,68,68,.55); background:rgba(239,68,68,.16); }
+          .aiL-chip.orange{ color:#ffa940; border-color:rgba(245,158,11,.55); background:rgba(245,158,11,.16); }
+          .aiL-chip.green{ color:#3dd27c; border-color:rgba(74,222,128,.45); background:rgba(74,222,128,.16); }
+          .aiL-chip.neutral{ color:rgba(255,255,255,.85); }
+          .aiL-scorebar{ width:100%; height:10px; background:rgba(255,255,255,.08); border-radius:999px; overflow:hidden; }
+          .aiL-scorefill{ height:100%; border-radius:inherit; transition:width .2s ease; }
+          .aiL-scorefill.red{ background:linear-gradient(90deg,#ef4444,#f87171); }
+          .aiL-scorefill.orange{ background:linear-gradient(90deg,#f59e0b,#fbbf24); }
+          .aiL-scorefill.green{ background:linear-gradient(90deg,#10b981,#34d399); }
+          .aiL-scorefill.neutral{ background:linear-gradient(90deg,#64748b,#94a3b8); }
+          .aiL-scoretext{ font-size:14px; line-height:1.6; opacity:.9; }
+          .aiL-scorecard-ghost{ opacity:0; pointer-events:none; }
+
+          .aiL-keygrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin:20px 0 4px 0; }
+          .aiL-keycard{
+            background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));
+            border:1px solid rgba(255,255,255,.10);
+            border-radius:14px; padding:14px 16px;
+            display:flex; flex-direction:column; gap:6px;
+          }
+          .aiL-keyname{ font-size:13px; opacity:.78; text-transform:uppercase; letter-spacing:.04em; }
+          .aiL-keyvalue{ font-size:24px; font-weight:700; color:inherit; }
+          .aiL-keyvalue.red{ color:#ff4d4f; }
+          .aiL-keyvalue.orange{ color:#ffa940; }
+          .aiL-keyvalue.green{ color:#3dd27c; }
+          .aiL-keyvalue.neutral{ color:rgba(255,255,255,.92); }
+
+          .aiL-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-top:20px; align-items:stretch; }
           .aiL-card{
             background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));
             border:1px solid rgba(255,255,255,.12);
-            border-radius:14px; padding:14px 16px; width:100%;
-            display:flex; flex-direction:column; gap:6px;
+            border-radius:14px; padding:16px 18px; width:100%;
+            display:flex; flex-direction:column; gap:10px;
           }
-          .aiL-title{ font-weight:700; font-size:16px; margin:0 0 4px 0 }
-          .aiL-subtle{ opacity:.85; font-size:13px }
+          .aiL-title{ font-weight:700; font-size:16px; margin:0; display:flex; align-items:center; gap:8px; }
+          .aiL-card ul{ margin:0; padding-left:1.1rem; }
+          .aiL-card li{ margin:.2rem 0; line-height:1.45; }
+          .aiL-subtle{ opacity:.85; font-size:13px; }
+
+          .aiR-offset{ height:52px; }
 
           .aiR-grid{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:16px; align-items:stretch; }
           @media (max-width:1000px){ .aiR-grid{ grid-template-columns:1fr } }
@@ -797,87 +757,129 @@ def render_result() -> None:
         unsafe_allow_html=True,
     )
 
+    m_now = cast(Dict[str, Any], st.session_state.get("computed") or {})
+    p_now = cast(Dict[str, Any], st.session_state.get("params") or {})
+    decision_ui = cast(Dict[str, Any], st.session_state.get("decision_ui") or {})
+
+    if not decision_ui and m_now:
+        try:
+            input_contract = _input_contract_from_params(p_now)
+            calc_metrics = build_calculated_metrics(input_contract)
+            decision = build_decision_result(input_contract, calc_metrics)
+            decision_ui = map_decision_to_ui(decision)
+            st.session_state["decision_result"] = decision
+            st.session_state["decision_ui"] = decision_ui
+        except ValidationError:
+            decision_ui = {}
+            st.session_state["decision_result"] = None
+            st.session_state["decision_ui"] = {}
+
+    score_html = ""
+    if decision_ui:
+        status = cast(Dict[str, Any], decision_ui.get("status", {}))
+        scorelinjal = cast(Dict[str, Any], decision_ui.get("scorelinjal", {}))
+        score_value = int(status.get("score") or scorelinjal.get("value") or 0)
+        score_percent = max(0.0, min(100.0, float(scorelinjal.get("value", score_value))))
+        score_color = _color_class(scorelinjal.get("farge"))
+        dom_text = html.escape(_as_str(status.get("dom")))
+        status_sentence = html.escape(_as_str(status.get("setning")))
+
+        score_html = f"""
+        <div class=\"aiL-scorecard\">
+          <div class=\"aiL-scoreheader\">
+            <div>
+              <div class=\"aiL-scorevalue\">{score_value}</div>
+              <div class=\"aiL-scorelabel\">Total score</div>
+            </div>
+            <div class=\"aiL-chip {score_color}\">{dom_text}</div>
+          </div>
+          <div class=\"aiL-scorebar\">
+            <div class=\"aiL-scorefill {score_color}\" style=\"width:{score_percent:.0f}%;\"></div>
+          </div>
+          <div class=\"aiL-scoretext\">{status_sentence}</div>
+        </div>
+        """
+
     left_ai, right_ai = st.columns([6, 6], gap="large")
 
-    # ------------------- VENSTRE: AI-analyse (tall) -------------------
+    # ------------------- VENSTRE: Økonomi -------------------
     with left_ai:
         st.markdown('<div id="ai-metrics">', unsafe_allow_html=True)
 
-        st.subheader("🧠 AI-analyse (tall)")
+        st.subheader("Resultat - forsterket av OpenAI")
 
-        m_now = cast(Dict[str, Any], st.session_state.get("computed") or {})
-        p_now = cast(Dict[str, Any], st.session_state.get("params") or {})
+        if not decision_ui:
+            st.caption("Kjør analyse for å se vurderingen.")
+        else:
+            if score_html:
+                st.markdown(score_html, unsafe_allow_html=True)
 
-        def kr(x: Any) -> str:
-            try:
-                return f"{_as_float(x):,.0f} kr".replace(",", " ")
-            except Exception:
-                return "–"
-
-        def pct(x: Any) -> str:
-            try:
-                return f"{_as_float(x):.1f} %"
-            except Exception:
-                return "–"
-
-        with st.container(border=True):
-            st.markdown("**📑 Kjøp & finansiering**")
-            st.markdown(
-                f"""
-                • **Kjøpesum:** {kr(p_now.get("price", 0))}  
-                • **Egenkapital (EK):** {kr(p_now.get("equity", 0))}  
-                • **Rente:** {pct(p_now.get("interest", 0))}  
-                • **Lånetid:** {_as_int(p_now.get("term_years", 0))} år
-                """
-            )
-
-        with st.container(border=True):
-            st.markdown("**📊 Leieinntekter & kostnader**")
-            st.markdown(
-                f"""
-                • **Leieinntekt (brutto):** {kr(p_now.get("rent", 0))} / mnd  
-                • **Felleskostnader:** {kr(p_now.get("hoa", 0))} / mnd  
-                • **Vedlikehold:** {pct(p_now.get("maint_pct", 0))} av leie  
-                • **Andre kostnader:** {kr(p_now.get("other_costs", 0))} / mnd
-                """
-            )
-
-        with st.container(border=True):
-            st.markdown("**💰 Kontantstrøm & avkastning**")
-            if m_now:
-                st.markdown(
-                    f"""
-                    • **Cashflow (mnd):** {kr(m_now.get("cashflow", 0))}  
-                    • **Break-even (mnd):** {kr(m_now.get("break_even", 0))}  
-                    • **NOI (år):** {kr(m_now.get("noi_year", 0))}  
-                    • **Lånebetaling (mnd):** {kr(m_now.get("m_payment", 0))}  
-                    • **ROE:** {pct(m_now.get("total_equity_return_pct", 0))}
-                    """
+            key_cards: List[str] = []
+            for fig in cast(List[Dict[str, Any]], decision_ui.get("nokkel_tall", [])):
+                name = html.escape(_as_str(fig.get("navn")))
+                value = html.escape(_as_str(fig.get("verdi")))
+                color_cls = _color_class(fig.get("farge"))
+                key_cards.append(
+                    f"<div class=\"aiL-keycard\"><div class=\"aiL-keyname\">{name}</div><div class=\"aiL-keyvalue {color_cls}\">{value}</div></div>"
                 )
-            else:
-                st.caption("Kjør analyse for å fylle inn tallene.")
+            if key_cards:
+                st.markdown(
+                    f"<div class=\"aiL-keygrid\">{''.join(key_cards)}</div>",
+                    unsafe_allow_html=True,
+                )
 
-        ai_md = _as_str(st.session_state.get("ai_text")).strip()
-        if ai_md:
-            with st.container(border=True):
-                st.markdown("**🧾 Oppsummering (tall)**")
-                st.markdown(ai_md)
+            def _render_list_card(title: str, items: List[str], empty_msg: str) -> str:
+                esc_title = html.escape(title)
+                if items:
+                    lis = "".join(
+                        f"<li>{html.escape(_as_str(it))}</li>" for it in items[:4]
+                    )
+                    body = f"<ul>{lis}</ul>"
+                else:
+                    body = f"<div class=\"aiL-subtle\">{html.escape(empty_msg)}</div>"
+                return f"<div class=\"aiL-card\"><div class=\"aiL-title\">{esc_title}</div>{body}</div>"
+
+            tiltak_card = _render_list_card(
+                "🔧 Tiltak",
+                cast(List[str], decision_ui.get("tiltak", [])),
+                "Ingen tiltak anbefalt nå.",
+            )
+            positivt_card = _render_list_card(
+                "✅ Det som er bra",
+                cast(List[str], decision_ui.get("positivt", [])),
+                "Ingen positive funn registrert ennå.",
+            )
+            risiko_card = _render_list_card(
+                "⚠️ Risiko",
+                cast(List[str], decision_ui.get("risiko", [])),
+                "Ingen risikopunkter identifisert ennå.",
+            )
+
+            st.markdown(
+                f"<div class=\"aiL-grid\">{tiltak_card}{positivt_card}{risiko_card}</div>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # ------------------- HØYRE: AI-analyse (salgsoppgave) -------------------
+    # ------------------- HØYRE: Salgsoppgave -------------------
     with right_ai:
         st.markdown('<div id="ai-prospectus">', unsafe_allow_html=True)
-
-        st.subheader("📄 AI-analyse (salgsoppgave)")
 
         res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
         if not res:
             st.caption("Ingen salgsoppgave funnet eller analysert.")
             return
 
-        if _as_str(res.get("summary_md")):
-            st.markdown(_as_str(res["summary_md"]))
+        if score_html:
+            ghost_score_html = score_html.replace(
+                "aiL-scorecard",
+                "aiL-scorecard aiL-scorecard-ghost",
+                1,
+            )
+            st.markdown(ghost_score_html, unsafe_allow_html=True)
+
+        st.markdown('<div class="aiR-offset"></div>', unsafe_allow_html=True)
 
         # Lokalt helper for kort
         def _card(title_html: str, items: List[str]) -> str:
