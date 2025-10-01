@@ -1,7 +1,7 @@
 import unittest
 
-from core.compute import compute_metrics
-from core.analysis_contracts import (
+from techdom.processing.compute import compute_metrics
+from techdom.domain.analysis_contracts import (
     InputContract,
     CalculatedMetrics,
     build_calculated_metrics,
