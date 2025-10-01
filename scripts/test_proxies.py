@@ -1,6 +1,8 @@
 # scripts/test_proxies.py
 from __future__ import annotations
 
+import bootstrap  # noqa: F401
+
 import csv
 import time
 import socket
@@ -8,14 +10,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import requests
 
-from core.s3_upload import upload_good_proxies
+from techdom.integrations.s3_upload import upload_good_proxies
 
 # ---- konfig ----
 ROOT = Path(__file__).resolve().parent.parent
 
-ALL_PROXIES_FILE = ROOT / "data" / "proxy" / "proxies.txt"
-GOOD_PROXIES_FILE = ROOT / "data" / "proxy" / "good_proxies.txt"
-RESULTS_CSV = ROOT / "data" / "proxy" / "proxy_results.csv"
+ALL_PROXIES_FILE = ROOT / "data" / "raw" / "proxy" / "proxies.txt"
+GOOD_PROXIES_FILE = ROOT / "data" / "raw" / "proxy" / "good_proxies.txt"
+RESULTS_CSV = ROOT / "data" / "raw" / "proxy" / "proxy_results.csv"
 
 TEST_URL = "https://httpbin.org/ip"  # evt: "https://api.ipify.org?format=json"
 TIMEOUT = 8
