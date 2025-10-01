@@ -13,6 +13,8 @@ from core.analysis_contracts import (
     build_decision_result,
     DecisionResult,
     map_decision_to_ui,
+    calc_risk_score,
+    calc_total_score,
 )
 
 
@@ -111,10 +113,17 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_000.0,
         )
 
-        score, dom = beregn_score_og_dom(metrics, contract)
+        score, dom, econ_score, used_cap = beregn_score_og_dom(
+            metrics,
+            contract,
+            risk_score=100,
+            has_tg_data=True,
+        )
 
         self.assertEqual(score, 100)
         self.assertEqual(dom, DecisionVerdict.BRA)
+        self.assertEqual(econ_score, 100)
+        self.assertFalse(used_cap)
 
     def test_svak_gronn_dom(self) -> None:
         metrics = CalculatedMetrics(
@@ -136,10 +145,17 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_200.0,
         )
 
-        score, dom = beregn_score_og_dom(metrics, contract)
+        score, dom, econ_score, used_cap = beregn_score_og_dom(
+            metrics,
+            contract,
+            risk_score=100,
+            has_tg_data=True,
+        )
 
-        self.assertEqual(score, 78)
+        self.assertEqual(score, 85)
         self.assertEqual(dom, DecisionVerdict.BRA)
+        self.assertEqual(econ_score, 78)
+        self.assertFalse(used_cap)
 
     def test_gul_dom(self) -> None:
         metrics = CalculatedMetrics(
@@ -161,10 +177,17 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_100.0,
         )
 
-        score, dom = beregn_score_og_dom(metrics, contract)
+        score, dom, econ_score, used_cap = beregn_score_og_dom(
+            metrics,
+            contract,
+            risk_score=100,
+            has_tg_data=True,
+        )
 
-        self.assertEqual(score, 58)
+        self.assertEqual(score, 71)
         self.assertEqual(dom, DecisionVerdict.OK)
+        self.assertEqual(econ_score, 58)
+        self.assertFalse(used_cap)
 
     def test_rod_dom(self) -> None:
         metrics = CalculatedMetrics(
@@ -186,10 +209,17 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_000.0,
         )
 
-        score, dom = beregn_score_og_dom(metrics, contract)
+        score, dom, econ_score, used_cap = beregn_score_og_dom(
+            metrics,
+            contract,
+            risk_score=100,
+            has_tg_data=True,
+        )
 
-        self.assertEqual(score, 0)
+        self.assertEqual(score, 30)
         self.assertEqual(dom, DecisionVerdict.DAARLIG)
+        self.assertEqual(econ_score, 0)
+        self.assertFalse(used_cap)
 
 
 class DecisionResultTests(unittest.TestCase):
@@ -232,6 +262,9 @@ class DecisionResultTests(unittest.TestCase):
         self.assertEqual(result.risiko, [])
         self.assertEqual(result.nokkel_tall[0].farge, "orange")
         self.assertTrue(result.nokkel_tall[0].verdi.endswith(" kr/mnd"))
+        self.assertEqual(result.score_0_100, 35)
+        self.assertEqual(result.dom, DecisionVerdict.DAARLIG)
+        self.assertIsNone(result.dom_notat)
 
     def test_positive_cashflow_high_roe_adds_positive_bullets(self) -> None:
         metrics = CalculatedMetrics(
@@ -266,6 +299,47 @@ class DecisionResultTests(unittest.TestCase):
         self.assertLessEqual(len(result.positivt), 4)
         self.assertEqual(result.nokkel_tall[-1].farge, "green")
         self.assertTrue(result.nokkel_tall[-1].verdi.endswith(" %"))
+        self.assertEqual(result.score_0_100, 74)
+        self.assertEqual(result.dom, DecisionVerdict.OK)
+        self.assertEqual(
+            result.dom_notat,
+            "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå.",
+        )
+        self.assertEqual(result.risiko, [])
+
+    def test_includes_tg_findings_and_uses_risk_score(self) -> None:
+        metrics = CalculatedMetrics(
+            cashflow_mnd=1_200.0,
+            break_even_leie_mnd=19_100.0,
+            noi_aar=150_000.0,
+            roe_pct=8.5,
+            lanekost_mnd=10_000.0,
+            aarlig_nedbetaling_lan=70_000.0,
+        )
+        contract = InputContract(
+            kjopesum=4_800_000.0,
+            egenkapital=960_000.0,
+            rente_pct_pa=5.0,
+            lanetid_ar=25,
+            brutto_leie_mnd=20_000.0,
+            felleskost_mnd=3_500.0,
+            vedlikehold_pct_av_leie=6.0,
+            andre_kost_mnd=1_200.0,
+        )
+
+        result = build_decision_result(
+            contract,
+            metrics,
+            tg2_items=["Normal slitasje på kjøkken"],
+            tg3_items=["Fuktskade i kjeller"],
+            tg_data_available=True,
+        )
+
+        self.assertEqual(result.score_0_100, 80)
+        self.assertEqual(result.dom, DecisionVerdict.BRA)
+        self.assertEqual(result.dom_notat, None)
+        self.assertIn("TG3: Fuktskade i kjeller", result.risiko)
+        self.assertIn("TG2: Normal slitasje på kjøkken", result.risiko)
 
 
 class DecisionResultMapperTests(unittest.TestCase):
@@ -299,12 +373,14 @@ class DecisionResultMapperTests(unittest.TestCase):
             "risiko",
             "nokkel_tall",
             "scorelinjal",
+            "dom_notat",
         })
         self.assertEqual(data["status"]["score"], decision.score_0_100)
         self.assertEqual(data["status"]["dom"], decision.dom.value)
         self.assertEqual(data["scorelinjal"]["value"], decision.score_0_100)
-        self.assertEqual(data["scorelinjal"]["farge"], "green")
+        self.assertEqual(data["scorelinjal"]["farge"], "orange")
         self.assertEqual(len(data["nokkel_tall"]), len(decision.nokkel_tall))
+        self.assertEqual(data["dom_notat"], decision.dom_notat)
 
     def test_scorelinjal_color_mapping(self) -> None:
         decision = DecisionResult(
@@ -332,6 +408,37 @@ class DecisionResultMapperTests(unittest.TestCase):
         })
         data_good = map_decision_to_ui(decision_good)
         self.assertEqual(data_good["scorelinjal"]["farge"], "green")
+
+
+class RiskScoreTests(unittest.TestCase):
+    def test_no_tg_data_returns_default(self) -> None:
+        self.assertEqual(calc_risk_score([], []), 60)
+
+    def test_only_tg3(self) -> None:
+        self.assertEqual(calc_risk_score([], ["punkt"]), 88)
+
+    def test_only_tg2_with_cap(self) -> None:
+        self.assertEqual(calc_risk_score(["a", "b"], [], has_tg_data=True), 90)
+
+    def test_mixed_tg_with_caps(self) -> None:
+        self.assertEqual(
+            calc_risk_score(["a", "b", "c", "d"], ["x"], has_tg_data=True),
+            73,
+        )
+
+    def test_no_findings_but_data_available_gives_perfect(self) -> None:
+        self.assertEqual(calc_risk_score([], [], has_tg_data=True), 100)
+
+
+class TotalScoreTests(unittest.TestCase):
+    def test_combined_score_with_tg_data(self) -> None:
+        self.assertEqual(calc_total_score(80, 100, True), 86)
+
+    def test_combined_score_with_weights(self) -> None:
+        self.assertEqual(calc_total_score(60, 74, True), 65)
+
+    def test_cap_when_no_tg_data(self) -> None:
+        self.assertEqual(calc_total_score(95, 100, False), 74)
 
 
 if __name__ == "__main__":

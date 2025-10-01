@@ -1,0 +1,9 @@
+"""Configuration values for integrating TG risk into scoring."""
+
+WEIGHT_TOTAL_RISK = 0.30
+PENALTY_TG3_PER_ITEM = 12
+PENALTY_TG2_PER_ITEM = 5
+CAP_TG2_ITEMS = 3
+MAX_RISK_PENALTY = 30
+DEFAULT_RISK_SCORE_NO_DATA = 60
+MAX_TOTAL_IF_NO_TG = 74

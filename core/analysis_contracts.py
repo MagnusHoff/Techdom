@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Tuple, Dict, Any
+import math
+from typing import List, Tuple, Dict, Any, Iterable, Optional
 
 from pydantic import BaseModel, Field
 
 from core.compute import compute_metrics
+from core.configs import risk as risk_config
 
 
 class InputContract(BaseModel):
@@ -55,6 +57,10 @@ class DecisionResult(BaseModel):
     risiko: List[str] = Field(default_factory=list)
     nokkel_tall: List[KeyFigure] = Field(default_factory=list)
     impl_version: str = "analysis_v1.0"
+    dom_notat: Optional[str] = None
+
+
+DecisionResult.model_rebuild()
 
 
 def build_calculated_metrics(input: InputContract) -> CalculatedMetrics:
@@ -114,12 +120,9 @@ def farge_for_break_even_gap(faktisk_leie: float, break_even_leie: float) -> str
         return "orange"
     return "green"
 
-
-def beregn_score_og_dom(
+def _calculate_econ_score(
     metrics: CalculatedMetrics, input_contract: InputContract
-) -> Tuple[int, DecisionVerdict]:
-    """Beregn total score (0–100) og dom basert på deterministiske regler."""
-
+) -> int:
     cashflow_base = _cashflow_base_score(metrics.cashflow_mnd)
     roe_base = _roe_base_score(metrics.roe_pct)
     buffer_base = _break_even_base_score(
@@ -127,23 +130,41 @@ def beregn_score_og_dom(
         break_even_leie=metrics.break_even_leie_mnd,
     )
 
-    total_score = (
+    econ_score = (
         _vektet_score(cashflow_base, 40)
         + _vektet_score(roe_base, 40)
         + _vektet_score(buffer_base, 20)
     )
+    econ_score_int = int(round(econ_score))
+    return max(0, min(100, econ_score_int))
 
-    score = int(round(total_score))
-    score = max(0, min(100, score))
 
-    if score >= 75:
+def beregn_score_og_dom(
+    metrics: CalculatedMetrics,
+    input_contract: InputContract,
+    risk_score: int = 100,
+    has_tg_data: bool = False,
+) -> Tuple[int, DecisionVerdict, int, bool]:
+    """Beregn total score (0–100) og dom basert på deterministiske regler."""
+
+    econ_score_int = _calculate_econ_score(metrics, input_contract)
+
+    uncapped_total = calc_total_score(econ_score_int, risk_score, True)
+    total_score = calc_total_score(econ_score_int, risk_score, has_tg_data)
+
+    used_no_tg_cap = False
+    if not has_tg_data and uncapped_total >= 75:
+        total_score = int(risk_config.MAX_TOTAL_IF_NO_TG)
+        dom = DecisionVerdict.OK
+        used_no_tg_cap = True
+    elif total_score >= 75:
         dom = DecisionVerdict.BRA
-    elif score >= 50:
+    elif total_score >= 50:
         dom = DecisionVerdict.OK
     else:
         dom = DecisionVerdict.DAARLIG
 
-    return score, dom
+    return total_score, dom, econ_score_int, used_no_tg_cap
 
 
 def _vektet_score(base_score: int, weight: int) -> float:
@@ -182,11 +203,44 @@ def _break_even_base_score(faktisk_leie: float, break_even_leie: float) -> int:
 
 
 def build_decision_result(
-    input_contract: InputContract, calc: CalculatedMetrics
+    input_contract: InputContract,
+    calc: CalculatedMetrics,
+    tg2_items: Optional[Iterable[str]] = None,
+    tg3_items: Optional[Iterable[str]] = None,
+    tg_data_available: Optional[bool] = None,
 ) -> DecisionResult:
     """Lag deterministisk beslutningsresultat for visning i UI."""
 
-    score, dom = beregn_score_og_dom(calc, input_contract)
+    tg2_list = list(tg2_items or [])
+    tg3_list = list(tg3_items or [])
+    has_tg_data = (
+        tg_data_available
+        if tg_data_available is not None
+        else bool(tg2_list or tg3_list)
+    )
+    risk_score = calc_risk_score(
+        tg2_list,
+        tg3_list,
+        has_tg_data=has_tg_data,
+    )
+
+    score, dom, _econ_score, used_no_tg_cap = beregn_score_og_dom(
+        calc,
+        input_contract,
+        risk_score=risk_score,
+        has_tg_data=has_tg_data,
+    )
+
+    dom_notat: Optional[str] = None
+    if used_no_tg_cap:
+        dom_notat = "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå."
+
+    risiko_entries: List[str] = []
+    for item in tg3_list:
+        risiko_entries.append(f"TG3: {item}")
+    for item in tg2_list:
+        risiko_entries.append(f"TG2: {item}")
+    risiko_entries = risiko_entries[:8]
 
     if calc.cashflow_mnd < 0:
         status = "Marginal lønnsomhet. Cashflow negativ, men kan bedres med tiltak."
@@ -255,8 +309,9 @@ def build_decision_result(
         status_setning=status,
         tiltak=tiltak,
         positivt=positivt,
-        risiko=[],
+        risiko=risiko_entries,
         nokkel_tall=nokkel_tall,
+        dom_notat=dom_notat,
     )
 
 
@@ -288,6 +343,7 @@ def map_decision_to_ui(decision: DecisionResult) -> Dict[str, Any]:
             "value": decision.score_0_100,
             "farge": _dom_til_farge(decision.dom),
         },
+        "dom_notat": decision.dom_notat,
     }
 
 
@@ -298,3 +354,47 @@ def _dom_til_farge(dom: DecisionVerdict) -> str:
         DecisionVerdict.BRA: "green",
     }
     return mapping.get(dom, "neutral")
+
+
+def calc_risk_score(
+    tg2_items: Iterable[str],
+    tg3_items: Iterable[str],
+    has_tg_data: bool = False,
+) -> int:
+    """Calculate risk score based on TG2/TG3 findings."""
+
+    tg2_list = list(tg2_items)
+    tg3_list = list(tg3_items)
+
+    if not has_tg_data and not tg2_list and not tg3_list:
+        return int(risk_config.DEFAULT_RISK_SCORE_NO_DATA)
+
+    tg3_count = len(tg3_list)
+    tg2_count = min(len(tg2_list), int(risk_config.CAP_TG2_ITEMS))
+
+    penalty = (tg3_count * int(risk_config.PENALTY_TG3_PER_ITEM)) + (
+        tg2_count * int(risk_config.PENALTY_TG2_PER_ITEM)
+    )
+    penalty = min(penalty, int(risk_config.MAX_RISK_PENALTY))
+
+    risk_score = max(0, 100 - penalty)
+    return int(risk_score)
+
+
+def calc_total_score(
+    econ_score_0_100: float, risk_score_0_100: float, has_tg_data: bool
+) -> int:
+    """Combine economic score and risk score into a total score."""
+
+    econ = float(econ_score_0_100)
+    risk = float(risk_score_0_100)
+
+    weighted = ((1.0 - risk_config.WEIGHT_TOTAL_RISK) * econ) + (
+        risk_config.WEIGHT_TOTAL_RISK * risk
+    )
+    total = math.ceil(weighted)
+
+    if not has_tg_data:
+        total = min(total, int(risk_config.MAX_TOTAL_IF_NO_TG))
+
+    return int(max(0, min(100, total)))

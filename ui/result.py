@@ -5,7 +5,7 @@ import io
 import html
 import re
 from urllib.parse import urlparse, parse_qs, urlunparse
-from typing import Any, Dict, Optional, List, cast
+from typing import Any, Dict, Optional, List, Iterable, cast
 
 import streamlit as st
 from pydantic import ValidationError
@@ -188,6 +188,15 @@ def _color_class(color: Any) -> str:
         "green": "green",
         "neutral": "neutral",
     }.get(key, "neutral")
+
+
+def _tg_lists_from_state() -> Tuple[List[str], List[str], bool]:
+    res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
+    has_tg_keys = "tg2" in res or "tg3" in res
+    tg2_items = list(cast(Iterable[str], res.get("tg2") or [])) if has_tg_keys else []
+    tg3_items = list(cast(Iterable[str], res.get("tg3") or [])) if has_tg_keys else []
+    has_tg_data = has_tg_keys
+    return tg2_items, tg3_items, has_tg_data
 
 
 # --------------------------- main view ---------------------------
@@ -627,7 +636,14 @@ def render_result() -> None:
         try:
             input_contract = _input_contract_from_params(p)
             calc_metrics = build_calculated_metrics(input_contract)
-            decision = build_decision_result(input_contract, calc_metrics)
+            tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
+            decision = build_decision_result(
+                input_contract,
+                calc_metrics,
+                tg2_items=tg2_items,
+                tg3_items=tg3_items,
+                tg_data_available=has_tg_data,
+            )
             st.session_state["decision_result"] = decision
             st.session_state["decision_ui"] = map_decision_to_ui(decision)
         except ValidationError:
@@ -705,6 +721,7 @@ def render_result() -> None:
           .aiL-scorefill.green{ background:linear-gradient(90deg,#10b981,#34d399); }
           .aiL-scorefill.neutral{ background:linear-gradient(90deg,#64748b,#94a3b8); }
           .aiL-scoretext{ font-size:14px; line-height:1.6; opacity:.9; }
+          .aiL-scorenote{ font-size:13px; line-height:1.6; opacity:.7; font-style:italic; }
           .aiL-scorecard-ghost{ opacity:0; pointer-events:none; }
 
           .aiL-keygrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; margin:20px 0 4px 0; }
@@ -765,7 +782,14 @@ def render_result() -> None:
         try:
             input_contract = _input_contract_from_params(p_now)
             calc_metrics = build_calculated_metrics(input_contract)
-            decision = build_decision_result(input_contract, calc_metrics)
+            tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
+            decision = build_decision_result(
+                input_contract,
+                calc_metrics,
+                tg2_items=tg2_items,
+                tg3_items=tg3_items,
+                tg_data_available=has_tg_data,
+            )
             decision_ui = map_decision_to_ui(decision)
             st.session_state["decision_result"] = decision
             st.session_state["decision_ui"] = decision_ui
@@ -784,6 +808,11 @@ def render_result() -> None:
         dom_text = html.escape(_as_str(status.get("dom")))
         status_sentence = html.escape(_as_str(status.get("setning")))
 
+        dom_note = html.escape(_as_str(decision_ui.get("dom_notat")))
+        note_html = (
+            f"<div class=\"aiL-scorenote\">{dom_note}</div>" if dom_note else ""
+        )
+
         score_html = f"""
         <div class=\"aiL-scorecard\">
           <div class=\"aiL-scoreheader\">
@@ -797,6 +826,7 @@ def render_result() -> None:
             <div class=\"aiL-scorefill {score_color}\" style=\"width:{score_percent:.0f}%;\"></div>
           </div>
           <div class=\"aiL-scoretext\">{status_sentence}</div>
+          {note_html}
         </div>
         """
 
