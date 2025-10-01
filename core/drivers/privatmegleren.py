@@ -5,6 +5,7 @@ import os
 import time
 import re
 import json
+import uuid
 import requests
 from typing import Optional, Dict, Any, Tuple, List
 from bs4 import BeautifulSoup, Tag
@@ -254,16 +255,17 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
 OBJ_ID_RX = re.compile(r"/(\d{6,})\b")
 
 
-def _score_candidate(url: str, page_url: str) -> int:
+def _score_candidate(url: str, page_url: str, label: str | None = None) -> int:
     s = (url or "").lower()
+    lbl = (label or "").lower()
     sc = 0
     if s.endswith(".pdf"):
         sc += 25
-    if POSITIVE_HINTS_RX.search(s):
+    if POSITIVE_HINTS_RX.search(s) or POSITIVE_HINTS_RX.search(lbl):
         sc += 40
-    if "prospekt" in s:
+    if "prospekt" in s or "prospekt" in lbl:
         sc += 30
-    if "salgsoppgav" in s:
+    if "salgsoppgav" in s or "salgsoppgav" in lbl:
         sc += 30
     # bonus hvis URL inneholder samme objekt-ID som siden
     m = OBJ_ID_RX.search(page_url)
@@ -296,7 +298,9 @@ def _first_pages_text(b: bytes, max_pages: int = 3) -> str:
         return ""
 
 
-def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
+def _is_prospect_pdf(
+    b: bytes | None, url: Optional[str], allow_tr_terms: bool = False
+) -> bool:
     if not _looks_like_pdf(b):
         return False
     if not b or len(b) < MIN_BYTES:
@@ -315,9 +319,115 @@ def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
     if NEGATIVE_HINTS_RX.search(lo):
         return False
     first_txt = _first_pages_text(b, 3)
-    if first_txt and NEGATIVE_HINTS_RX.search(first_txt):
+    if first_txt and not allow_tr_terms and NEGATIVE_HINTS_RX.search(first_txt):
         return False
     return True
+
+
+def _extract_estate_id(url: str) -> Optional[str]:
+    try:
+        parts = [segment for segment in urlparse(url or "").path.split("/") if segment]
+    except Exception:
+        return None
+    for segment in reversed(parts):
+        if segment.isdigit():
+            return segment
+    return None
+
+
+def _graphql_attachments(
+    sess: requests.Session,
+    page_url: str,
+    referer: str,
+    timeout: int,
+    dbg: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    estate_id = _extract_estate_id(page_url)
+    if not estate_id:
+        return []
+
+    payload = {
+        "query": (
+            "query EstateDocuments($estateId: String!, $brandId: String!) "
+            "{ estate(input:{estateId:$estateId, brandId:$brandId, preview:false, refresh:false}) "
+            "{ documents { attachments { description category extension url documentId } } } }"
+        ),
+        "variables": {
+            "estateId": estate_id,
+            "brandId": "privatmegleren",
+        },
+    }
+
+    headers = dict(BROWSER_HEADERS)
+    headers.update(
+        {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://privatmegleren.no",
+            "Referer": referer,
+            "traceId": str(uuid.uuid4()),
+        }
+    )
+
+    try:
+        resp = sess.post(
+            "https://ds.privatmegleren.no/graphql",
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        dbg.setdefault("driver_meta", {})["graphql_error"] = type(exc).__name__
+        return []
+
+    dbg.setdefault("driver_meta", {}).setdefault(
+        "graphql_documents",
+        {"status": getattr(resp, "status_code", None), "ok": getattr(resp, "ok", None)},
+    )
+
+    if not getattr(resp, "ok", False):
+        return []
+
+    try:
+        data = resp.json()
+    except Exception as exc:
+        dbg["driver_meta"]["graphql_error"] = type(exc).__name__
+        return []
+
+    try:
+        attachments = (
+            data.get("data", {})
+            .get("estate", {})
+            .get("documents", {})
+            .get("attachments")
+        )
+    except Exception:
+        attachments = None
+
+    out: List[Dict[str, Any]] = []
+    for att in attachments or []:
+        url = att.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        description = att.get("description") or ""
+        category = att.get("category") or ""
+        label = " ".join(part for part in (description.strip(), category.strip()) if part)
+        out.append(
+            {
+                "url": url,
+                "label": label,
+                "extension": (att.get("extension") or "").lower(),
+                "document_id": att.get("documentId"),
+                "category": att.get("category") or "",
+            }
+        )
+
+    if out:
+        dbg["driver_meta"]["graphql_documents"].update(
+            {"attachments": len(out), "estate_id": estate_id}
+        )
+
+    return out
 
 
 class PrivatMeglerenDriver(Driver):
@@ -343,6 +453,9 @@ class PrivatMeglerenDriver(Driver):
         backoff = 0.6
         max_tries = 2
 
+        graphql_candidates: List[Dict[str, Any]] = []
+        graphql_attempted = False
+
         for view_url in variants:
             # 0) last side
             try:
@@ -355,6 +468,17 @@ class PrivatMeglerenDriver(Driver):
                     f"fetch_err_{view_url}"
                 ] = f"{type(e).__name__}"
                 continue
+
+            if not graphql_attempted:
+                graphql_attempted = True
+                canonical_url = str(r0.url)
+                graphql_candidates = _graphql_attachments(
+                    sess,
+                    canonical_url,
+                    referer=canonical_url,
+                    timeout=SETTINGS.REQ_TIMEOUT,
+                    dbg=dbg,
+                )
 
             # 1) NEXT-data: direkte PDF-lenker hvis mulig (+/_next/data/)
             try:
@@ -369,26 +493,43 @@ class PrivatMeglerenDriver(Driver):
             dom_pdfs = _gather_pdf_candidates(soup, view_url)
 
             # 3) Samle og filtrer KUN prospekt-lenker
-            candidates: List[str] = []
-            for u in pdfs + dom_pdfs:
-                if not u or _is_blacklisted_pdf(u):
+            candidate_entries: List[Tuple[str, Optional[str], Optional[Dict[str, Any]]]] = []
+            for u in pdfs:
+                candidate_entries.append((u, None, None))
+            for u in dom_pdfs:
+                candidate_entries.append((u, None, None))
+            for att in graphql_candidates:
+                candidate_entries.append(
+                    (att.get("url"), att.get("label"), att)
+                )
+
+            candidates: List[Tuple[str, Optional[str], Optional[Dict[str, Any]]]] = []
+            seen: set[str] = set()
+            for url, label, meta in candidate_entries:
+                if not url or url in seen or _is_blacklisted_pdf(url):
                     continue
-                # Krev positive prospekt-hint og at ingen negative hint finnes
-                lo = u.lower()
-                if NEGATIVE_HINTS_RX.search(lo):
+                combined = " ".join(
+                    part for part in ((label or ""), url) if part
+                ).lower()
+                if NEGATIVE_HINTS_RX.search(combined):
                     continue
-                if not (POSITIVE_HINTS_RX.search(lo) or lo.endswith(".pdf")):
+                extension = (meta or {}).get("extension", "") if meta else ""
+                pdfish = url.lower().endswith(".pdf") or extension == "pdf"
+                if not (POSITIVE_HINTS_RX.search(combined) or pdfish):
                     continue
-                if u not in candidates:
-                    candidates.append(u)
+                seen.add(url)
+                candidates.append((url, label, meta))
 
             if not candidates:
                 continue
 
-            candidates.sort(key=lambda u: _score_candidate(u, view_url), reverse=True)
+            candidates.sort(
+                key=lambda item: _score_candidate(item[0], view_url, item[1]),
+                reverse=True,
+            )
 
             # 4) HEAD/GET med validering av prospekt-innhold
-            for url in candidates:
+            for url, label, meta in candidates:
                 # HEAD
                 try:
                     h = _head(sess, url, view_url, SETTINGS.REQ_TIMEOUT)
@@ -421,7 +562,12 @@ class PrivatMeglerenDriver(Driver):
                             "final_url": str(rr.url),
                             "bytes": len(rr.content) if rr.content else 0,
                         }
-                        if rr.ok and _is_prospect_pdf(rr.content, str(rr.url)):
+                        allow_tr_terms = False
+                        if meta and (meta.get("category") or "").lower() == "mergedattachment":
+                            allow_tr_terms = True
+                        if rr.ok and _is_prospect_pdf(
+                            rr.content, str(rr.url), allow_tr_terms
+                        ):
                             dbg["step"] = "ok_prospect"
                             return rr.content, str(rr.url), dbg
                         if attempt < max_tries and rr.status_code in (

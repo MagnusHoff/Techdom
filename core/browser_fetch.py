@@ -53,6 +53,7 @@ PROSPEKT_LABELS_EXACT = [
     "utskrift",
     "last ned pdf",
     "se pdf",
+    "vedlegg til salgsoppgave",
 ]
 
 # Dette er *klikk*-keywords (fallback). Første element viktigst.
@@ -69,6 +70,10 @@ KEYWORDS = [
     "last ned pdf",
     "dokument",
     "dokumenter",
+    "vedlegg",
+    "vedlegg til salgsoppgave",
+    "all nøkkelinformasjon",
+    "all informasjon om eiendommen",
 ]
 
 # Dette er *lenke/URL* scoring (for kandidater)
@@ -81,6 +86,9 @@ POSITIVE_WORDS = [
     "digitalformat",
     "for utskrift",
     "utskrift",
+    "vedlegg",
+    "vedlegg til salgsoppgave",
+    "all nøkkelinformasjon",
     "pdf",
 ]
 
@@ -1158,6 +1166,16 @@ def fetch_pdf_with_browser_filtered(
             except PWTimeoutError:
                 page.goto(start_url, timeout=timeout_ms)
 
+            try:
+                page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            except Exception:
+                pass
+            try:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(750)
+            except Exception:
+                pass
+
             # cookie-accept
             try:
                 _maybe_accept_cookies(page)
@@ -1170,7 +1188,7 @@ def fetch_pdf_with_browser_filtered(
                 try:
                     links = page.locator("a[href]")
                     n = links.count()
-                    for i in range(min(n, 250)):
+                    for i in range(min(n, 600)):
                         el = links.nth(i)
                         try:
                             raw = el.inner_text(timeout=300) or ""
@@ -1231,7 +1249,7 @@ def fetch_pdf_with_browser_filtered(
                         "button, [role='button'], div[role='button'], span[role='button']"
                     )
                     n = buttons.count()
-                    for i in range(min(n, 250)):
+                    for i in range(min(n, 600)):
                         el = buttons.nth(i)
                         try:
                             raw = el.inner_text(timeout=300) or ""

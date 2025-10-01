@@ -5,7 +5,7 @@ import io
 import html
 import re
 from urllib.parse import urlparse, parse_qs, urlunparse
-from typing import Any, Dict, Optional, List, Iterable, cast
+from typing import Any, Dict, Optional, List, Iterable, Tuple, cast
 
 import streamlit as st
 from pydantic import ValidationError
@@ -199,6 +199,138 @@ def _tg_lists_from_state() -> Tuple[List[str], List[str], bool]:
     return tg2_items, tg3_items, has_tg_data
 
 
+def _run_manual_prospectus_analysis() -> None:
+    if not st.session_state.get("prospectus_manual_running"):
+        return
+    if not st.session_state.get("prospectus_manual_execute"):
+        return
+
+    st.session_state["prospectus_manual_execute"] = False
+
+    pdf_bytes_state = cast(Optional[bytes], st.session_state.get("prospectus_pdf_bytes"))
+    if not pdf_bytes_state:
+        st.session_state["prospectus_manual_pending"] = False
+        st.session_state["prospectus_manual_running"] = False
+        st.toast("Fant ikke PDF-data i minnet.", icon="⚠️")
+        st.rerun()
+
+    text = extract_pdf_text_from_bytes(pdf_bytes_state)
+    if not text:
+        st.session_state["prospectus_ai"] = {}
+        st.session_state["prospectus_manual_prompt"] = True
+        st.session_state["prospectus_manual_pending"] = True
+        st.session_state["prospectus_manual_running"] = False
+        st.toast("Fant ingen tekst i PDF-en.", icon="⚠️")
+        st.rerun()
+
+    try:
+        analysis = analyze_prospectus(text) or {}
+    except Exception:
+        st.session_state["prospectus_ai"] = {}
+        st.session_state["prospectus_manual_prompt"] = True
+        st.session_state["prospectus_manual_pending"] = True
+        st.session_state["prospectus_manual_running"] = False
+        st.toast("Klarte ikke å analysere salgsoppgaven manuelt.", icon="⚠️")
+        st.rerun()
+
+    st.session_state["prospectus_ai"] = analysis
+    st.session_state["prospectus_manual_prompt"] = False
+    st.session_state["prospectus_manual_pending"] = False
+    st.toast("Salgsoppgave analysert.", icon="✅")
+    st.session_state["_queued_params"] = dict(st.session_state.get("params", {}))
+    st.session_state["_updating"] = True
+    st.rerun()
+
+
+def _render_manual_prospectus_upload() -> None:
+    manual_container = st.container()
+
+    with manual_container:
+        manual_container.markdown(
+            """
+            <div class="aiR-grid aiR-manual-grid">
+              <div class="aiR-cell aiR-span2">
+                <div class="aiR-card aiR-manual-card">
+                  <div class="aiR-title">📄 Legg til salgsoppgave manuelt</div>
+                  <div class="aiR-manual-text">
+                    Fant ikke salgsoppgaven automatisk.<br>Gjerne last opp PDF-en fra megler så analyserer vi den for deg.
+                  </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader(
+            "Last opp salgsoppgave (PDF)",
+            type=["pdf"],
+            key="prospectus_manual_upload",
+            label_visibility="collapsed",
+        )
+        if uploaded is None and st.session_state.get("prospectus_manual_token"):
+            st.session_state["prospectus_manual_token"] = ""
+            st.session_state["prospectus_manual_pending"] = False
+            st.session_state["prospectus_manual_running"] = False
+            st.session_state["prospectus_manual_execute"] = False
+            st.session_state.pop("prospectus_pdf_bytes", None)
+        manual_container.markdown(
+            """
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if uploaded:
+        file_id = f"{uploaded.name}:{uploaded.size}"
+        if st.session_state.get("prospectus_manual_token") != file_id:
+            pdf_bytes = uploaded.read()
+            st.session_state["prospectus_manual_token"] = file_id
+
+            if not pdf_bytes:
+                st.session_state["prospectus_manual_prompt"] = True
+                st.session_state["prospectus_manual_pending"] = False
+                st.session_state["prospectus_manual_execute"] = False
+                st.toast("Kunne ikke lese salgsoppgaven – filen var tom.", icon="⚠️")
+                st.rerun()
+                return
+
+            st.session_state["prospectus_pdf_bytes"] = pdf_bytes
+            st.session_state.pop("prospectus_pdf_url", None)
+            st.session_state["prospectus_ai"] = {}
+            st.session_state["prospectus_manual_pending"] = True
+            st.session_state["prospectus_manual_prompt"] = True
+            st.session_state["prospectus_manual_running"] = False
+            st.session_state["prospectus_manual_execute"] = False
+            st.toast("PDF klar – trykk Re-analyser for å lese den.", icon="ℹ️")
+            st.rerun()
+            return
+
+    has_pdf_bytes = bool(st.session_state.get("prospectus_pdf_bytes"))
+    manual_pending = bool(st.session_state.get("prospectus_manual_pending"))
+
+    if not has_pdf_bytes or not manual_pending:
+        return
+
+    with st.form("prospectus_manual_reanalyze"):
+        col_btn, col_spin = st.columns([0.2, 0.05])
+        with col_btn:
+            reanalyze_clicked = st.form_submit_button(
+                "Re-analyser",
+                use_container_width=False,
+                disabled=bool(st.session_state.get("prospectus_manual_running")),
+            )
+        with col_spin:
+            if st.session_state.get("prospectus_manual_running"):
+                st.markdown('<div class="aiR-manual-spinner"></div>', unsafe_allow_html=True)
+
+    if reanalyze_clicked:
+        st.session_state["prospectus_manual_running"] = True
+        st.session_state["prospectus_manual_execute"] = True
+        st.rerun()
+
+    if st.session_state.get("prospectus_manual_running"):
+        _run_manual_prospectus_analysis()
+
+
 # --------------------------- main view ---------------------------
 
 
@@ -216,6 +348,11 @@ def render_result() -> None:
     st.session_state.setdefault("_fetching", False)  # for "Hent data"
     st.session_state.setdefault("_history_logged", False)
     st.session_state.setdefault("prospectus_ai", {})
+    st.session_state.setdefault("prospectus_manual_prompt", False)
+    st.session_state.setdefault("prospectus_manual_token", "")
+    st.session_state.setdefault("prospectus_manual_pending", False)
+    st.session_state.setdefault("prospectus_manual_running", False)
+    st.session_state.setdefault("prospectus_manual_execute", False)
     st.session_state.setdefault("show_details_modal", False)
     st.session_state.setdefault("decision_result", None)
     st.session_state.setdefault("decision_ui", {})
@@ -243,6 +380,11 @@ def render_result() -> None:
         ):
             st.session_state.pop(key, None)
         st.session_state["prospectus_source_url"] = url
+        st.session_state["prospectus_manual_prompt"] = False
+        st.session_state["prospectus_manual_token"] = ""
+        st.session_state["prospectus_manual_pending"] = False
+        st.session_state["prospectus_manual_running"] = False
+        st.session_state["prospectus_manual_execute"] = False
     else:
         info = cast(Dict[str, Any], st.session_state.get("_scraped_info", {}) or {})
 
@@ -554,9 +696,19 @@ def render_result() -> None:
                         text = extract_pdf_text_from_bytes(pdf_bytes)
                         if text:
                             st.session_state["prospectus_ai"] = analyze_prospectus(text)
+                            st.session_state["prospectus_manual_prompt"] = False
+                            st.session_state["prospectus_manual_token"] = ""
+                            st.session_state["prospectus_manual_pending"] = False
+                            st.session_state["prospectus_manual_running"] = False
+                            st.session_state["prospectus_manual_execute"] = False
                             st.toast("Salgsoppgave hentet og analysert.", icon="✅")
                         else:
                             st.session_state.pop("prospectus_ai", None)
+                            st.session_state["prospectus_manual_prompt"] = True
+                            st.session_state["prospectus_manual_token"] = ""
+                            st.session_state["prospectus_manual_pending"] = False
+                            st.session_state["prospectus_manual_running"] = False
+                            st.session_state["prospectus_manual_execute"] = False
                             st.caption(
                                 "Klarte ikke å hente tekst fra PDF-en (kan være skannet). "
                                 "Last opp en tekst-PDF manuelt."
@@ -568,6 +720,11 @@ def render_result() -> None:
                             "prospectus_ai",
                         ):
                             st.session_state.pop(key, None)
+                        st.session_state["prospectus_manual_prompt"] = True
+                        st.session_state["prospectus_manual_token"] = ""
+                        st.session_state["prospectus_manual_pending"] = False
+                        st.session_state["prospectus_manual_running"] = False
+                        st.session_state["prospectus_manual_execute"] = False
                         st.caption(
                             "Fant ikke salgsoppgave automatisk – du kan laste opp PDF manuelt under."
                         )
@@ -652,6 +809,7 @@ def render_result() -> None:
         st.session_state["params"] = p
         st.session_state["computed"] = m
         st.session_state["ai_text"] = ai_explain(p, m)  # type: ignore[arg-type]
+        st.session_state["prospectus_manual_running"] = False
         st.session_state["_updating"] = False
         st.session_state["_first_compute_done"] = True
         st.rerun()
@@ -721,6 +879,7 @@ def render_result() -> None:
           .aiL-scorefill.green{ background:linear-gradient(90deg,#10b981,#34d399); }
           .aiL-scorefill.neutral{ background:linear-gradient(90deg,#64748b,#94a3b8); }
           .aiL-scoretext{ font-size:14px; line-height:1.6; opacity:.9; }
+          .aiL-scorewarn{ font-size:13px; line-height:1.6; opacity:.85; color:#fbbf24; margin-top:4px; }
           .aiL-scorenote{ font-size:13px; line-height:1.6; opacity:.7; font-style:italic; }
           .aiL-scorecard-ghost{ opacity:0; pointer-events:none; }
 
@@ -761,6 +920,12 @@ def render_result() -> None:
             border-radius:14px; padding:16px 18px; width:100%;
             display:flex; flex-direction:column; gap:8px;
           }
+          .aiR-manual-card{
+            display:flex;
+            flex-direction:column;
+            gap:16px;
+            padding:18px 20px;
+          }
           .aiR-title{ display:flex; align-items:center; gap:10px; margin:0 0 4px 0; font-weight:700; font-size:16px }
           .aiR-badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:4px 8px; border-radius:999px; background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.35) }
           .aiR-badge.warn{ background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.35) }
@@ -769,6 +934,53 @@ def render_result() -> None:
           .aiR-list li{ margin:.18rem 0 }
           .aiR-subtle{ opacity:.85; font-size:13px }
           .aiR-span2{ grid-column:1 / -1 }
+          .aiR-manual-text{ font-size:14px; line-height:1.55; opacity:.88; }
+          .aiR-manual-card form[data-testid="stForm"]{
+            margin:0;
+            display:inline-flex;
+          }
+          .aiR-manual-card form[data-testid="stForm"] button{
+            background:transparent;
+            border:1px solid rgba(255,255,255,.25);
+            color:rgba(231,236,255,.92);
+            border-radius:999px;
+            padding:6px 18px;
+            font-weight:600;
+            font-size:13px;
+            letter-spacing:.01em;
+          }
+          .aiR-manual-card form[data-testid="stForm"] button:hover{
+            background:rgba(255,255,255,.08);
+            border-color:rgba(255,255,255,.4);
+          }
+          .aiR-manual-card form[data-testid="stForm"] button:focus{
+            outline:none;
+            box-shadow:0 0 0 2px rgba(255,255,255,.25);
+          }
+          .aiR-manual-spinner{
+            width:16px;
+            height:16px;
+            margin-top:6px;
+            margin-left:6px;
+            border:2px solid rgba(255,255,255,.25);
+            border-top-color:#fff;
+            border-radius:50%;
+            animation: tdspn .8s linear infinite;
+            display:inline-block;
+          }
+          .aiR-manual-card [data-testid="stFileUploader"]{
+            background:rgba(15,23,42,.55);
+            border:1px dashed rgba(255,255,255,.22);
+            border-radius:12px;
+            padding:12px 14px;
+            margin-top:0;
+          }
+          .aiR-manual-card [data-testid="stFileUploader"] section{
+            gap:8px;
+            padding:0;
+          }
+          .aiR-manual-card [data-testid="stFileUploader"] label{ display:none; }
+          .aiR-manual-card [data-testid="stFileUploader"] button{ border-radius:8px; font-weight:600; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -807,6 +1019,15 @@ def render_result() -> None:
         score_color = _color_class(scorelinjal.get("farge"))
         dom_text = html.escape(_as_str(status.get("dom")))
         status_sentence = html.escape(_as_str(status.get("setning")))
+        prospectus_missing = not bool(st.session_state.get("prospectus_ai"))
+        manual_pending = bool(st.session_state.get("prospectus_manual_pending"))
+        manual_running = bool(st.session_state.get("prospectus_manual_running"))
+        manual_pending_or_running = manual_pending or manual_running
+        score_warning_html = (
+            "<div class=\"aiL-scorewarn\">⚠️ Scoren kan være lavere dersom salgsoppgaven mangler.</div>"
+            if prospectus_missing and not manual_pending_or_running
+            else ""
+        )
 
         dom_note = html.escape(_as_str(decision_ui.get("dom_notat")))
         note_html = (
@@ -826,6 +1047,7 @@ def render_result() -> None:
             <div class=\"aiL-scorefill {score_color}\" style=\"width:{score_percent:.0f}%;\"></div>
           </div>
           <div class=\"aiL-scoretext\">{status_sentence}</div>
+          {score_warning_html}
           {note_html}
         </div>
         """
@@ -897,8 +1119,20 @@ def render_result() -> None:
         st.markdown('<div id="ai-prospectus">', unsafe_allow_html=True)
 
         res = cast(Dict[str, Any], st.session_state.get("prospectus_ai") or {})
+        manual_prompt = bool(st.session_state.get("prospectus_manual_prompt"))
         if not res:
-            st.caption("Ingen salgsoppgave funnet eller analysert.")
+            if manual_prompt:
+                if score_html:
+                    ghost_score_html = score_html.replace(
+                        "aiL-scorecard",
+                        "aiL-scorecard aiL-scorecard-ghost",
+                        1,
+                    )
+                    st.markdown(ghost_score_html, unsafe_allow_html=True)
+                    st.markdown('<div class="aiR-offset"></div>', unsafe_allow_html=True)
+                _render_manual_prospectus_upload()
+            else:
+                st.caption("Ingen salgsoppgave funnet eller analysert.")
             return
 
         if score_html:

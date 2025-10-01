@@ -1161,11 +1161,15 @@ def fetch_prospectus_from_finn(
                     "komplett salgsoppgave",
                     "prospekt",
                     "salgsprospekt",
+                    "vedlegg",
+                    "vedlegg til salgsoppgave",
                 ],
                 allow_only_if_url_contains=[
                     "prospekt",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "webmegler",
+                    "wngetfile",
                 ],
                 deny_if_url_contains=[
                     "tilstandsrapport",
@@ -1189,11 +1193,15 @@ def fetch_prospectus_from_finn(
                     "prospekt",
                     "salgsprospekt",
                     "for utskrift",
+                    "vedlegg",
+                    "vedlegg til salgsoppgave",
                 ],
                 allow_only_if_url_contains=[
                     "prospekt",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "webmegler",
+                    "wngetfile",
                 ],
                 deny_if_url_contains=[
                     "tilstandsrapport",
