@@ -11,6 +11,7 @@ services:
         fromService:
           type: redis
           name: techdom-redis
+          property: connectionString
       - key: TECHDOM_CRON_TOKEN
         sync: false
   - type: worker
@@ -18,24 +19,24 @@ services:
     env: docker
     plan: starter
     dockerfilePath: services/worker/Dockerfile
-    startCommand: python -m services.worker
     envVars:
       - key: REDIS_URL
         fromService:
           type: redis
           name: techdom-redis
+          property: connectionString
   - type: web
     name: techdom-cron
     env: docker
     plan: starter
     dockerfilePath: services/cron/Dockerfile
-    startCommand: python -m services.cron
     numInstances: 1
     envVars:
       - key: REDIS_URL
         fromService:
           type: redis
           name: techdom-redis
+          property: connectionString
       - key: TECHDOM_CRON_TOKEN
         sync: false
       - key: PORT
