@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: techdom-api
+    env: docker
+    plan: starter
+    dockerfilePath: apps/api/Dockerfile
+    numInstances: 1
+    region: frankfurt
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: techdom-redis
+      - key: TECHDOM_CRON_TOKEN
+        sync: false
+  - type: worker
+    name: techdom-worker
+    env: docker
+    plan: starter
+    dockerfilePath: services/worker/Dockerfile
+    startCommand: python -m services.worker
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: techdom-redis
+  - type: web
+    name: techdom-cron
+    env: docker
+    plan: starter
+    dockerfilePath: services/cron/Dockerfile
+    startCommand: python -m services.cron
+    numInstances: 1
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: techdom-redis
+      - key: TECHDOM_CRON_TOKEN
+        sync: false
+      - key: PORT
+        value: "8000"
+      - key: UVICORN_LOG_LEVEL
+        value: info
+databases:
+  - name: techdom-redis
+    plan: starter
+    region: frankfurt
+    ipAllowList: []
