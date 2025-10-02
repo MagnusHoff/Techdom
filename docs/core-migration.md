@@ -5,7 +5,7 @@
 ## Hva betyr dette?
 - Eldre imports som `from core import rent` eller `import core.analysis_contracts` feiler nå med `ImportError`.
 - Alle interne moduler er allerede flyttet til `techdom.*` og oppdatert til å bruke de nye stiene.
-- Driver-registreringen bruker kun `techdom.ingestion.drivers.*` og lenger ingen fallback til `core`.
+- Driver-registreringen bruker kun `techdom.ingestion.drivers.*` og har ikke lenger fallback til `core`.
 
 ## Sjekkliste for eksterne repoer
 1. Søk etter `core.`-referanser og oppdater til tilsvarende `techdom.`-moduler.

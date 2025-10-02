@@ -213,3 +213,9 @@ __pycache__/
 
 # Ignorer arkiv-mappen
 Archive/
+# Project-specific data caches
+data/cache/
+data/debug/
+data/raw/proxy/proxy_results.csv
+data/raw/proxy/good_proxies.txt
+data/raw/proxy/proxies.txt

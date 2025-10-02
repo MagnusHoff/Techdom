@@ -1,25 +1,19 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import os
 
-CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-import bootstrap  # noqa: F401  # sørger for at src/ ligger på PYTHONPATH
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
-import uuid, time
-from typing import Dict
+
+from apps.api import runtime
 from techdom.ingestion.fetch import fetch_prospectus_from_finn, save_pdf_locally
+from techdom.services.prospect_jobs import ProspectJobService
+
+_bootstrap = runtime.ensure_bootstrap()
+runtime.load_environment()
 
 app = FastAPI(title="Boliganalyse API (MVP)")
-
-# enkel in-memory status (erstattes senere med Redis/Queue)
-JOBS: Dict[str, dict] = {}
+job_service = ProspectJobService()
 
 
 class AnalyzeReq(BaseModel):
@@ -28,32 +22,27 @@ class AnalyzeReq(BaseModel):
 
 @app.post("/analyze")
 def analyze(req: AnalyzeReq, bg: BackgroundTasks):
-    job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"state": "queued", "progress": 0, "finnkode": req.finnkode}
+    job = job_service.create(req.finnkode)
+    job_id = job.id
     finn_url = f"https://www.finn.no/realestate/homes/ad.html?finnkode={req.finnkode}"
 
     def _run():
         try:
-            JOBS[job_id] = {
-                **JOBS[job_id],
-                "state": "running",
-                "progress": 10,
-                "message": "Henter prospekt",
-            }
-            pdf_bytes, pdf_url, dbg = fetch_prospectus_from_finn(finn_url)
-            JOBS[job_id]["debug"] = dbg
+            job_service.mark_running(
+                job_id,
+                progress=10,
+                message="Henter prospekt",
+            )
+            pdf_bytes, pdf_url, debug = fetch_prospectus_from_finn(finn_url)
+            if debug:
+                job_service.attach_debug(job_id, debug)
             if not pdf_bytes:
-                JOBS[job_id]["state"] = "failed"
-                JOBS[job_id]["message"] = "Fant ikke PDF"
+                job_service.mark_failed(job_id, "Fant ikke PDF")
                 return
             path = save_pdf_locally(req.finnkode, pdf_bytes)
-            JOBS[job_id]["state"] = "done"
-            JOBS[job_id]["progress"] = 100
-            JOBS[job_id]["pdf_path"] = path
-            JOBS[job_id]["pdf_url"] = pdf_url
-        except Exception as e:
-            JOBS[job_id]["state"] = "failed"
-            JOBS[job_id]["message"] = repr(e)
+            job_service.mark_done(job_id, pdf_path=path, pdf_url=pdf_url)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            job_service.mark_failed(job_id, repr(exc))
 
     bg.add_task(_run)
     return {"job_id": job_id, "status": "queued"}
@@ -61,18 +50,18 @@ def analyze(req: AnalyzeReq, bg: BackgroundTasks):
 
 @app.get("/status/{job_id}")
 def status(job_id: str):
-    j = JOBS.get(job_id)
-    if not j:
+    job = job_service.get(job_id)
+    if not job:
         raise HTTPException(404, "unknown job")
-    return j
+    return job
 
 
 @app.get("/pdf/{finnkode}")
 def pdf_link(finnkode: str):
-    # MVP: returner lokal filsti (prod: signer S3 URL)
-    import os
-
     path = f"data/cache/prospekt/{finnkode}.pdf"
     if not os.path.exists(path):
         raise HTTPException(404, "not ready")
     return {"path": path}
+
+
+__all__ = ["app"]

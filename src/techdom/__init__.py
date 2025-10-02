@@ -5,6 +5,7 @@ __all__ = [
     "integrations",
     "infrastructure",
     "processing",
+    "services",
     "web",
     "cli",
 ]

@@ -1,10 +1,10 @@
-# Tidligere struktur (før refaktor)
+# Struktur etter omstrukturering
 
-- `app.py`: Streamlit-app direkte i rotkatalogen, med manuell `sys.path`-håndtering og relative ressurser.
-- `core/`: samlet nesten all domenelogikk, scraping, konfig og integrasjoner i ett stort modultre.
-- `ui/`: Streamlit-visninger i egen mappe, men importerte alt fra `core`.
-- `api/app.py`: FastAPI-app med imports fra `core`.
-- `scripts/`: Engangsskript som også hentet funksjoner fra `core`.
-- `data/`: Blandede statiske filer, genererte caches og debug-utdata i samme mappe.
+- Bibliotekskoden ligger i `src/techdom/` og er delt inn etter ansvar: `domain`, `ingestion`, `processing`, `integrations`, `infrastructure` og `services`.
+- Appene ligger i `apps/` der `streamlit/` håndterer frontend og `api/` exponerer FastAPI-endepunkter.
+- `bootstrap.py` sørger for at begge appene og alle CLI-verktøy finner `techdom`-pakkene uten manuell `sys.path`-håndtering.
+- `scripts/` inneholder kun tynne wrappers som videresender til `techdom.cli.*`.
+- `data/` er strukturert i `raw/`, `processed/`, `cache/`, `static/` og `debug/` for å skille rådata fra avledede filer.
+- Dokumentasjon og migrasjonsnotater ligger i `docs/`.
 
-Refaktoren flytter dette inn i dedikerte pakker og applikasjonsmapper for å få tydelig separasjon mellom bibliotekskode, apper og data.
+Før refaktoren lå det meste under `core/` og direkte i rotmappen (Streamlit, API, skript). Den nye strukturen gir tydelige grenser mellom bibliotek, apper, data og dokumentasjon.
