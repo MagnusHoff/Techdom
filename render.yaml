@@ -45,6 +45,7 @@ services:
         value: info
 databases:
   - name: techdom-redis
+    databaseType: redis
     plan: starter
     region: frankfurt
     ipAllowList: []
