@@ -24,9 +24,12 @@ def _safe_add(module_name: str, class_name: str) -> None:
             mod = __import__(
                 f"techdom.ingestion.drivers.{module_name}", fromlist=[class_name]
             )
-        except ModuleNotFoundError:
-            # Fallback for legacy import path under overgang til ny struktur
-            mod = __import__(f"core.drivers.{module_name}", fromlist=[class_name])
+        except ModuleNotFoundError as err:
+            if err.name == f"techdom.ingestion.drivers.{module_name}":
+                if DEBUG_IMPORT:
+                    print(f"[drivers] {module_name}: module not found")
+                return
+            raise
 
         cls: Type[Driver] | None = getattr(mod, class_name, None)  # type: ignore[assignment]
         if cls is None:

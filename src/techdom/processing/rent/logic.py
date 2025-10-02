@@ -1,59 +1,44 @@
-# core/rent.py
 from __future__ import annotations
 
-import os
 import re
-import csv
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Tuple, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from techdom.domain.geo_registry import get_geojson_info
 from techdom.domain.geo import find_bucket_from_point
-from techdom.integrations.ssb import get_city_m2_month  # kr/m² per MND for (by, segment)
 
-# -------------------------------
-# Konfig
-# -------------------------------
-CSV_PATH = Path("data/processed/rent_m2.csv")  # kolonner: city,bucket,segment,kr_per_m2,updated
+from .data_access import (
+    RentTable,
+    fetch_ssb_city_value,
+    get_geojson_metadata,
+    get_oslo_postnr_exact,
+    get_oslo_prefix2,
+    load_bucket_table,
+)
+
 ROUND_TO = 100
-ANNUAL_TO_MONTHLY_THRESHOLD = 1500.0  # over dette tolker vi tall som årlig beløp
+ANNUAL_TO_MONTHLY_THRESHOLD = 1500.0
 
 CONF_GEOJSON = 0.90
 CONF_TEXT_MATCH = 0.70
 CONF_CITY_AVG = 0.50
 
 
-# -------------------------------
-# Datamodell
-# -------------------------------
 @dataclass
 class RentEstimate:
-    gross_rent: int  # foreslått brutto leie (kr/mnd)
-    kr_per_m2: float  # brukt m²-pris (kr/mnd per m²)
-    bucket: str  # bydel/bucket som ble brukt
-    city: str  # by (for visning)
-    confidence: float  # 0.0–1.0
-    note: str  # forklaring/fallback
-    updated: str  # f.eks. "SSB" / "SSB × CSV-ratio" / CSV-kilde
+    gross_rent: int
+    kr_per_m2: float
+    bucket: str
+    city: str
+    confidence: float
+    note: str
+    updated: str
 
 
-# -------------------------------
-# CSV-cache: table[city][bucket][segment] = (kr_m2, updated)
-# -------------------------------
-_table: Dict[str, Dict[str, Dict[str, Tuple[float, str]]]] = {}
-_table_mtime: Optional[float] = None
-
-
-# -------------------------------
-# Hjelpere
-# -------------------------------
 def _norm(s: Optional[str]) -> str:
     return (s or "").strip().lower()
 
 
 def _to_float_or_none(x: Any) -> Optional[float]:
-    """Trygg konvertering fra ukjent type til float."""
     if x is None:
         return None
     try:
@@ -70,7 +55,6 @@ def _to_float_or_none(x: Any) -> Optional[float]:
 
 
 def _canon_city_for_csv(s: str) -> str:
-    """Normaliser bynavn så de matcher rent_m2.csv og SSB."""
     t = _norm(s)
     if t.endswith(" kommune"):
         t = t[:-8].strip()
@@ -95,43 +79,7 @@ def _canon_city_for_csv(s: str) -> str:
     return mapping.get(t, s.strip() or "")
 
 
-def _load_table(
-    force: bool = False,
-) -> Dict[str, Dict[str, Dict[str, Tuple[float, str]]]]:
-    """Laster data/processed/rent_m2.csv inn i et nestet dict."""
-    global _table, _table_mtime
-    if not CSV_PATH.exists():
-        _table, _table_mtime = {}, None
-        return {}
-
-    mtime = CSV_PATH.stat().st_mtime
-    if not force and _table and _table_mtime == mtime:
-        return _table
-
-    table: Dict[str, Dict[str, Dict[str, Tuple[float, str]]]] = {}
-    with CSV_PATH.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            city = (row.get("city") or "").strip()
-            bucket = (row.get("bucket") or "").strip()
-            segment = (row.get("segment") or "standard").strip().lower()
-            try:
-                kr_per_m2 = float(str(row.get("kr_per_m2", "")).replace(",", "."))
-            except ValueError:
-                continue
-            updated = (row.get("updated") or "—").strip()
-            table.setdefault(city, {}).setdefault(bucket, {})[segment] = (
-                kr_per_m2,
-                updated,
-            )
-
-    _table = table
-    _table_mtime = mtime
-    return table
-
-
 def _select_segment(area_m2: Optional[float], rooms: Optional[int]) -> str:
-    """hybel (<30m²/≤1rom), liten (30–50/2), standard (50–90/3), stor (>90/≥4)."""
     a = float(area_m2 or 0.0)
     r = rooms if rooms is not None else None
     if (a > 0 and a < 30) or (r is not None and r <= 1):
@@ -146,16 +94,14 @@ def _select_segment(area_m2: Optional[float], rooms: Optional[int]) -> str:
 
 
 def _extract_postal(addr: Any) -> Optional[int]:
-    """Trekk ut firesifret postnummer fra vilkårlig verdi (str, tall, None)."""
     if addr is None:
         return None
     s = str(addr)
-    m = re.search(r"\b(\d{4})\b", s)
-    return int(m.group(1)) if m else None
+    match = re.search(r"\b(\d{4})\b", s)
+    return int(match.group(1)) if match else None
 
 
 def _guess_city(info: Dict[str, object]) -> str:
-    """Prøv å finne by fra tekst eller postnummer. Returnerer '' hvis ukjent."""
     text = " ".join(
         str(x or "")
         for x in [
@@ -188,9 +134,9 @@ def _guess_city(info: Dict[str, object]) -> str:
         if needle in text:
             return cityname
 
-    m = re.search(r"\b(\d{4})\b", text)
-    if m:
-        p = int(m.group(1))
+    match = re.search(r"\b(\d{4})\b", text)
+    if match:
+        p = int(match.group(1))
         ranges = [
             (1, 1299, "Oslo"),
             (4000, 4099, "Stavanger"),
@@ -207,15 +153,12 @@ def _guess_city(info: Dict[str, object]) -> str:
             (3900, 3999, "Porsgrunn"),
             (4600, 4699, "Kristiansand"),
         ]
-        for a, b, nm in ranges:
-            if a <= p <= b:
-                return nm
+        for lower, upper, name in ranges:
+            if lower <= p <= upper:
+                return name
     return ""
 
 
-# -------------------------------
-# Bergen heuristikk (tekst + postnr)
-# -------------------------------
 def _bergen_bucket_from_text(txt: str) -> Optional[str]:
     t = _norm(txt)
     if any(
@@ -275,13 +218,9 @@ def _bergen_bucket_from_text(txt: str) -> Optional[str]:
         ]
     ):
         return "Bergen sør"
-    if any(
-        k in t for k in ["åsane", "eidsvåg", "toppe", "tellevik", "salhus", "myrdal"]
-    ):
+    if any(k in t for k in ["åsane", "eidsvåg", "toppe", "tellevik", "salhus", "myrdal"]):
         return "Bergen nord"
-    if any(
-        k in t for k in ["arna", "indre arna", "ytre arna", "espeland", "haukeland"]
-    ):
+    if any(k in t for k in ["arna", "indre arna", "ytre arna", "espeland", "haukeland"]):
         return "Bergen øst"
     return None
 
@@ -302,9 +241,6 @@ def _bergen_bucket_from_postal(postal: int) -> Optional[str]:
     return None
 
 
-# -------------------------------
-# Oslo: bydel → bucket + postnr-fallback
-# -------------------------------
 def _oslo_bucket_from_bydel(bydel_name: str) -> str:
     n = _norm(bydel_name)
     sentrum = {
@@ -324,115 +260,63 @@ def _oslo_bucket_from_bydel(bydel_name: str) -> str:
     return "Oslo øst"
 
 
-_oslo_postnr_exact_cache: Optional[Dict[str, Tuple[Optional[str], Optional[str]]]] = (
-    None
-)
-_oslo_prefix2_cache: Optional[Dict[str, str]] = None
-
-
-def _load_oslo_postnr_exact(
-    path: str = "data/static/lookup/postnr/oslo_postnr.csv",
-) -> Dict[str, Tuple[Optional[str], Optional[str]]]:
-    m: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
-    if not os.path.exists(path):
-        return m
-    with open(path, "r", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            p = (row.get("postnr") or row.get("postcode") or "").strip()
-            bydel = (row.get("bydel") or row.get("bydelnavn") or "").strip() or None
-            bucket = (row.get("bucket") or "").strip() or None
-            if len(p) == 4 and p.isdigit():
-                m[p] = (bydel, bucket)
-    return m
-
-
-def _load_oslo_prefix2(path: str = "data/static/lookup/postnr/oslo_prefix.csv") -> Dict[str, str]:
-    m: Dict[str, str] = {}
-    if not os.path.exists(path):
-        return m
-    with open(path, "r", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            pref = (row.get("prefix2") or "").strip()
-            bucket = (row.get("bucket") or "").strip()
-            if len(pref) == 2 and pref.isdigit() and bucket:
-                m[pref] = bucket
-    return m
-
-
 def _oslo_bucket_from_postnr(postnr: str) -> Optional[str]:
-    global _oslo_postnr_exact_cache, _oslo_prefix2_cache
-    if _oslo_postnr_exact_cache is None:
-        _oslo_postnr_exact_cache = _load_oslo_postnr_exact()
-    if _oslo_prefix2_cache is None:
-        _oslo_prefix2_cache = _load_oslo_prefix2()
-
-    if _oslo_postnr_exact_cache and postnr in _oslo_postnr_exact_cache:
-        bydel, bucket = _oslo_postnr_exact_cache[postnr]
+    exact = get_oslo_postnr_exact()
+    if exact and postnr in exact:
+        bydel, bucket = exact[postnr]
         if bucket:
             return bucket
         if bydel:
             return _oslo_bucket_from_bydel(bydel)
 
-    if len(postnr) == 4 and postnr.isdigit() and _oslo_prefix2_cache:
+    prefixes = get_oslo_prefix2()
+    if len(postnr) == 4 and postnr.isdigit() and prefixes:
         pref = postnr[:2]
-        if pref in _oslo_prefix2_cache:
-            return _oslo_prefix2_cache[pref]
+        if pref in prefixes:
+            return prefixes[pref]
     return None
 
 
-# -------------------------------
-# Hoved-API
-# -------------------------------
+def _load_city_buckets(table: RentTable, city: str) -> Dict[str, Dict[str, Tuple[float, str]]]:
+    return table.get(city, {}) if city else {}
+
+
 def get_rent_by_csv(
     info: Dict[str, object],
     area_m2: Optional[float],
     rooms: Optional[int] = None,
     city_hint: Optional[str] = None,
 ) -> Optional[RentEstimate]:
-    """
-    Hybrid SSB + CSV:
-      1) Finn by og (ev.) bucket (GeoJSON → postnr → tekst).
-      2) Finn segment.
-      3) SSB bysnitt (måned) skaleres med CSV-bucket-ratio når mulig.
-      4) CSV fallback hvis SSB ikke ga verdi.
-    """
-    table = _load_table() or {}  # selv om CSV mangler, fortsett (SSB kan ta over)
+    table = load_bucket_table() or {}
 
-    # --- Finn by trygt (unngå uinitialiserte variabler)
     scraped_city = (str(info.get("city") or info.get("municipality") or "")).strip()
     raw_city = (city_hint or scraped_city or _guess_city(info) or "").strip()
     city_csv = _canon_city_for_csv(raw_city) if raw_city else ""
     city_display = city_csv or "Hele landet"
-    city_buckets = table.get(city_csv, {}) if city_csv else {}
+    city_buckets = _load_city_buckets(table, city_csv) if city_csv else {}
 
-    # --- Kun Bergen/Oslo har bucket-støtte nå
-    SUPPORTED_FOR_BUCKETS = {"Bergen", "Oslo"}
+    supported_for_buckets = {"Bergen", "Oslo"}
     note_parts: List[str] = []
-    if city_csv and city_csv not in SUPPORTED_FOR_BUCKETS:
-        # slå av all bucket/GeoJSON-bruk og gå rett på SSB
+    if city_csv and city_csv not in supported_for_buckets:
         city_buckets = {}
         note_parts.append(
             "Bydelsinndelt leie er foreløpig kun støttet for Bergen og Oslo. "
             "Bruker SSB bysnitt for denne byen."
         )
 
-    # --- Finn bucket (GeoJSON → postnr → tekst)
     bucket: Optional[str] = None
     confidence = CONF_CITY_AVG
     if city_csv:
         note_parts.append(f"By brukt: {city_csv}")
 
-    # GeoJSON (dersom registrert i geo_registry)
     lat = info.get("lat")
     lon = info.get("lon")
     lat_f = _to_float_or_none(lat)
     lon_f = _to_float_or_none(lon)
 
     if lat_f is not None and lon_f is not None and city_csv and city_buckets:
-        gj = get_geojson_info(city_csv)
-        if gj and os.path.exists(gj["path"]):
+        gj = get_geojson_metadata(city_csv)
+        if gj:
             try:
                 bydel_name = find_bucket_from_point(
                     lat_f, lon_f, gj["path"], name_key=gj["name_key"]
@@ -454,27 +338,24 @@ def get_rent_by_csv(
                         confidence = CONF_GEOJSON
                         note_parts.append(f"Bucket fra GeoJSON: {bucket}")
 
-    # Postnr → bucket (Bergen)
     if bucket is None and _norm(city_csv) == "bergen" and city_buckets:
-        p = _extract_postal(info.get("address"))
-        if p is not None:
-            b_post = _bergen_bucket_from_postal(p)
-            if b_post and b_post in city_buckets:
-                bucket = b_post
+        postal = _extract_postal(info.get("address"))
+        if postal is not None:
+            bucket_from_postal = _bergen_bucket_from_postal(postal)
+            if bucket_from_postal and bucket_from_postal in city_buckets:
+                bucket = bucket_from_postal
                 confidence = max(confidence, CONF_TEXT_MATCH)
-                note_parts.append(f"Bucket fra postnr {p}: {bucket}")
+                note_parts.append(f"Bucket fra postnr {postal}: {bucket}")
 
-    # Postnr → bucket (Oslo)
     if bucket is None and _norm(city_csv) == "oslo" and city_buckets:
-        m = re.search(r"\b(\d{4})\b", str(info.get("address") or ""))
-        if m:
-            b_post = _oslo_bucket_from_postnr(m.group(1))
-            if b_post and b_post in city_buckets:
-                bucket = b_post
+        match = re.search(r"\b(\d{4})\b", str(info.get("address") or ""))
+        if match:
+            bucket_from_postal = _oslo_bucket_from_postnr(match.group(1))
+            if bucket_from_postal and bucket_from_postal in city_buckets:
+                bucket = bucket_from_postal
                 confidence = max(confidence, CONF_TEXT_MATCH)
-                note_parts.append(f"Bucket fra postnr {m.group(1)}: {bucket}")
+                note_parts.append(f"Bucket fra postnr {match.group(1)}: {bucket}")
 
-    # Tekst → bucket (Bergen)
     if bucket is None and city_buckets and _norm(city_csv) == "bergen":
         for key in [
             info.get("district"),
@@ -484,32 +365,25 @@ def get_rent_by_csv(
         ]:
             if not key:
                 continue
-            b_txt = _bergen_bucket_from_text(str(key))
-            if b_txt and b_txt in city_buckets:
-                bucket = b_txt
+            bucket_from_text = _bergen_bucket_from_text(str(key))
+            if bucket_from_text and bucket_from_text in city_buckets:
+                bucket = bucket_from_text
                 confidence = max(confidence, CONF_TEXT_MATCH)
                 note_parts.append(f"Traff bydel fra tekst: {bucket}")
                 break
 
-    # --- Segment
-    seg = _select_segment(area_m2, rooms)
-    note_parts.append(f"Segment: {seg}")
+    segment = _select_segment(area_m2, rooms)
+    note_parts.append(f"Segment: {segment}")
 
-    # --- CSV-ratio (bucket vs "<city> snitt")
-    def _get(b: str, s: str) -> Optional[Tuple[float, str]]:
-        return city_buckets.get(b, {}).get(s)
+    def _get(city_bucket: str, seg: str) -> Optional[Tuple[float, str]]:
+        return city_buckets.get(city_bucket, {}).get(seg)
 
-    def _std(b: str) -> Optional[float]:
-        rec = _get(b, "standard")
-        return float(rec[0]) if rec else None
+    def _std(city_bucket: str) -> Optional[float]:
+        record = _get(city_bucket, "standard")
+        return float(record[0]) if record else None
 
     ratio: Optional[float] = None
-    if (
-        city_buckets
-        and bucket
-        and (f"{city_csv} snitt" in city_buckets)
-        and (bucket in city_buckets)
-    ):
+    if city_buckets and bucket and (f"{city_csv} snitt" in city_buckets) and (bucket in city_buckets):
         csv_city_std = _std(f"{city_csv} snitt")
         csv_bucket_std = _std(bucket)
         if csv_city_std and csv_bucket_std:
@@ -518,7 +392,6 @@ def get_rent_by_csv(
             except Exception:
                 ratio = None
 
-    # --- SSB (kr/m² MND) – prøv i prioritert rekkefølge
     ssb_candidates: List[str] = []
     if city_csv:
         ssb_candidates.append(city_csv)
@@ -531,100 +404,85 @@ def get_rent_by_csv(
 
     ssb_value: Optional[float] = None
     ssb_used_label: Optional[str] = None
-    for cand in ssb_candidates:
-        try:
-            v = get_city_m2_month(city_name=cand, segment=seg, year=None)
-        except Exception:
-            v = None
-        if v is not None:
-            ssb_value = float(v)
-            ssb_used_label = cand
+    for candidate in ssb_candidates:
+        value = fetch_ssb_city_value(candidate, segment)
+        if value is not None:
+            ssb_value = value
+            ssb_used_label = candidate
             break
 
     kr_per_m2: Optional[float] = None
     used_bucket: Optional[str] = None
-    used_seg: Optional[str] = None
+    used_segment: Optional[str] = None
     updated = "—"
 
-    # --- SSB + evt. CSV-ratio ---
     if ssb_value is not None:
         if ratio is not None:
             kr_per_m2 = ssb_value * float(ratio)
             used_bucket = bucket or (
                 f"{city_csv} snitt" if city_csv else (ssb_used_label or "Hele landet")
             )
-            used_seg = seg
+            used_segment = segment
             updated = "SSB × CSV-ratio"
             confidence = max(confidence, 0.85)
             note_parts.append(f"Kilde: SSB ({ssb_used_label}) × CSV-bucket-ratio")
         else:
             kr_per_m2 = ssb_value
-            used_bucket = (
-                f"{city_csv} snitt" if city_csv else (ssb_used_label or "Hele landet")
-            )
-            used_seg = seg
+            used_bucket = f"{city_csv} snitt" if city_csv else (ssb_used_label or "Hele landet")
+            used_segment = segment
             updated = "SSB"
             confidence = max(confidence, 0.80)
             note_parts.append(f"Kilde: SSB ({ssb_used_label})")
 
-    # --- CSV fallback hvis SSB ikke ga verdi
     if kr_per_m2 is None and city_buckets:
-        # a) bucket/segment
         if bucket:
-            got = _get(bucket, seg)
+            got = _get(bucket, segment)
             if got:
                 kr_per_m2, updated = float(got[0]), got[1]
-                used_bucket, used_seg = bucket, seg
+                used_bucket, used_segment = bucket, segment
 
-        # b) bucket/standard
         if kr_per_m2 is None and bucket:
             got = _get(bucket, "standard")
             if got:
                 kr_per_m2, updated = float(got[0]), got[1]
-                used_bucket, used_seg = bucket, "standard"
+                used_bucket, used_segment = bucket, "standard"
 
-        # c) bysnitt/segment
         if kr_per_m2 is None and city_csv:
-            got = _get(f"{city_csv} snitt", seg)
+            got = _get(f"{city_csv} snitt", segment)
             if got:
                 kr_per_m2, updated = float(got[0]), got[1]
-                used_bucket, used_seg = f"{city_csv} snitt", seg
+                used_bucket, used_segment = f"{city_csv} snitt", segment
                 confidence = min(confidence, CONF_CITY_AVG)
                 note_parts.append("Fallback: bysnitt (segment)")
 
-        # d) bysnitt/standard
         if kr_per_m2 is None and city_csv:
             got = _get(f"{city_csv} snitt", "standard")
             if got:
                 kr_per_m2, updated = float(got[0]), got[1]
-                used_bucket, used_seg = f"{city_csv} snitt", "standard"
+                used_bucket, used_segment = f"{city_csv} snitt", "standard"
                 confidence = min(confidence, CONF_CITY_AVG)
                 note_parts.append("Fallback: bysnitt (standard)")
 
-    # Hvis vi fortsatt ikke har noe: gi opp
     if kr_per_m2 is None:
         return None
 
-    # Sørg for fornuftige felter
     if not used_bucket:
         used_bucket = bucket or (
             f"{city_csv} snitt" if city_csv else (ssb_used_label or "Hele landet")
         )
-    if not used_seg:
-        used_seg = seg
+    if not used_segment:
+        used_segment = segment
 
-    # Noen SSB-kilder leverer kr/m² per år – gjenkjenn via størrelse og del på 12
     monthly_adjusted = False
     if kr_per_m2 is not None and kr_per_m2 > ANNUAL_TO_MONTHLY_THRESHOLD:
         kr_per_m2 = float(kr_per_m2) / 12.0
         monthly_adjusted = True
 
-    # --- Beregn brutto leie (kr/mnd)
-    a = float(area_m2 or 0.0)
-    gross = max(0.0, a) * float(kr_per_m2)
+    area = float(area_m2 or 0.0)
+    gross = max(0.0, area) * float(kr_per_m2)
     rounded = int(round(gross / ROUND_TO)) * ROUND_TO
 
-    note_parts.append(f"Oppslag: {used_bucket} / {used_seg}")
+    note_parts.append(f"Oppslag: {used_bucket} / {used_segment}")
     if monthly_adjusted:
         note_parts.append("Konverterte kvadratmeterpris fra år til måned (÷12)")
 

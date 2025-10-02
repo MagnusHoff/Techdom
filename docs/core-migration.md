@@ -1,18 +1,15 @@
 # Utfasing av `core`-aliaset
 
-`core/__init__.py` eksponerer fortsatt "gamle" importbaner ved å peke videre til moduler i `techdom`-pakken. Planen for å fjerne dette laget uten å brekke noe ser slik ut:
+`core/__init__.py` er fjernet. Alle tidligere alias-importer må nå peke direkte på modulene i `techdom`-pakken. Denne notatfilen oppsummerer hva som ble gjort og hvordan eksterne prosjekter bør følge opp.
 
-1. **Kartlegg eksterne avhengigheter**
-   - Søk i andre repoer/prosjekter etter `from core` / `core.`-imports.
-   - Lag issues/PR-er der for å migrere til `techdom.*`.
-2. **Oppdater interne referanser**
-   - Sørg for at nye moduler/tests aldri importerer via `core`.
-   - Stram inn lint-regler (f.eks. Ruff/Flake8) med forbud mot `core.*`.
-3. **Kommuniser utfasingstidspunkt**
-   - Sett en dato (f.eks. etter to sprint-er) hvor aliaset fjernes.
-   - Dokumenter i `CHANGELOG`/README at `core` er deprecated.
-4. **Fjern aliaset**
-   - Slett `core/__init__.py` og enhvert gammelt skall.
-   - Kjør full regresjon + informer konsumenter om endringen.
+## Hva betyr dette?
+- Eldre imports som `from core import rent` eller `import core.analysis_contracts` feiler nå med `ImportError`.
+- Alle interne moduler er allerede flyttet til `techdom.*` og oppdatert til å bruke de nye stiene.
+- Driver-registreringen bruker kun `techdom.ingestion.drivers.*` og lenger ingen fallback til `core`.
 
-Inntil alle eksterne brukssteder er oppdatert bør `core` ligge igjen for kompatibilitet, men denne planen gjør det enkelt å rydde bort senere.
+## Sjekkliste for eksterne repoer
+1. Søk etter `core.`-referanser og oppdater til tilsvarende `techdom.`-moduler.
+2. Publiser en kort notis i relevante kanaler (README/CHANGELOG/Slack) om at `core`-aliaset er fjernet.
+3. Stram inn lint-regler slik at nye `core.*`-imports blir behandlet som feil.
+
+Når alle konsumenter er oppdatert trenger man ikke gjøre noe mer – gamle alias er helt borte, og nye moduler ligger kun under `techdom`-navnerommet.
