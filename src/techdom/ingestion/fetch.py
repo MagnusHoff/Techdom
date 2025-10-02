@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple, Optional, List, cast
 from pathlib import Path
-from urllib.parse import urlparse, urljoin, parse_qs, urlunparse
+from urllib.parse import urlparse, urlunparse
 import datetime as dt
-import hashlib
 import io
 import json
 import os
@@ -25,112 +24,39 @@ from .browser_fetch import (
 )
 from .http_headers import BROWSER_HEADERS
 from .drivers import DRIVERS  # ⬅️ bruk spesifikke megler-drivere
+from .fetch_helpers import (
+    absolute_url,
+    attr_to_str,
+    clean_url,
+    normalize,
+    sha256_bytes,
+    sha256_file,
+)
+from .failcases import dump_failcase, net_diag_for_exception
+from .link_scoring import (
+    NEG_ALWAYS,
+    extract_pdf_urls_from_html,
+    gather_candidate_links,
+    score_pdf_link_for_prospect,
+)
+from .prospect_paths import CACHE_DIR, PROSPEKT_DIR, FAIL_DIR, LOCAL_MIRROR
+from .prospect_store import (
+    FAILCASE_BUCKET,
+    FAILCASE_PREFIX,
+    PROSPEKT_BUCKET,
+    PROSPEKT_PREFIX,
+    _BotoCoreError,
+    _ClientError,
+    failcase_s3_enabled,
+    presigned_get,
+    prospekt_key,
+    prospekt_s3_enabled,
+    s3_get_bytes,
+    s3_head,
+)
 
 # ✅ S3-prospekt-lagring
 from techdom.integrations.s3_prospekt_store import upload_prospekt
-
-# Prøv å importere boto3 for S3-lesing/HEAD
-try:
-    import boto3  # type: ignore
-    from botocore.exceptions import BotoCoreError as _BotoCoreError, ClientError as _ClientError  # type: ignore
-except Exception:  # pragma: no cover
-    boto3 = None  # type: ignore
-
-    class _BotoCoreError(Exception):  # type: ignore
-        pass
-
-    class _ClientError(Exception):  # type: ignore
-        pass
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  Stier (lokal speiling kun for debugging/utvikling)
-# ──────────────────────────────────────────────────────────────────────────────
-CACHE_DIR = Path("data/cache")
-PROSPEKT_DIR = CACHE_DIR / "prospekt"
-FAIL_DIR = Path("data/debug/failcases")
-
-PROSPEKT_DIR.mkdir(parents=True, exist_ok=True)
-FAIL_DIR.mkdir(parents=True, exist_ok=True)
-
-# Lokal speiling av S3 (skriv kopi lokalt etter vellykket opplasting)
-LOCAL_MIRROR = os.getenv("TD_LOCAL_MIRROR", "1") not in {"0", "false", "False"}
-
-# S3-prospekt-innstillinger
-PROSPEKT_BUCKET = os.getenv("PROSPEKT_BUCKET", "").strip()
-PROSPEKT_PREFIX = (
-    (os.getenv("PROSPEKT_PREFIX", "prospekt") or "prospekt").strip().strip("/")
-)
-AWS_PROSPEKT_REGION = os.getenv("AWS_PROSPEKT_REGION", "eu-north-1").strip()
-AWS_PROSPEKT_ACCESS_KEY_ID = os.getenv("AWS_PROSPEKT_ACCESS_KEY_ID", "").strip()
-AWS_PROSPEKT_SECRET_ACCESS_KEY = os.getenv("AWS_PROSPEKT_SECRET_ACCESS_KEY", "").strip()
-
-# Failcase-opplasting (valgfritt)
-FAILCASE_BUCKET = os.getenv("FAILCASE_BUCKET", "").strip()
-FAILCASE_PREFIX = (
-    (os.getenv("FAILCASE_PREFIX", "failcases") or "failcases").strip().strip("/")
-)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  Små helpers
-# ──────────────────────────────────────────────────────────────────────────────
-def _attr_to_str(val: Any) -> str | None:
-    if val is None:
-        return None
-    try:
-        if isinstance(val, (list, tuple)):
-            if not val:
-                return None
-            val = val[0]
-        s = str(val).strip()
-        return s or None
-    except Exception:
-        return None
-
-
-def _abs(base_url: str, href: Any) -> str | None:
-    if not href:
-        return None
-    try:
-        return urljoin(base_url, str(href))
-    except Exception:
-        return None
-
-
-def _clean_url(u: str) -> str:
-    """Dropp tracking/fragment og unescape JSON-escaped slashes."""
-    try:
-        u = u.replace("\\/", "/")
-        p = urlparse(u)
-        q = parse_qs(p.query)
-        drop = {k for k in q if k.startswith("utm_") or k in {"gclid", "fbclid"}}
-        kept = [(k, v) for k, v in q.items() if k not in drop]
-        query = "&".join(f"{k}={v[0]}" for k, v in kept if v)
-        return urlunparse((p.scheme, p.netloc, p.path, p.params, query, ""))
-    except Exception:
-        return u
-
-
-def _norm(s: str | None) -> str:
-    return (s or "").lower().strip()
-
-
-def _sha256_bytes(b: bytes) -> str:
-    h = hashlib.sha256()
-    h.update(b)
-    return h.hexdigest()
-
-
-def _sha256_file(path: Path) -> str | None:
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return None
 
 
 def _new_bs_soup(
@@ -169,210 +95,6 @@ def _infer_finnkode(u: str) -> str | None:
     except Exception:
         pass
     return None
-
-
-def _dump_failcase(
-    finnkode: str,
-    label: str,
-    dbg: Dict[str, Any],
-    pdf_bytes: Optional[bytes] = None,
-    extra: Optional[Dict[str, Any]] = None,
-) -> None:
-    """
-    Lagre full debug + ev. PDF i data/debug/failcases for rask feilsøking.
-    Filnavn: YYYYMMDD-HHMMSS_<finnkode>_<label>.json/pdf
-    """
-    try:
-        ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        stem = f"{ts}_{finnkode}_{label}"
-        base = FAIL_DIR / stem
-
-        payload = dict(dbg or {})
-        if extra:
-            payload["extra"] = {**payload.get("extra", {}), **extra}
-
-        json_path = base.with_suffix(".json")
-        json_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        if pdf_bytes:
-            pdf_path = base.with_suffix(".pdf")
-            pdf_path.write_bytes(pdf_bytes)
-        else:
-            pdf_path = None
-
-        if _failcase_s3_enabled():
-            try:
-                client = _failcase_client()
-
-                key_json = _failcase_key(stem, ".json")
-                client.upload_file(
-                    str(json_path),
-                    FAILCASE_BUCKET,
-                    key_json,
-                    ExtraArgs={"ContentType": "application/json; charset=utf-8"},
-                )
-
-                if pdf_path and pdf_path.exists():
-                    key_pdf = _failcase_key(stem, ".pdf")
-                    client.upload_file(
-                        str(pdf_path),
-                        FAILCASE_BUCKET,
-                        key_pdf,
-                        ExtraArgs={"ContentType": "application/pdf"},
-                    )
-            except Exception:
-                pass
-    except Exception:
-        # Ikke la dump i seg selv velte kjøringen
-        pass
-
-
-def _net_diag_for_exception(
-    url: str | None, sess: requests.Session | None = None
-) -> dict:
-    import sys, platform, socket
-
-    info = {
-        "timestamp_utc": dt.datetime.utcnow().isoformat() + "Z",
-        "cwd": os.getcwd(),
-        "hostname": socket.gethostname(),
-        "platform": platform.platform(),
-        "python": sys.version,
-        "requests_version": getattr(requests, "__version__", None),
-        "env_http_proxy": os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY"),
-        "env_https_proxy": os.environ.get("https_proxy")
-        or os.environ.get("HTTPS_PROXY"),
-    }
-
-    # Session-proxies
-    if isinstance(sess, requests.Session):
-        try:
-            info["session_proxies"] = getattr(sess, "proxies", None)
-        except Exception:
-            pass
-
-    # DNS test for host i URL
-    host = None
-    try:
-        if url:
-            host = urlparse(url).hostname
-    except Exception:
-        pass
-    if host:
-        try:
-            addrs = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-            info["dns_getaddrinfo"] = list(
-                {f"{a[4][0]}:{a[4][1]}" for a in addrs if a and a[4]}
-            )
-        except Exception as e:
-            info["dns_getaddrinfo_error"] = f"{type(e).__name__}: {e}"
-
-    # Minimal reachability probe
-    try:
-        r0 = requests.get("https://example.com", timeout=5)
-        info["probe_example_com"] = {"ok": r0.ok, "status": r0.status_code}
-    except Exception as e:
-        info["probe_example_com_error"] = f"{type(e).__name__}: {e}"
-
-    # Domenespesifikk probe
-    if host:
-        try:
-            test_url = f"https://{host}/"
-            r1 = requests.get(test_url, timeout=5)
-            info["probe_domain_root"] = {"ok": r1.ok, "status": r1.status_code}
-        except Exception as e:
-            info["probe_domain_root_error"] = f"{type(e).__name__}: {e}"
-
-    return info
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  S3-hjelpere (prospekter)
-# ──────────────────────────────────────────────────────────────────────────────
-def _prospekt_s3_enabled() -> bool:
-    return bool(
-        boto3
-        and PROSPEKT_BUCKET
-        and PROSPEKT_PREFIX
-        and AWS_PROSPEKT_ACCESS_KEY_ID
-        and AWS_PROSPEKT_SECRET_ACCESS_KEY
-    )
-
-
-def _prospekt_key(finnkode: str) -> str:
-    return f"{PROSPEKT_PREFIX}/{finnkode}.pdf"
-
-
-def _prospekt_client():
-    assert boto3 is not None, "boto3 mangler"
-    return boto3.client(
-        "s3",
-        region_name=AWS_PROSPEKT_REGION,
-        aws_access_key_id=AWS_PROSPEKT_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_PROSPEKT_SECRET_ACCESS_KEY,
-    )
-
-
-def _failcase_s3_enabled() -> bool:
-    return bool(
-        boto3
-        and FAILCASE_BUCKET
-        and AWS_PROSPEKT_ACCESS_KEY_ID
-        and AWS_PROSPEKT_SECRET_ACCESS_KEY
-    )
-
-
-def _failcase_client():
-    assert boto3 is not None, "boto3 mangler"
-    return boto3.client(
-        "s3",
-        region_name=AWS_PROSPEKT_REGION,
-        aws_access_key_id=AWS_PROSPEKT_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_PROSPEKT_SECRET_ACCESS_KEY,
-    )
-
-
-def _failcase_key(stem: str, suffix: str) -> str:
-    if FAILCASE_PREFIX:
-        return f"{FAILCASE_PREFIX}/{stem}{suffix}"
-    return f"{stem}{suffix}"
-
-
-def _s3_head(key: str) -> Optional[dict]:
-    if not _prospekt_s3_enabled():
-        return None
-    try:
-        c = _prospekt_client()
-        return c.head_object(Bucket=PROSPEKT_BUCKET, Key=key)
-    except Exception:
-        return None
-
-
-def _s3_get_bytes(key: str) -> Optional[bytes]:
-    if not _prospekt_s3_enabled():
-        return None
-    try:
-        c = _prospekt_client()
-        obj = c.get_object(Bucket=PROSPEKT_BUCKET, Key=key)
-        return obj["Body"].read()
-    except Exception:
-        return None
-
-
-def _presigned_get(key: str, expire: int = 3600) -> Optional[str]:
-    if not _prospekt_s3_enabled():
-        return None
-    try:
-        c = _prospekt_client()
-        return c.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": PROSPEKT_BUCKET, "Key": key},
-            ExpiresIn=expire,
-        )
-    except Exception:
-        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -631,7 +353,7 @@ def choose_area_m2(attrs: Dict[str, str], page_text: str) -> Optional[float]:
     def _get_first(keys: List[str]) -> Optional[float]:
         for want in keys:
             for k, v in attrs.items():
-                if _norm(want) in _norm(k):
+                if normalize(want) in normalize(k):
                     val = _parse_m2_from_text(v)
                     if val:
                         return val
@@ -657,7 +379,7 @@ def choose_area_m2(attrs: Dict[str, str], page_text: str) -> Optional[float]:
 def choose_rooms(attrs: Dict[str, str], page_text: str) -> Optional[int]:
     for want in ["soverom", "antall soverom", "rom", "antall rom"]:
         for k, v in attrs.items():
-            if _norm(want) in _norm(k):
+            if normalize(want) in normalize(k):
                 m = re.search(r"(\d+)", str(v))
                 if m:
                     return int(m.group(1))
@@ -670,134 +392,6 @@ def choose_rooms(attrs: Dict[str, str], page_text: str) -> Optional[int]:
 # ──────────────────────────────────────────────────────────────────────────────
 #  HTML → PDF-kandidater (prospekt only)
 # ──────────────────────────────────────────────────────────────────────────────
-POS_STRONG = [
-    "salgsoppgave",
-    "komplett salgsoppgave",
-    "prospekt",
-    "salgsprospekt",
-    "salgspresentasjon",
-    "for utskrift",
-    "utskrift",
-    "digitalformat",
-    "last ned pdf",
-    "se pdf",
-]
-POS_WEAK = ["pdf"]
-
-NEG_ALWAYS = [
-    # dokumenter vi IKKE vil ha
-    "tilstandsrapport",
-    "boligsalgsrapport",
-    "byggteknisk",
-    "fidens",
-    "egenerkl",
-    "egenerklæring",
-    "energiattest",
-    "epc",
-    "nabolag",
-    "nabolagsprofil",
-    "nordvikunders",
-    "anticimex",
-    "boligkjøperforsikring",
-    "prisliste",
-    "/files/doc/",
-    "garanti.no/files/doc",
-    "contentassets/nabolaget",
-    "budskjema",
-    "samtykke",
-    "planinfo",
-    "tegning",
-    "seksjon",
-    "kart",
-    "situasjonsplan",
-    "kommunal",
-    "gebyr",
-    "avgift",
-    "skatt",
-]
-
-
-def _score_pdf_link_for_prospect(href: str, text: str) -> int:
-    lo = (href + " " + text).lower()
-    sc = 0
-    if ".pdf" in lo:
-        sc += 8
-    for w in POS_STRONG:
-        if w in lo:
-            sc += 10
-    for w in POS_WEAK:
-        if w in lo:
-            sc += 2
-    for w in NEG_ALWAYS:
-        if w in lo:
-            sc -= 30
-    return sc
-
-
-def _gather_candidate_links(soup: Any, base_url: str) -> list[tuple[int, str, str]]:
-    out: list[tuple[int, str, str]] = []
-
-    if hasattr(soup, "find_all"):
-        # <a ...>
-        for a in soup.find_all("a"):
-            if not isinstance(a, Tag):
-                continue
-            text = a.get_text(" ", strip=True) or ""
-            for attr in ("href", "data-href", "data-file", "download"):
-                href_val = _attr_to_str(a.get(attr))
-                if not href_val:
-                    continue
-                absu = _abs(base_url, href_val)
-                if not absu:
-                    continue
-                sc = _score_pdf_link_for_prospect(absu, text)
-                if sc > 0:
-                    out.append((sc, absu, text))
-
-        # knapper/div/span med data-URL
-        for el in soup.find_all(["button", "div", "span"]):
-            if not isinstance(el, Tag):
-                continue
-            text = el.get_text(" ", strip=True) or ""
-            for attr in ("data-href", "data-file", "data-url", "data-download"):
-                href_val = _attr_to_str(el.get(attr))
-                if not href_val:
-                    continue
-                absu = _abs(base_url, href_val)
-                if not absu:
-                    continue
-                sc = _score_pdf_link_for_prospect(absu, text)
-                if sc > 0:
-                    out.append((sc, absu, text))
-
-    return out
-
-
-def _extract_pdf_urls_from_html(html_text: str, base_url: str) -> list[tuple[int, str]]:
-    if not html_text:
-        return []
-    raw_hits: set[str] = set()
-    for m in re.finditer(r"""https?:\/\/[^\s"'<>]+\.pdf\b""", html_text, flags=re.I):
-        raw_hits.add(m.group(0))
-    for m in re.finditer(r"""(?<!:)\/\/[^\s"'<>]+\.pdf\b""", html_text, flags=re.I):
-        raw_hits.add(m.group(0))
-    for m in re.finditer(
-        r"""(?<![a-zA-Z0-9])\/[^\s"'<>]+\.pdf\b""", html_text, flags=re.I
-    ):
-        raw_hits.add(m.group(0))
-
-    def _score(url: str) -> int:
-        lo = url.lower()
-        score = 0
-        if "salgsoppgav" in lo or "prospekt" in lo or "salgsprospekt" in lo:
-            score += 50
-        if ".pdf" in lo:
-            score += 10
-        if any(x in lo for x in NEG_ALWAYS):
-            score -= 100
-        return score
-
-    out: list[tuple[int, str]] = []
     for hit in raw_hits:
         absu = _abs(base_url, hit)
         if absu:
@@ -887,13 +481,13 @@ def _persist_to_s3_and_mirror(
         "cache_equal": False,
     }
 
-    new_hash = _sha256_bytes(pdf_bytes)
+    new_hash = sha256_bytes(pdf_bytes)
 
     tmp_path = _mirror_tmp_write(finnkode, pdf_bytes)
     up: Dict[str, Any] = {}
     presigned_url: str | None = None
 
-    if _prospekt_s3_enabled():
+    if prospekt_s3_enabled():
         try:
             up = upload_prospekt(
                 local_path=tmp_path,
@@ -977,13 +571,13 @@ def get_prospect_or_scrape(
     }
 
     finnkode = _infer_finnkode(finn_url) or "prospekt"
-    s3_key = _prospekt_key(finnkode)
+    s3_key = prospekt_key(finnkode)
 
     # 1) Sjekk S3 først
-    if _prospekt_s3_enabled() and prefer_cache:
-        head = _s3_head(s3_key)
+    if prospekt_s3_enabled() and prefer_cache:
+        head = s3_head(s3_key)
         if head:
-            b = _s3_get_bytes(s3_key)
+            b = s3_get_bytes(s3_key)
             if b:
                 dbg.update(
                     {
@@ -994,7 +588,7 @@ def get_prospect_or_scrape(
                         "used_return": "prospekt_s3_cache",
                     }
                 )
-                presigned = _presigned_get(s3_key, expire=3600)
+                presigned = presigned_get(s3_key, expire=3600)
                 # Lokal speil oppdateres valgfritt
                 if LOCAL_MIRROR:
                     try:
@@ -1077,14 +671,14 @@ def fetch_prospectus_from_finn(
         soup1, html1_full = _new_bs_soup(sess, finn_url)
         pdf_url: Optional[str] = None
 
-        cand1 = _gather_candidate_links(soup1, finn_url)
+        cand1 = gather_candidate_links(soup1, finn_url)
         if cand1:
             pdf_url = _resolve_first_pdf(
                 sess, [(s, u) for (s, u, _t) in cand1], referer=finn_url
             )
 
         if not pdf_url:
-            grep1 = _extract_pdf_urls_from_html(html1_full or "", base_url=finn_url)
+            grep1 = extract_pdf_urls_from_html(html1_full or "", base_url=finn_url)
             if grep1:
                 pdf_url = _td_resolve_first_pdf_from_strs(
                     sess, [u for _s, u in grep1], referer=finn_url
@@ -1117,7 +711,7 @@ def fetch_prospectus_from_finn(
             dbg["pdf_url"] = pdf_url
             referers: list[Optional[str]] = [megler_url, finn_url, None]
             tried: set[str] = set()
-            for candidate in [pdf_url, _clean_url(pdf_url)]:
+            for candidate in [pdf_url, clean_url(pdf_url)]:
                 if candidate in tried:
                     continue
                 tried.add(candidate)
@@ -1225,7 +819,7 @@ def fetch_prospectus_from_finn(
         # Feil: ingen PDF
         dbg["step"] = "failed_no_pdf"
         dbg["error"] = "no_prospect_pdf_found"
-        _dump_failcase(
+        dump_failcase(
             finnkode,
             "no_prospect_pdf_found",
             dbg,
@@ -1240,10 +834,10 @@ def fetch_prospectus_from_finn(
         try:
             dbg.setdefault("extra", {})
             dbg["extra"]["traceback"] = traceback.format_exc()
-            dbg["extra"]["net_diag"] = _net_diag_for_exception(finn_url, sess=None)
+            dbg["extra"]["net_diag"] = net_diag_for_exception(finn_url, sess=None)
         except Exception:
             pass
-        _dump_failcase(_infer_finnkode(finn_url) or "prospekt", "exception", dbg)
+        dump_failcase(_infer_finnkode(finn_url) or "prospekt", "exception", dbg)
         return None, None, dbg
 
 
@@ -1305,14 +899,14 @@ def fetch_prospectus_from_megler_url(
         soup2, html2 = _new_bs_soup(sess, megler_url)
 
         pdf_url: Optional[str] = None
-        cand2 = _gather_candidate_links(soup2, megler_url)
+        cand2 = gather_candidate_links(soup2, megler_url)
         if cand2:
             pdf_url = _resolve_first_pdf(
                 sess, [(s, u) for (s, u, _t) in cand2], referer=megler_url
             )
 
         if not pdf_url:
-            grep2 = _extract_pdf_urls_from_html(html2 or "", base_url=megler_url)
+            grep2 = extract_pdf_urls_from_html(html2 or "", base_url=megler_url)
             if grep2:
                 pdf_url = _td_resolve_first_pdf_from_strs(
                     sess, [u for _s, u in grep2], referer=megler_url
@@ -1385,7 +979,7 @@ def fetch_prospectus_from_megler_url(
 
         dbg["step"] = "failed_no_pdf"
         dbg["error"] = "no_prospect_pdf_found"
-        _dump_failcase(
+        dump_failcase(
             finnkode,
             "no_prospect_pdf_found",
             dbg,
@@ -1400,10 +994,10 @@ def fetch_prospectus_from_megler_url(
         try:
             dbg.setdefault("extra", {})
             dbg["extra"]["traceback"] = traceback.format_exc()
-            dbg["extra"]["net_diag"] = _net_diag_for_exception(megler_url, sess=None)
+            dbg["extra"]["net_diag"] = net_diag_for_exception(megler_url, sess=None)
         except Exception:
             pass
-        _dump_failcase(_infer_finnkode(megler_url) or "prospekt", "exception", dbg)
+        dump_failcase(_infer_finnkode(megler_url) or "prospekt", "exception", dbg)
         return None, None, dbg
 
 
