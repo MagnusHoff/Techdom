@@ -8,30 +8,27 @@ from urllib.parse import urlparse, parse_qs, urlunparse
 from typing import Any, Dict, Optional, List, Iterable, Tuple, cast
 
 import streamlit as st
-from pydantic import ValidationError
-
 # PDF-leser: prøv pypdf først, fallback til PyPDF2
 try:
     from pypdf import PdfReader  # type: ignore
 except Exception:
     from PyPDF2 import PdfReader  # type: ignore
 
-from techdom.processing.compute import compute_metrics
-from techdom.processing.ai import ai_explain, analyze_prospectus
+from techdom.processing.ai import analyze_prospectus
 from techdom.processing.rates import get_interest_estimate
 from techdom.processing.rent import get_rent_by_csv
 from techdom.domain.history import add_analysis
 from techdom.ingestion.scrape import scrape_finn
 from techdom.ingestion.fetch import get_prospect_or_scrape  # ⬅️ kun prospekt
-from techdom.domain.analysis_contracts import (
-    InputContract,
-    build_calculated_metrics,
-    build_decision_result,
-    map_decision_to_ui,
+from techdom.domain.analysis_service import (
+    AnalysisDecisionContext,
+    as_float as _as_float,
+    as_int as _as_int,
+    as_opt_float as _as_opt_float,
+    as_str as _as_str,
+    compute_analysis,
+    default_equity as _default_equity,
 )
-
-
-DEFAULT_EQUITY_PCT = 0.15
 
 # --------------------------- PDF tekstuttrekk ---------------------------
 
@@ -71,63 +68,6 @@ def extract_pdf_text_from_bytes(data: bytes, max_pages: int = 40) -> str:
 # --------------------------- helpers ---------------------------
 
 
-def _as_str(v: Any, default: str = "") -> str:
-    if isinstance(v, str):
-        return v
-    if v is None:
-        return default
-    try:
-        return str(v)
-    except Exception:
-        return default
-
-
-def _as_int(v: Any, default: int = 0) -> int:
-    if isinstance(v, bool):
-        return default
-    if isinstance(v, int):
-        return v
-    if isinstance(v, float):
-        return int(v)
-    if isinstance(v, str):
-        t = v.replace("\u00a0", " ").replace(" ", "").replace(",", "")
-        try:
-            return int(float(t))
-        except Exception:
-            return default
-    return default
-
-
-def _as_float(v: Any, default: float = 0.0) -> float:
-    if isinstance(v, bool):
-        return default
-    if isinstance(v, (int, float)):
-        return float(v)
-    if isinstance(v, str):
-        t = v.replace("\u00a0", " ").replace(" ", "").replace(",", ".")
-        try:
-            return float(t)
-        except Exception:
-            return default
-    return default
-
-
-def _default_equity(price: Any) -> int:
-    """Standardiser 15 % av kjøpesum som minimum egenkapital."""
-    p = _as_float(price, 0.0)
-    if p <= 0:
-        return 0
-    return int(round(p * DEFAULT_EQUITY_PCT))
-
-
-def _as_opt_float(v: Any) -> Optional[float]:
-    try:
-        f = _as_float(v, default=float("nan"))
-        return None if f != f else f  # nan-check
-    except Exception:
-        return None
-
-
 def _interest_only_float() -> float:
     """get_interest_estimate() kan returnere float | (float, meta). Normaliser til float."""
     try:
@@ -162,19 +102,6 @@ def _clean_url(u: str) -> str:
         return urlunparse((p.scheme, p.netloc, p.path, p.params, "", ""))
     except Exception:
         return u
-
-
-def _input_contract_from_params(params: Dict[str, Any]) -> InputContract:
-    return InputContract(
-        kjopesum=_as_float(params.get("price", 0)),
-        egenkapital=_as_float(params.get("equity", 0)),
-        rente_pct_pa=_as_float(params.get("interest", 0.0)),
-        lanetid_ar=_as_int(params.get("term_years", 30), 30),
-        brutto_leie_mnd=_as_float(params.get("rent", 0)),
-        felleskost_mnd=_as_float(params.get("hoa", 0)),
-        vedlikehold_pct_av_leie=_as_float(params.get("maint_pct", 0.0)),
-        andre_kost_mnd=_as_float(params.get("other_costs", 0)),
-    )
 
 
 def _color_class(color: Any) -> str:
@@ -779,36 +706,20 @@ def render_result() -> None:
     # --- Kjør beregning når _updating = True ---
     if st.session_state["_updating"]:
         p = cast(Dict[str, Any], st.session_state.get("_queued_params") or dict(params))
-        m = compute_metrics(
-            _as_int(p.get("price")),
-            _as_int(p.get("equity")),
-            _as_float(p.get("interest")),
-            _as_int(p.get("term_years"), 30),
-            _as_int(p.get("rent")),
-            _as_int(p.get("hoa")),
-            _as_float(p.get("maint_pct")),
-            _as_float(p.get("vacancy_pct")),
-            _as_int(p.get("other_costs")),
-        )
-        try:
-            input_contract = _input_contract_from_params(p)
-            calc_metrics = build_calculated_metrics(input_contract)
-            tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
-            decision = build_decision_result(
-                input_contract,
-                calc_metrics,
+        tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
+        analysis = compute_analysis(
+            p,
+            AnalysisDecisionContext(
                 tg2_items=tg2_items,
                 tg3_items=tg3_items,
                 tg_data_available=has_tg_data,
-            )
-            st.session_state["decision_result"] = decision
-            st.session_state["decision_ui"] = map_decision_to_ui(decision)
-        except ValidationError:
-            st.session_state["decision_result"] = None
-            st.session_state["decision_ui"] = {}
+            ),
+        )
         st.session_state["params"] = p
-        st.session_state["computed"] = m
-        st.session_state["ai_text"] = ai_explain(p, m)  # type: ignore[arg-type]
+        st.session_state["computed"] = analysis.metrics
+        st.session_state["decision_result"] = analysis.decision_result
+        st.session_state["decision_ui"] = analysis.decision_ui
+        st.session_state["ai_text"] = analysis.ai_text
         st.session_state["prospectus_manual_running"] = False
         st.session_state["_updating"] = False
         st.session_state["_first_compute_done"] = True
@@ -991,24 +902,18 @@ def render_result() -> None:
     decision_ui = cast(Dict[str, Any], st.session_state.get("decision_ui") or {})
 
     if not decision_ui and m_now:
-        try:
-            input_contract = _input_contract_from_params(p_now)
-            calc_metrics = build_calculated_metrics(input_contract)
-            tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
-            decision = build_decision_result(
-                input_contract,
-                calc_metrics,
+        tg2_items, tg3_items, has_tg_data = _tg_lists_from_state()
+        analysis = compute_analysis(
+            p_now,
+            AnalysisDecisionContext(
                 tg2_items=tg2_items,
                 tg3_items=tg3_items,
                 tg_data_available=has_tg_data,
-            )
-            decision_ui = map_decision_to_ui(decision)
-            st.session_state["decision_result"] = decision
-            st.session_state["decision_ui"] = decision_ui
-        except ValidationError:
-            decision_ui = {}
-            st.session_state["decision_result"] = None
-            st.session_state["decision_ui"] = {}
+            ),
+        )
+        decision_ui = analysis.decision_ui
+        st.session_state["decision_result"] = analysis.decision_result
+        st.session_state["decision_ui"] = decision_ui
 
     score_html = ""
     if decision_ui:
