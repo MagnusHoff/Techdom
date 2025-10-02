@@ -219,3 +219,7 @@ data/debug/
 data/raw/proxy/proxy_results.csv
 data/raw/proxy/good_proxies.txt
 data/raw/proxy/proxies.txt
+# Frontend build artifacts
+apps/frontend/node_modules/
+apps/frontend/.next/
+apps/frontend/tsconfig.tsbuildinfo

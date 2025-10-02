@@ -1,0 +1,446 @@
+:root {
+  color-scheme: dark;
+  background-color: #020617;
+  color: #f8fafc;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 10%, rgba(30,64,175,0.45), rgba(2,6,23,1) 55%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.5rem;
+}
+
+.landing-card {
+  width: min(100%, 560px);
+  border-radius: 20px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(18px);
+  padding: clamp(2.4rem, 3vw, 3.2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 1.8rem;
+  box-shadow: 0 32px 82px rgba(15, 23, 42, 0.55);
+}
+
+.landing-card h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 6vw, 3rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.strapline {
+  margin: 0.25rem 0 0;
+  font-size: 1.05rem;
+  opacity: 0.78;
+  line-height: 1.6;
+}
+
+.landing-form {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.landing-input {
+  flex: 1 1 260px;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.68);
+  color: inherit;
+  font-size: 0.95rem;
+}
+
+.landing-input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.24);
+}
+
+.landing-button {
+  flex: 0 0 auto;
+  padding: 0.9rem 1.6rem;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.95), rgba(14, 165, 233, 0.95));
+  color: #f8fafc;
+  font-weight: 600;
+  font-size: 0.98rem;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.landing-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 42px rgba(56, 189, 248, 0.32);
+}
+
+.error-text {
+  margin: -0.9rem 0 0;
+  color: #f87171;
+  font-size: 0.88rem;
+}
+
+.sr-only {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  white-space: nowrap;
+}
+
+
+.analysis-main {
+  display: flex;
+  justify-content: center;
+  padding: clamp(2rem, 5vw, 4rem) 1.5rem;
+}
+
+.analysis-shell {
+  width: min(100%, 960px);
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 24px;
+  padding: clamp(2rem, 4vw, 3rem);
+  box-shadow: 0 32px 82px rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(24px);
+}
+
+.analysis-header .overline {
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.72rem;
+  opacity: 0.6;
+  margin-bottom: 0.4rem;
+}
+
+.analysis-header h1 {
+  margin: 0;
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+}
+
+.analysis-header .lede {
+  margin-top: 0.75rem;
+  font-size: 1rem;
+  opacity: 0.78;
+  line-height: 1.6;
+}
+
+.analysis-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.form-field input {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.66);
+  padding: 0.75rem 0.9rem;
+  color: inherit;
+}
+
+.form-field input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.24);
+}
+
+.textareas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.textarea-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.textarea-field textarea {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.66);
+  padding: 0.75rem 0.9rem;
+  color: inherit;
+  resize: vertical;
+}
+
+.textarea-field textarea:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.24);
+}
+
+.analysis-button {
+  align-self: flex-start;
+  padding: 0.9rem 1.8rem;
+  border-radius: 12px;
+  border: none;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.95), rgba(45, 212, 191, 0.9));
+  color: #0f172a;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.analysis-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 48px rgba(45, 212, 191, 0.28);
+}
+
+.analysis-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.error-banner {
+  border-radius: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.12);
+  color: #fecaca;
+  padding: 0.85rem 1rem;
+}
+
+.analysis-results {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.score-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 18px;
+  padding: 1.4rem 1.8rem;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.score-card .overline {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  opacity: 0.6;
+  font-size: 0.75rem;
+  margin: 0 0 0.4rem;
+}
+
+.score-value {
+  font-size: clamp(2.6rem, 7vw, 3.4rem);
+  font-weight: 700;
+}
+
+.score-chip {
+  border-radius: 999px;
+  padding: 0.45rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.score-chip.red {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fecaca;
+}
+
+.score-chip.orange {
+  background: rgba(249, 115, 22, 0.22);
+  color: #fed7aa;
+}
+
+.score-chip.green {
+  background: rgba(34, 197, 94, 0.22);
+  color: #bbf7d0;
+}
+
+.score-chip.neutral {
+  background: rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
+}
+
+.status-sentence {
+  margin: 0;
+  font-size: 1rem;
+  opacity: 0.82;
+}
+
+.status-note {
+  margin: -0.6rem 0 0;
+  font-size: 0.92rem;
+  opacity: 0.72;
+  font-style: italic;
+}
+
+.key-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.key-card {
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 1rem 1.2rem;
+  background: rgba(15, 23, 42, 0.75);
+}
+
+.key-name {
+  margin: 0 0 0.4rem;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  opacity: 0.6;
+}
+
+.key-value {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.key-value.red {
+  color: #fca5a5;
+}
+
+.key-value.orange {
+  color: #fdba74;
+}
+
+.key-value.green {
+  color: #86efac;
+}
+
+.key-value.neutral {
+  color: #e2e8f0;
+}
+
+.list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.decision-card {
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.72);
+  padding: 1rem 1.2rem;
+}
+
+.decision-card h3 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.decision-card ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.placeholder {
+  opacity: 0.65;
+  font-size: 0.9rem;
+}
+
+.ai-copy {
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.78);
+  padding: 1.6rem 1.8rem;
+  line-height: 1.6;
+}
+
+.ai-copy h2 {
+  margin-top: 0;
+}
+
+@media (max-width: 640px) {
+  .analysis-shell {
+    border-radius: 18px;
+  }
+
+  .score-card {
+    flex-direction: column;
+    gap: 0.8rem;
+    align-items: flex-start;
+  }
+}
+
+
+.job-card {
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.8);
+  padding: 1.5rem 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.job-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  opacity: 0.6;
+  margin: 0;
+}
+
+.job-value {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.job-message {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.progress {
+  margin: 0;
+  font-size: 0.95rem;
+  opacity: 0.76;
+}

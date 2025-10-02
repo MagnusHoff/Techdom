@@ -43,3 +43,19 @@ def test_analysis_endpoint_returns_expected(monkeypatch):
     assert data["decision_result"] == expected.decision_result.model_dump()
     assert data["decision_ui"] == expected.decision_ui
     assert data["ai_text"] == expected.ai_text
+
+
+def test_analyze_endpoint_returns_job(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = TestClient(app)
+
+    response = client.post("/analyze", json={"finnkode": "123456"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "queued"
+    job_id = payload["job_id"]
+
+    status_resp = client.get(f"/status/{job_id}")
+    assert status_resp.status_code == 200
+    job_status = status_resp.json()
+    assert job_status["status"] == "queued"

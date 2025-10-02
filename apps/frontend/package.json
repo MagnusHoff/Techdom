@@ -1,0 +1,27 @@
+{
+  "name": "@techdom/frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run lint",
+    "check": "npm run lint && npm run typecheck"
+  },
+  "dependencies": {
+    "next": "14.2.9",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.9",
+    "@types/react": "18.3.6",
+    "@types/react-dom": "18.3.0",
+    "eslint": "8.57.1",
+    "eslint-config-next": "14.2.9",
+    "typescript": "5.6.2"
+  }
+}

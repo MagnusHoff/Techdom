@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from apps.api import runtime
@@ -12,7 +12,6 @@ from techdom.domain.analysis_service import (
     compute_analysis,
     normalise_params,
 )
-from techdom.ingestion.fetch import fetch_prospectus_from_finn, save_pdf_locally
 from techdom.services.prospect_jobs import ProspectJobService
 
 _bootstrap = runtime.ensure_bootstrap()
@@ -101,31 +100,14 @@ def analysis(req: AnalysisReq) -> AnalysisResp:
 
 
 @app.post("/analyze")
-def analyze(req: AnalyzeReq, bg: BackgroundTasks):
-    job = job_service.create(req.finnkode)
-    job_id = job.id
+def analyze(req: AnalyzeReq):
     finn_url = f"https://www.finn.no/realestate/homes/ad.html?finnkode={req.finnkode}"
-
-    def _run():
-        try:
-            job_service.mark_running(
-                job_id,
-                progress=10,
-                message="Henter prospekt",
-            )
-            pdf_bytes, pdf_url, debug = fetch_prospectus_from_finn(finn_url)
-            if debug:
-                job_service.attach_debug(job_id, debug)
-            if not pdf_bytes:
-                job_service.mark_failed(job_id, "Fant ikke PDF")
-                return
-            path = save_pdf_locally(req.finnkode, pdf_bytes)
-            job_service.mark_done(job_id, pdf_path=path, pdf_url=pdf_url)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            job_service.mark_failed(job_id, repr(exc))
-
-    bg.add_task(_run)
-    return {"job_id": job_id, "status": "queued"}
+    job = job_service.create(
+        req.finnkode,
+        payload={"finnkode": req.finnkode, "finn_url": finn_url},
+        enqueue=True,
+    )
+    return {"job_id": job.id, "status": job.status}
 
 
 @app.get("/status/{job_id}")
