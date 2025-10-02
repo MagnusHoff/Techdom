@@ -5,7 +5,7 @@ import io
 import re
 import time
 from typing import Tuple, Dict, Any, Optional, List, Mapping
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -15,8 +15,7 @@ from PyPDF2 import PdfReader
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 # --- bare salgsoppgave/prospekt ---
 ALLOW_RX = re.compile(r"(salgsoppgav|prospekt|utskriftsvennlig|komplett)", re.I)
@@ -31,10 +30,6 @@ MIN_BYTES = 300_000
 MIN_PAGES = 4
 
 
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
 def _pdf_pages(b: bytes | None) -> int:
     if not b:
         return 0
@@ -45,7 +40,7 @@ def _pdf_pages(b: bytes | None) -> int:
 
 
 def _pdf_quality_ok(b: bytes | None) -> bool:
-    if not b or not _looks_like_pdf(b) or len(b) < MIN_BYTES:
+    if not b or not looks_like_pdf_bytes(b) or len(b) < MIN_BYTES:
         return False
     return _pdf_pages(b) >= MIN_PAGES
 
@@ -69,51 +64,34 @@ def _is_salgsoppgave(
     return bool(ALLOW_RX.search(hay))
 
 
-def _abs(base: str, href: str | None) -> Optional[str]:
-    return urljoin(base, href) if href else None
-
-
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    # forsøk å sette Origin (kan hjelpe mot WAF)
-    try:
-        pr = urlparse(referer)
-        origin = f"{pr.scheme}://{pr.netloc}"
-    except Exception:
-        origin = None
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream,*/*",
-            "Referer": referer,
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    if origin:
-        headers["Origin"] = origin
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    try:
-        pr = urlparse(referer)
-        origin = f"{pr.scheme}://{pr.netloc}"
-    except Exception:
-        origin = None
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream,*/*",
-            "Referer": referer,
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Dest": "document",
-        }
+    extra = {
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    if origin:
-        headers["Origin"] = origin
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _find_candidates(html: str, base_url: str) -> List[tuple[str, str]]:
@@ -134,7 +112,7 @@ def _find_candidates(html: str, base_url: str) -> List[tuple[str, str]]:
             href = el.get(attr)
             if not href:
                 continue
-            u = _abs(base_url, str(href))
+            u = abs_url(base_url, str(href))
             if not u:
                 continue
             # filtrer KUN salgsoppgave-kandidater

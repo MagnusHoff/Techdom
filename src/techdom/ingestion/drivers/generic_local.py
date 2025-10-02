@@ -3,17 +3,14 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, Tuple, List, Optional, Any
-from urllib.parse import urljoin, urlparse
+from typing import Dict, Tuple, List, Any
 
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
 from .base import Driver  # viktig: arve fra base
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 # --- Policy: KUN salgsoppgave/prospekt ---
 ALLOW_SIGNS = (
@@ -49,62 +46,35 @@ BLOCK_SIGNS = (
 BAD_FILENAMES = {"klikk.pdf"}
 
 
-def _as_str(v: object) -> str:
-    """Normaliser BeautifulSoup AttributeValue til str for trygg .strip()."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
-def _origin_of(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _abs(base_url: str, href: str | None) -> Optional[str]:
-    if not href:
-        return None
-    return urljoin(base_url, href)
-
-
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin_of(referer) or _origin_of(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "cross-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin_of(referer) or _origin_of(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _is_salgsoppgave(url: str, label: str) -> bool:
@@ -134,10 +104,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
     urls: List[str] = []
 
     def consider(href_val: object, label: str):
-        href = _as_str(href_val).strip()
+        href = as_str(href_val).strip()
         if not href:
             return
-        u = _abs(base_url, href)
+        u = abs_url(base_url, href)
         if not u:
             return
         if _is_salgsoppgave(u, label):
@@ -249,7 +219,7 @@ class GenericLocalDriver(Driver):
                         rr = _get(sess, final, page_url, SETTINGS.REQ_TIMEOUT)
                         ct2 = (rr.headers.get("Content-Type") or "").lower()
                         ok_pdf = rr.ok and (
-                            ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                            ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                         )
                         driver_meta[f"get_{attempt}_{final}"] = {
                             "status": rr.status_code,
@@ -282,7 +252,7 @@ class GenericLocalDriver(Driver):
                     rr = _get(sess, url, page_url, SETTINGS.REQ_TIMEOUT)
                     ct2 = (rr.headers.get("Content-Type") or "").lower()
                     ok_pdf = rr.ok and (
-                        ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                        ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                     )
                     driver_meta[f"get_{attempt}_{url}"] = {
                         "status": rr.status_code,

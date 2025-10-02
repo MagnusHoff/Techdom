@@ -5,16 +5,13 @@ import io
 import re
 import time
 from typing import Tuple, Dict, Any, Optional, List, Mapping
-from urllib.parse import urljoin, urlparse
-
 import requests
 from PyPDF2 import PdfReader
 
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, looks_like_pdf_bytes, request_pdf
 
 # --- kun salgsoppgave/prospekt ---
 ALLOW_RX = re.compile(r"(salgsoppgav|prospekt|komplett|utskriftsvennlig)", re.I)
@@ -29,12 +26,8 @@ MIN_BYTES = 150_000
 MIN_PAGES = 4
 
 
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
 def _pdf_quality_ok(b: bytes | None) -> bool:
-    if not b or not _looks_like_pdf(b) or len(b) < MIN_BYTES:
+    if not b or not looks_like_pdf_bytes(b) or len(b) < MIN_BYTES:
         return False
     try:
         return len(PdfReader(io.BytesIO(b)).pages) >= MIN_PAGES
@@ -64,31 +57,36 @@ def _is_salgsoppgave(url: str, headers: Mapping[str, str] | None) -> bool:
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": "https://partners.no",
-        }
+    extra = {
+        "Origin": "https://partners.no",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": "https://partners.no",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Dest": "document",
-        }
+    extra = {
+        "Origin": "https://partners.no",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _gather_candidates(html: str, base_url: str) -> List[str]:
@@ -101,7 +99,9 @@ def _gather_candidates(html: str, base_url: str) -> List[str]:
         cands.append(m.group(0))
 
     for m in re.finditer(r'["\'](/[^"\']*?wngetfile\.ashx[^"\']*)["\']', html, re.I):
-        cands.append(urljoin(base_url, m.group(1)))
+        u = abs_url(base_url, m.group(1))
+        if u:
+            cands.append(u)
 
     # uniq
     seen: set[str] = set()

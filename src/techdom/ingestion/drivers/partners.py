@@ -11,8 +11,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 from .base import Driver
 from techdom.infrastructure.config import SETTINGS
 from techdom.ingestion.browser_fetch import BROWSER_UA, _response_looks_like_pdf
+from .common import looks_like_pdf_bytes
 
-PDF_MAGIC = b"%PDF-"
 PDF_RX = re.compile(r"\.pdf(?:[\?#][^\s\"']*)?$", re.I)
 # Webmegler / Reeltime gateway (PDF uten .pdf i URL)
 PDF_URL_HINTS = re.compile(
@@ -47,7 +47,7 @@ MIN_BYTES = 200_000  # moderat terskel; partners-prospekter kan variere
 
 
 def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
+    return looks_like_pdf_bytes(b)
 
 
 def _min_pages(b: bytes, n: int = MIN_PAGES) -> bool:
@@ -89,7 +89,7 @@ def _url_is_candidate(u: str, ctype: str = "") -> bool:
 
 
 def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     if not b or len(b) < MIN_BYTES or not _min_pages(b, MIN_PAGES):
         return False

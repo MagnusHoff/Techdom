@@ -5,15 +5,12 @@ import time
 import re
 import io
 import requests
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List
 from bs4 import BeautifulSoup, Tag
-from urllib.parse import urlparse, urljoin
 
 from .base import Driver
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 # Kilder hvor prospekt/vedlegg ofte ligger
 ALLOW_PDF_HOST_HINTS = (
@@ -70,56 +67,28 @@ MIN_PAGES = 6
 MIN_BYTES = 200_000  # moderat terskel
 
 
-def _as_str(v: object) -> str:
-    """Trygg konvertering av BS4-attributtverdi til str."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
-def _looks_like_pdf(b: Optional[bytes]) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
-def _abs(base_url: str, href: str | None) -> str | None:
-    if not href:
-        return None
-    try:
-        return urljoin(base_url, href)
-    except Exception:
-        return None
-
-
-def _mk_headers(referer: str) -> Dict[str, str]:
-    pr = urlparse(referer)
-    origin = f"{pr.scheme}://{pr.netloc}" if pr.scheme and pr.netloc else ""
-    h = dict(BROWSER_HEADERS)
-    h.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-        }
-    )
-    if origin:
-        h["Origin"] = origin
-    return h
-
-
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    return sess.get(
-        url, headers=_mk_headers(referer), timeout=timeout, allow_redirects=True
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        allow_redirects=True,
     )
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    return sess.head(
-        url, headers=_mk_headers(referer), timeout=timeout, allow_redirects=True
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
 
 
@@ -157,10 +126,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
                 continue
             txt = a.get_text(" ", strip=True) or ""
             raw = a.get("href") or a.get("data-href") or a.get("download") or ""
-            href = _as_str(raw).strip()
+            href = as_str(raw).strip()
             if not href:
                 continue
-            absu = _abs(base_url, href)
+            absu = abs_url(base_url, href)
             if not absu:
                 continue
             if _allowed(txt, absu):
@@ -173,10 +142,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
             txt = el.get_text(" ", strip=True) or ""
             for attr in ("data-href", "data-file", "data-url", "data-download"):
                 raw = el.get(attr) or ""
-                href = _as_str(raw).strip()
+                href = as_str(raw).strip()
                 if not href:
                     continue
-                absu = _abs(base_url, href)
+                absu = abs_url(base_url, href)
                 if absu and _allowed(txt, absu):
                     urls.append(absu)
 
@@ -239,14 +208,14 @@ def _first_pages_text(b: bytes, n: int = 3) -> str:
 
 
 def _looks_like_tr_pdf(b: bytes) -> bool:
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     txt = _first_pages_text(b, 3)
     return any(w in txt for w in TR_CUES)
 
 
 def _looks_like_prospect_pdf(b: bytes, url: str | None) -> bool:
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     if not b or len(b) < MIN_BYTES:
         return False
@@ -342,7 +311,7 @@ class ProaktivDriver(Driver):
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     ct2 = (rr.headers.get("Content-Type") or "").lower()
                     maybe_pdf = rr.ok and (
-                        ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                        ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                     )
                     dbg["driver_meta"][f"get_{attempt}_{target}"] = {
                         "status": rr.status_code,

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, Any, Tuple, List, Optional
-from urllib.parse import urlparse, urljoin
+from typing import Dict, Any, Tuple, List
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -12,8 +12,7 @@ from bs4 import BeautifulSoup, Tag
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 MAX_PDF_BYTES = 120_000_000  # ~114 MB – unngå å laste ned gigastore filer
 
 POSITIVE_SIGNS = (
@@ -37,62 +36,31 @@ NEGATIVE_SIGNS = (
     "meglerpakke",
     "forsikring",
 )
-
-
-def _as_str(v: object) -> str:
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
-def _origin(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _abs(base_url: str, href: str | None) -> Optional[str]:
-    if not href:
-        return None
-    try:
-        return urljoin(base_url, href)
-    except Exception:
-        return None
-
-
 def _head(sess: requests.Session, url: str, referer: str, timeout: int) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _get(sess: requests.Session, url: str, referer: str, timeout: int) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "cross-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _is_candidate(label: str, url: str) -> bool:
@@ -113,7 +81,7 @@ def _gather_candidates(html: str, soup: BeautifulSoup, base_url: str) -> List[st
         if not isinstance(a, Tag):
             continue
         txt = a.get_text(" ", strip=True) or ""
-        href = _abs(base_url, _as_str(a.get("href")))
+        href = abs_url(base_url, as_str(a.get("href")))
         if href and _is_candidate(txt, href):
             urls.append(href)
 
@@ -122,7 +90,7 @@ def _gather_candidates(html: str, soup: BeautifulSoup, base_url: str) -> List[st
             continue
         txt = el.get_text(" ", strip=True) or ""
         for attr in ("data-href", "data-url", "data-file", "data-download"):
-            href = _abs(base_url, _as_str(el.get(attr)))
+            href = abs_url(base_url, as_str(el.get(attr)))
             if href and _is_candidate(txt, href):
                 urls.append(href)
 
@@ -204,7 +172,7 @@ class AskDriver(Driver):
                     "final_url": str(rr.url),
                     "bytes": len(rr.content or b""),
                 }
-                if rr.ok and _looks_like_pdf(rr.content):
+                if rr.ok and looks_like_pdf_bytes(rr.content):
                     dbg["step"] = "ok_direct"
                     return rr.content, str(rr.url), dbg
             except Exception as exc:
@@ -280,7 +248,7 @@ class AskDriver(Driver):
                         "final_url": str(rr.url),
                         "bytes": len(rr.content or b""),
                     }
-                    if rr.ok and _looks_like_pdf(rr.content):
+                    if rr.ok and looks_like_pdf_bytes(rr.content):
                         dbg["step"] = "ok_direct"
                         return rr.content, str(rr.url), dbg
                     if attempt < max_tries and rr.status_code in (

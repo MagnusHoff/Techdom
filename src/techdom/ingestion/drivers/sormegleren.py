@@ -9,8 +9,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 from .base import Driver
 from techdom.infrastructure.config import SETTINGS
 from ..browser_fetch import BROWSER_UA
+from .common import looks_like_pdf_bytes
 
-PDF_MAGIC = b"%PDF-"
 
 # --- kun prospekt/samle-PDF ---
 
@@ -43,7 +43,7 @@ MIN_BYTES = 200_000
 
 
 def _looks_like_pdf(b: Optional[bytes]) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
+    return looks_like_pdf_bytes(b)
 
 
 def _pdf_pages(b: bytes) -> int:
@@ -70,7 +70,7 @@ def _first_pages_text(b: bytes, first: int = 3) -> str:
 
 
 def _is_prospect_pdf(b: bytes, url: Optional[str] = None) -> bool:
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     if len(b) < MIN_BYTES:
         return False

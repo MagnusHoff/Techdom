@@ -4,16 +4,14 @@ from __future__ import annotations
 import re
 import time
 from typing import Dict, Any, Tuple, List, Optional, Mapping
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
 
 from .base import Driver
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 # --- kun salgsoppgave/prospekt ---
 ALLOW_RX = re.compile(r"(salgsoppgav|prospekt|utskriftsvennlig|komplett)", re.I)
@@ -26,10 +24,6 @@ BLOCK_RX = re.compile(
 
 MIN_BYTES = 300_000
 MIN_PAGES = 4
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
 def _pdf_pages(b: bytes | None) -> int:
@@ -46,23 +40,9 @@ def _pdf_pages(b: bytes | None) -> int:
 
 
 def _pdf_quality_ok(b: bytes | None) -> bool:
-    if not b or not _looks_like_pdf(b) or len(b) < MIN_BYTES:
+    if not b or not looks_like_pdf_bytes(b) or len(b) < MIN_BYTES:
         return False
     return _pdf_pages(b) >= MIN_PAGES
-
-
-def _origin(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _abs(base_url: str, href: str | None) -> Optional[str]:
-    if not href:
-        return None
-    return urljoin(base_url, href)
 
 
 def _content_filename(headers: Mapping[str, str] | None) -> str:
@@ -88,43 +68,32 @@ def _is_salgsoppgave(
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-
-
-# ---- trygge extractor-hjelpere for BeautifulSoup ----
-def _as_str(v: object) -> str:
-    """Gjør BS4-attributtverdi om til str på en trygg måte."""
-    if isinstance(v, str):
-        return v
-    # BeautifulSoup kan returnere liste av verdier for noen attributter
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
 
 
 def _gather_salgsoppgave_candidates(
@@ -148,10 +117,10 @@ def _gather_salgsoppgave_candidates(
             or el.get("data-file")
             or ""
         )
-        href = _as_str(href_raw).strip()
+        href = as_str(href_raw).strip()
         if not href:
             continue
-        u = _abs(base_url, href)
+        u = abs_url(base_url, href)
         if not u:
             continue
         # Strengt: KUN hvis label/URL peker mot salgsoppgave/prospekt – og ikke har blokkord

@@ -12,8 +12,8 @@ from PyPDF2 import PdfReader
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
+from .common import looks_like_pdf_bytes
 
-PDF_MAGIC = b"%PDF-"
 MIN_BYTES = 500_000  # Heimdal-prospekter kan være moderat store
 MIN_PAGES = 4
 _G_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -31,13 +31,13 @@ DEBUG_HTML = DEBUG_DIR / "heimdal_last.html"
 
 
 def _looks_like_pdf(b: bytes | None) -> bool:
-    if not b or not isinstance(b, (bytes, bytearray)) or not b.startswith(PDF_MAGIC):
+    if not looks_like_pdf_bytes(b):
         return False
     try:
         n_pages = len(PdfReader(io.BytesIO(b)).pages)
     except Exception:
         return False
-    return (len(b) >= MIN_BYTES) and (n_pages >= MIN_PAGES)
+    return (len(b or b"" ) >= MIN_BYTES) and (n_pages >= MIN_PAGES)
 
 
 def _trim_headers(h: Dict[str, str] | None) -> Dict[str, str]:

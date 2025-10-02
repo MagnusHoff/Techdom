@@ -5,19 +5,18 @@ import io
 import re
 import time
 from typing import Dict, Any, Tuple, List, Optional
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 import requests
 from PyPDF2 import PdfReader
 from bs4 import BeautifulSoup, Tag
 
 from .base import Driver
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 REQ_TIMEOUT: int = int(getattr(SETTINGS, "REQ_TIMEOUT", 25))
 
-PDF_MAGIC = b"%PDF-"
 _WTS_HOST = "epaper.webtopsolutions.com"
 _MIN_GOOD_BYTES = 2_000_000  # 2 MB – ekte salgsoppgaver er normalt > 2–3 MB
 _MIN_GOOD_PAGES = 8  # krever minst 8 sider
@@ -52,15 +51,6 @@ BLOCK_CUES = (
 )
 
 
-def _as_str(v: Any) -> str:
-    """Normaliser BeautifulSoup _AttributeValue (str | list[str] | None) til str."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
 def _page_count(b: bytes) -> int:
     try:
         return len(PdfReader(io.BytesIO(b)).pages)
@@ -68,51 +58,35 @@ def _page_count(b: bytes) -> int:
         return 0
 
 
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
-def _origin(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
-
-
-def _abs(base_url: str, href: str | None) -> Optional[str]:
-    return urljoin(base_url, href) if href else None
 
 
 def _is_salgsoppgave(label: str, url: str) -> bool:
@@ -131,10 +105,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
         if not isinstance(a, Tag):
             continue
         label = (a.get_text(" ", strip=True) or "").strip()
-        href = _as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
+        href = as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
         if not href:
             continue
-        absu = _abs(base_url, href)
+        absu = abs_url(base_url, href)
         if not absu:
             continue
         if not absu.lower().endswith(".pdf"):
@@ -148,10 +122,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
             continue
         label = (el.get_text(" ", strip=True) or "").strip()
         for attr in ("data-href", "data-url", "data-file", "data-download"):
-            href = _as_str(el.get(attr)).strip()
+            href = as_str(el.get(attr)).strip()
             if not href:
                 continue
-            absu = _abs(base_url, href)
+            absu = abs_url(base_url, href)
             if not absu:
                 continue
             if not absu.lower().endswith(".pdf"):
@@ -247,7 +221,7 @@ def _bytes_ok(resp: requests.Response) -> bool:
         pass
 
     # Må være PDF + stor nok + mange nok sider
-    if (_looks_like_pdf(b) or "application/pdf" in ct) and size >= _MIN_GOOD_BYTES:
+    if (looks_like_pdf_bytes(b) or "application/pdf" in ct) and size >= _MIN_GOOD_BYTES:
         return _page_count(b) >= _MIN_GOOD_PAGES
     return False
 

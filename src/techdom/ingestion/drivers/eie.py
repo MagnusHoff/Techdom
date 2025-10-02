@@ -5,19 +5,13 @@ import re, time
 from typing import Any, Dict, List, Tuple, Optional
 import requests
 from bs4 import BeautifulSoup, Tag
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from .base import Driver
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 REQ_TIMEOUT: int = int(getattr(SETTINGS, "REQ_TIMEOUT", 25))
-
-PDF_MAGIC = b"%PDF-"
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
 # Eie pleier å servere salgsoppgave via Eiendomssentralen-CDN
@@ -45,56 +39,35 @@ BLOCK_URL_PARTS = (
 )  # gated flows etc. (beholdt, men ikke /digital/)
 
 
-def _origin(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _abs(base: str, href: str | None) -> Optional[str]:
-    return urljoin(base, href) if href else None
-
-
-def _as_str(v: Any) -> str:
-    """Normalize BeautifulSoup _AttributeValue (str | list[str] | None) to str."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    h = dict(BROWSER_HEADERS)
-    h.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=h, timeout=timeout, allow_redirects=True)
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    h = dict(BROWSER_HEADERS)
-    h.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=h, timeout=timeout, allow_redirects=True)
 
 
 # -------- kandidatinnsamling (kun Salgsoppgave/Prospekt) ------------------------
@@ -133,7 +106,7 @@ def _gather_salgsoppgave_candidates(
     def add(href: str | None, label: str):
         if not href:
             return
-        u = _abs(base_url, href)
+        u = abs_url(base_url, href)
         if not u:
             return
         # ta bare .pdf-lenker
@@ -146,17 +119,17 @@ def _gather_salgsoppgave_candidates(
     for a in soup.find_all("a"):
         if not isinstance(a, Tag):
             continue
-        label = _as_str(a.get_text(" ", strip=True) or "").strip()
-        href = _as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
+        label = as_str(a.get_text(" ", strip=True) or "").strip()
+        href = as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
         add(href, label)
 
     # knapper/div/span
     for el in soup.find_all(["button", "div", "span"]):
         if not isinstance(el, Tag):
             continue
-        label = _as_str(el.get_text(" ", strip=True) or "").strip()
+        label = as_str(el.get_text(" ", strip=True) or "").strip()
         for attr in ("data-href", "data-url", "data-file", "data-download"):
-            raw = _as_str(el.get(attr)).strip()
+            raw = as_str(el.get(attr)).strip()
             if raw:
                 add(raw, label)
 
@@ -248,7 +221,7 @@ class EieDriver(Driver):
                             ct2 = (rr.headers.get("Content-Type") or "").lower()
                             ok = rr.ok and (
                                 ("application/pdf" in ct2)
-                                or _looks_like_pdf(rr.content)
+                                or looks_like_pdf_bytes(rr.content)
                             )
                             dbg["driver_meta"][f"get_{attempt}_{final}"] = {
                                 "status": rr.status_code,
@@ -289,7 +262,7 @@ class EieDriver(Driver):
                     elapsed = int((time.monotonic() - t0) * 1000)
                     ct2 = (rr.headers.get("Content-Type") or "").lower()
                     ok = rr.ok and (
-                        ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                        ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                     )
                     dbg["driver_meta"][f"get_{attempt}_{url}"] = {
                         "status": rr.status_code,

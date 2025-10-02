@@ -1,10 +1,16 @@
-"""Utility helpers used by ingestion.fetch."""
+"""Utility helpers used by ingestion.fetch and driver modules."""
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, Optional
 from urllib.parse import urljoin, urlparse, parse_qs, urlunparse
+
+import requests
+
+from techdom.ingestion.http_headers import BROWSER_HEADERS
+
+PDF_MAGIC = b"%PDF-"
 
 
 def attr_to_str(val: Any) -> str | None:
@@ -62,11 +68,73 @@ def sha256_file(path: Path) -> str | None:
         return None
 
 
+def looks_like_pdf(data: bytes | bytearray | None) -> bool:
+    return isinstance(data, (bytes, bytearray)) and data.startswith(PDF_MAGIC)
+
+
+def origin_from_url(url: str | None) -> str:
+    if not url:
+        return ""
+    try:
+        p = urlparse(url)
+        return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else ""
+    except Exception:
+        return ""
+
+
+def _pdf_headers(
+    referer: str | None,
+    url: str | None,
+    extra: Optional[Mapping[str, str]] = None,
+) -> dict[str, str]:
+    headers = dict(BROWSER_HEADERS)
+    headers["Accept"] = "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8"
+    if referer:
+        headers["Referer"] = referer
+        origin = origin_from_url(referer) or origin_from_url(url)
+        if origin:
+            headers["Origin"] = origin
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def pdf_get(
+    sess: requests.Session,
+    url: str,
+    referer: str,
+    timeout: int,
+    *,
+    extra_headers: Optional[Mapping[str, str]] = None,
+    allow_redirects: bool = True,
+) -> requests.Response:
+    headers = _pdf_headers(referer, url, extra_headers)
+    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=allow_redirects)
+
+
+def pdf_head(
+    sess: requests.Session,
+    url: str,
+    referer: str,
+    timeout: int,
+    *,
+    extra_headers: Optional[Mapping[str, str]] = None,
+    allow_redirects: bool = True,
+) -> requests.Response:
+    headers = _pdf_headers(referer, url, extra_headers)
+    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=allow_redirects)
+
+
 __all__ = [
+    "PDF_MAGIC",
     "attr_to_str",
     "absolute_url",
     "clean_url",
     "normalize",
     "sha256_bytes",
     "sha256_file",
+    "looks_like_pdf",
+    "origin_from_url",
+    "pdf_get",
+    "pdf_head",
 ]

@@ -4,25 +4,13 @@ from __future__ import annotations
 import re
 import time
 from typing import Dict, Any, Tuple, List, Optional, Mapping
-from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
 from .base import Driver  # arver fra base
-
-PDF_MAGIC = b"%PDF-"
-
-
-def _as_str(v: Any) -> str:
-    """Trygt konverter BeautifulSoup-attributt (kan være liste) til str."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 
 # --- policy: KUN salgsoppgave/prospekt ---
@@ -53,22 +41,6 @@ NEG_WORDS = (
 )
 
 
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
-def _origin(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
-def _abs(base: str, href: str | None) -> str | None:
-    if not href:
-        return None
-    return urljoin(base, href)
 
 
 def _content_disposition_filename(headers: Mapping[str, str] | None) -> str:
@@ -99,32 +71,32 @@ def _is_salgsoppgave_only(
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": _origin(referer) or _origin(url),
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[tuple[str, str]]:
@@ -139,10 +111,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[tuple[str
         if not isinstance(a, Tag):
             continue
         label = (a.get_text(" ", strip=True) or "").strip()
-        href = _as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
+        href = as_str(a.get("href") or a.get("data-href") or a.get("download")).strip()
         if not href:
             continue
-        u = _abs(base_url, href)
+        u = abs_url(base_url, href)
         if not u:
             continue
         blob = f"{label.lower()} {u.lower()}"
@@ -157,10 +129,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[tuple[str
             continue
         label = (el.get_text(" ", strip=True) or "").strip()
         for attr in ("data-href", "data-url", "data-file", "data-download"):
-            raw = _as_str(el.get(attr)).strip()
+            raw = as_str(el.get(attr)).strip()
             if not raw:
                 continue
-            u = _abs(base_url, raw)
+            u = abs_url(base_url, raw)
             if not u:
                 continue
             blob = f"{label.lower()} {u.lower()}"
@@ -279,7 +251,7 @@ class BoaDriver(Driver):
                         elapsed_ms = int((time.monotonic() - t0) * 1000)
                         ct2 = (rr.headers.get("Content-Type") or "").lower()
                         ok_pdf = rr.ok and (
-                            ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                            ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                         )
 
                         dbg["driver_meta"][f"get_{attempt}_{final}"] = {
@@ -326,7 +298,7 @@ class BoaDriver(Driver):
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     ct2 = (rr.headers.get("Content-Type") or "").lower()
                     ok_pdf = rr.ok and (
-                        ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                        ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                     )
                     dbg["driver_meta"][f"fallback_get_{attempt}_{url}"] = {
                         "status": rr.status_code,

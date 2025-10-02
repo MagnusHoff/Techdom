@@ -9,11 +9,9 @@ from PyPDF2 import PdfReader
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
 
 from .base import Driver
-from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
 from techdom.ingestion.browser_fetch import BROWSER_UA, _response_looks_like_pdf
-
-PDF_MAGIC = b"%PDF-"
+from .common import looks_like_pdf_bytes
 
 # Godartede (prospekt) signaler vi ser etter i URL/label
 POSITIVE_HINTS = re.compile(
@@ -49,10 +47,6 @@ MIN_PAGES = 6  # rene prospekter er normalt > ~6 sider
 MIN_BYTES = 250_000  # vær konservativ men unngå bittesmå kvitteringer
 
 
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
-
-
 def _pdf_pages(b: bytes | None) -> int:
     if not b:
         return 0
@@ -83,7 +77,7 @@ def _is_prospect_pdf(b: bytes | None, url: Optional[str]) -> bool:
     Kun salgsoppgave/prospekt: må se 'pdf'-magick, nok sider/størrelse,
     og verken URL eller innhold skal inneholde TR/negative hint.
     """
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     if not b or len(b) < MIN_BYTES or _pdf_pages(b) < MIN_PAGES:
         return False

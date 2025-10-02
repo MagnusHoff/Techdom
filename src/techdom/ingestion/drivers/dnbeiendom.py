@@ -12,11 +12,11 @@ from urllib.parse import urlparse
 
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
+from .common import looks_like_pdf_bytes
 from techdom.infrastructure.config import SETTINGS
 
 REQ_TIMEOUT: int = int(getattr(SETTINGS, "REQ_TIMEOUT", 25))
 
-PDF_MAGIC = b"%PDF-"
 UUID_RX = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
 )
@@ -47,10 +47,6 @@ NEG_WORDS = (
     "terms",
     "cookies",
 )
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
 def _json_from_next_data(soup: BeautifulSoup) -> dict | None:
@@ -211,7 +207,7 @@ class DnbEiendomDriver(Driver):
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 ct = (rr.headers.get("Content-Type") or "").lower()
                 ok_pdf = rr.ok and (
-                    ("application/pdf" in ct) or _looks_like_pdf(rr.content)
+                    ("application/pdf" in ct) or looks_like_pdf_bytes(rr.content)
                 )
 
                 dbg["driver_meta"][f"direct_try_{attempt}"] = {
@@ -263,7 +259,7 @@ class DnbEiendomDriver(Driver):
                     elapsed_ms = int((time.monotonic() - t0) * 1000)
                     ct = (rr.headers.get("Content-Type") or "").lower()
                     if rr.ok and (
-                        ("application/pdf" in ct) or _looks_like_pdf(rr.content)
+                        ("application/pdf" in ct) or looks_like_pdf_bytes(rr.content)
                     ):
                         if _is_salgsoppgave_only(str(rr.url), rr.headers):
                             dbg["step"] = "ok_redirect"
@@ -285,7 +281,7 @@ class DnbEiendomDriver(Driver):
                 if resp.content and (
                     ("application/pdf" in ct)
                     or ("octet-stream" in ct)
-                    or _looks_like_pdf(resp.content)
+                    or looks_like_pdf_bytes(resp.content)
                 ):
                     if _is_salgsoppgave_only(api, resp.headers):
                         dbg["step"] = "ok_post_pdf"
@@ -312,7 +308,7 @@ class DnbEiendomDriver(Driver):
                                 ct2 = (rr.headers.get("Content-Type") or "").lower()
                                 if rr.ok and (
                                     ("application/pdf" in ct2)
-                                    or _looks_like_pdf(rr.content)
+                                    or looks_like_pdf_bytes(rr.content)
                                 ):
                                     if _is_salgsoppgave_only(str(rr.url), rr.headers):
                                         dbg["step"] = "ok_post_json_url"
@@ -347,7 +343,7 @@ class DnbEiendomDriver(Driver):
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 ct2 = (rr.headers.get("Content-Type") or "").lower()
                 if rr.ok and (
-                    ("application/pdf" in ct2) or _looks_like_pdf(rr.content)
+                    ("application/pdf" in ct2) or looks_like_pdf_bytes(rr.content)
                 ):
                     if _is_salgsoppgave_only(str(rr.url), rr.headers):
                         dbg["step"] = "ok_post_body_url"

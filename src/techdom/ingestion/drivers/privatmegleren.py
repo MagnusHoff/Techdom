@@ -9,13 +9,12 @@ import uuid
 import requests
 from typing import Optional, Dict, Any, Tuple, List
 from bs4 import BeautifulSoup, Tag
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse
 
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
-
-PDF_MAGIC = b"%PDF-"
+from .common import abs_url, as_str, looks_like_pdf_bytes, request_pdf
 
 # Kjente “dårlige” PDF-er som ikke er salgsoppgave
 PM_BAD_PDFS = {
@@ -41,25 +40,12 @@ MIN_PAGES = 6
 MIN_BYTES = 200_000  # moderat terskel
 
 
-def _as_str(v: object) -> str:
-    """Trygg konvertering av BS4-attributtverdi til str."""
-    if isinstance(v, str):
-        return v
-    if isinstance(v, (list, tuple)) and v and isinstance(v[0], str):
-        return v[0]
-    return ""
-
-
 def _is_blacklisted_pdf(url: str) -> bool:
     try:
         u = (url or "").split("#")[0]
         return u in PM_BAD_PDFS or u.lower().endswith("/docs/klikk.pdf")
     except Exception:
         return False
-
-
-def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
 
 
 # --- NEXT.js helpers (uendret der det gir mening) ---
@@ -139,51 +125,35 @@ def _try_buildid_fetch(
 
 
 # --- HTTP helpers ---
-def _abs(base_url: str, href: str | None) -> str | None:
-    if not href:
-        return None
-    return urljoin(base_url, href)
-
-
-def _origin_of(u: str) -> str:
-    try:
-        p = urlparse(u)
-        return f"{p.scheme}://{p.netloc}"
-    except Exception:
-        return ""
-
-
 def _get(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    origin = _origin_of(referer) or _origin_of(url)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": origin,
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-site",
-        }
+    extra = {
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-site",
+    }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        extra_headers=extra,
+        allow_redirects=True,
     )
-    return sess.get(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 def _head(
     sess: requests.Session, url: str, referer: str, timeout: int
 ) -> requests.Response:
-    headers = dict(BROWSER_HEADERS)
-    origin = _origin_of(referer) or _origin_of(url)
-    headers.update(
-        {
-            "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
-            "Referer": referer,
-            "Origin": origin,
-        }
+    return request_pdf(
+        sess,
+        url,
+        referer,
+        timeout,
+        method="head",
+        allow_redirects=True,
     )
-    return sess.head(url, headers=headers, timeout=timeout, allow_redirects=True)
 
 
 # --- Kandidatinnsamling: KUN prospekt/salgsoppgave ---
@@ -207,10 +177,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
                 continue
             txt = a.get_text(" ", strip=True) or ""
             raw = a.get("href") or a.get("data-href") or a.get("download") or ""
-            href = _as_str(raw).strip()
+            href = as_str(raw).strip()
             if not href:
                 continue
-            u = _abs(base_url, href)
+            u = abs_url(base_url, href)
             if not u:
                 continue
             if _allowed_candidate(txt, u):
@@ -224,10 +194,10 @@ def _gather_pdf_candidates(soup: BeautifulSoup, base_url: str) -> List[str]:
             txt = el.get_text(" ", strip=True) or ""
             for attr in ("data-href", "data-file", "data-url", "data-download"):
                 raw = el.get(attr) or ""
-                href = _as_str(raw).strip()
+                href = as_str(raw).strip()
                 if not href:
                     continue
-                u = _abs(base_url, href)
+                u = abs_url(base_url, href)
                 if u and _allowed_candidate(txt, u):
                     urls.append(u)
 
@@ -301,7 +271,7 @@ def _first_pages_text(b: bytes, max_pages: int = 3) -> str:
 def _is_prospect_pdf(
     b: bytes | None, url: Optional[str], allow_tr_terms: bool = False
 ) -> bool:
-    if not _looks_like_pdf(b):
+    if not looks_like_pdf_bytes(b):
         return False
     if not b or len(b) < MIN_BYTES:
         return False

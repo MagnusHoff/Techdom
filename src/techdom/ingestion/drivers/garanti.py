@@ -11,11 +11,11 @@ from PyPDF2 import PdfReader
 from .base import Driver
 from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.infrastructure.config import SETTINGS
+from .common import looks_like_pdf_bytes
 
 # Hvis du har en Playwright-basert helper: fetch_pdf_with_browser(url) -> (bytes|None, final_url|None, debug_dict)
 from techdom.ingestion.browser_fetch import fetch_pdf_with_browser  # type: ignore
 
-PDF_MAGIC = b"%PDF-"
 MIN_REAL_BYTES = 2_000_000  # ~2 MB – reelle salgsoppgaver er normalt > 2–3 MB
 MIN_REAL_PAGES = 8
 
@@ -60,7 +60,7 @@ NEG_PATTERNS = (
 
 
 def _looks_like_pdf(b: bytes | None) -> bool:
-    return isinstance(b, (bytes, bytearray)) and b.startswith(PDF_MAGIC)
+    return looks_like_pdf_bytes(b)
 
 
 def _pdf_ok(b: bytes | None) -> bool:
