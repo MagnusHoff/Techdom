@@ -2,50 +2,35 @@ services:
   - type: web
     name: techdom-api
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: apps/api/Dockerfile
     numInstances: 1
     region: frankfurt
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
       - key: TECHDOM_CRON_TOKEN
         sync: false
   - type: worker
     name: techdom-worker
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: services/worker/Dockerfile
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
   - type: web
     name: techdom-cron
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: services/cron/Dockerfile
     numInstances: 1
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
       - key: TECHDOM_CRON_TOKEN
         sync: false
       - key: PORT
         value: "8000"
       - key: UVICORN_LOG_LEVEL
         value: info
-databases:
-  - name: techdom-redis
-    type: redis
-    plan: starter
-    region: frankfurt
-    ipAllowList: []

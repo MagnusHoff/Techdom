@@ -8,11 +8,12 @@ import time
 from typing import Optional
 
 from services import runtime
-from techdom.services.prospect_jobs import ProspectJob, ProspectJobService
-from techdom.services.prospect_pipeline import ProspectAnalysisPipeline
 
 _bootstrap = runtime.ensure_bootstrap()
 runtime.load_environment()
+
+from techdom.services.prospect_jobs import ProspectJob, ProspectJobService
+from techdom.services.prospect_pipeline import ProspectAnalysisPipeline
 
 LOGGER = logging.getLogger(__name__)
 
