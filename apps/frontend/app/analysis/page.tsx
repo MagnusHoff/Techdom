@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, Suspense, useMemo, useState } from "react";
 
 import { runAnalysis } from "@/lib/api";
 import type { AnalysisPayload, AnalysisResponse, DecisionUi } from "@/lib/types";
@@ -53,7 +53,7 @@ function keyColorClass(farge?: string): string {
   }
 }
 
-export default function AnalysisPage() {
+function AnalysisPageContent() {
   const params = useSearchParams();
   const listing = params.get("listing") ?? "";
 
@@ -255,6 +255,22 @@ export default function AnalysisPage() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+export default function AnalysisPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="analysis-main">
+          <section className="analysis-shell">
+            <p className="lede">Laster analyse …</p>
+          </section>
+        </main>
+      }
+    >
+      <AnalysisPageContent />
+    </Suspense>
   );
 }
 
