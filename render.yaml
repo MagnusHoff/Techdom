@@ -2,7 +2,7 @@ services:
   - type: web
     name: techdom-api
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: apps/api/Dockerfile
     numInstances: 1
     region: frankfurt
@@ -17,7 +17,7 @@ services:
   - type: worker
     name: techdom-worker
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: services/worker/Dockerfile
     envVars:
       - key: REDIS_URL
@@ -28,7 +28,7 @@ services:
   - type: web
     name: techdom-cron
     env: docker
-    plan: free
+    plan: starter
     dockerfilePath: services/cron/Dockerfile
     numInstances: 1
     envVars:
