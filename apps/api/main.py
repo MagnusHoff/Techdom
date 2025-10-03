@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from apps.api import runtime
@@ -20,6 +21,25 @@ from techdom.services.prospect_jobs import ProspectJobService
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
+
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("API_CORS_ORIGINS")
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
+        "http://localhost:3000",
+        "https://techdom-frontend.onrender.com",
+    ]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _model_dump(model: Optional[Any]) -> Optional[Dict[str, Any]]:
