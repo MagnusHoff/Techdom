@@ -9,12 +9,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from services import runtime
-from techdom.processing.rates import get_interest_estimate
-from techdom.processing.rent.data_access import load_bucket_table
-from techdom.services.prospect_jobs import ProspectJobService
 
 _bootstrap = runtime.ensure_bootstrap()
 runtime.load_environment()
+
+from techdom.processing.rates import get_interest_estimate
+from techdom.processing.rent.data_access import load_bucket_table
+from techdom.services.prospect_jobs import ProspectJobService
 
 LOGGER = logging.getLogger(__name__)
 CRON_TOKEN = os.getenv("TECHDOM_CRON_TOKEN")

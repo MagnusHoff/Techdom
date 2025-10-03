@@ -7,15 +7,16 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from apps.api import runtime
+
+_bootstrap = runtime.ensure_bootstrap()
+runtime.load_environment()
+
 from techdom.domain.analysis_service import (
     AnalysisDecisionContext,
     compute_analysis,
     normalise_params,
 )
 from techdom.services.prospect_jobs import ProspectJobService
-
-_bootstrap = runtime.ensure_bootstrap()
-runtime.load_environment()
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
