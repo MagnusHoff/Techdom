@@ -8,10 +8,7 @@ services:
     region: frankfurt
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
       - key: TECHDOM_CRON_TOKEN
         sync: false
   - type: worker
@@ -21,10 +18,7 @@ services:
     dockerfilePath: services/worker/Dockerfile
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
   - type: web
     name: techdom-cron
     env: docker
@@ -33,19 +27,10 @@ services:
     numInstances: 1
     envVars:
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: techdom-redis
-          property: connectionString
+        sync: false
       - key: TECHDOM_CRON_TOKEN
         sync: false
       - key: PORT
         value: "8000"
       - key: UVICORN_LOG_LEVEL
         value: info
-databases:
-  - name: techdom-redis
-    engine: redis
-    plan: starter
-    region: frankfurt
-    ipAllowList: []
