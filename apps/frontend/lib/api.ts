@@ -23,10 +23,7 @@ export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisRes
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  if (!BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
-  }
-  const res = await fetch(`${BASE_URL}/status/${jobId}`, {
+  const res = await fetch(`/api/status/${jobId}`, {
     cache: "no-store",
   });
   return handleResponse<JobStatus>(res);
@@ -43,10 +40,7 @@ export async function fetchStats(): Promise<StatsResponse> {
 }
 
 export async function startAnalysisJob(finnkode: string): Promise<AnalyzeJobResponse> {
-  if (!BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
-  }
-  const res = await fetch(`${BASE_URL}/analyze`, {
+  const res = await fetch(`/api/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ finnkode }),
