@@ -332,6 +332,8 @@ function AnalysisPageContent() {
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
     };
 
+  const jobCompleted = Boolean(result);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAnalyzing(true);
@@ -893,7 +895,7 @@ function ListingPreviewCard({
         )}
       </div>
       {imageUrl ? <span className="sr-only">{srStatus}</span> : null}
-          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={Boolean(result)} />
+          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={jobCompleted} />
     </aside>
   );
 }
