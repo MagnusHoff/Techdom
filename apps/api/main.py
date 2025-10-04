@@ -30,6 +30,7 @@ def _cors_origins() -> list[str]:
         return [origin.strip() for origin in raw.split(",") if origin.strip()]
     return [
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
         "https://techdom-frontend.onrender.com",
     ]
 
@@ -41,14 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def _model_dump(model: Optional[Any]) -> Optional[Dict[str, Any]]:
-    if model is None:
-        return None
-    if hasattr(model, "model_dump"):
-        return model.model_dump()
-    return model.dict()
 
 
 class AnalysisReq(BaseModel):
@@ -156,6 +149,3 @@ def pdf_link(finnkode: str):
 def stats() -> StatsResp:
     total = get_total_count()
     return StatsResp(total_analyses=total)
-
-
-__all__ = ["app"]

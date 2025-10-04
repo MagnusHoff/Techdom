@@ -1,6 +1,10 @@
-import { AnalyzeJobResponse, AnalysisPayload, AnalysisResponse, JobStatus, StatsResponse } from "./types";
+import type { AnalyzeJobResponse, AnalysisPayload, AnalysisResponse, JobStatus, StatsResponse } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+  const url = typeof input === "string" && input.startsWith("http") ? input : `${base}${input}`;
+  return fetch(url, init);
+}
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -11,10 +15,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisResponse> {
-  if (!BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
-  }
-  const res = await fetch(`${BASE_URL}/analysis`, {
+  const res = await apiFetch("/analysis", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -23,24 +24,21 @@ export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisRes
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  const res = await fetch(`/api/status/${jobId}`, {
+  const res = await apiFetch(`/status/${jobId}`, {
     cache: "no-store",
   });
   return handleResponse<JobStatus>(res);
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
-  if (!BASE_URL) {
-    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
-  }
-  const res = await fetch(`${BASE_URL}/stats`, {
+  const res = await apiFetch("/stats", {
     cache: "no-store",
   });
   return handleResponse<StatsResponse>(res);
 }
 
 export async function startAnalysisJob(finnkode: string): Promise<AnalyzeJobResponse> {
-  const res = await fetch(`/api/analyze`, {
+  const res = await apiFetch("/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ finnkode }),
