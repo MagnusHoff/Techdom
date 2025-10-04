@@ -599,15 +599,13 @@ function AnalysisPageContent() {
           listingAddress={previewAddress}
           loading={previewLoading}
           error={previewError}
-          jobStatus={jobStatus}
-          jobError={jobError}
-          jobStarting={jobStarting}
         />
 
         <section className="analysis-form-card">
           <div className="form-card-header">
             <ResourceLinkGroup pdfUrl={resourcePdfUrl} listingUrl={resourceListingUrl} />
           </div>
+          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={jobCompleted} />
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
               <FormField
@@ -758,9 +756,6 @@ interface ListingPreviewCardProps {
   imageUrl: string | null;
   loading: boolean;
   error: string | null;
-  jobStatus: JobStatus | null;
-  jobError: string | null;
-  jobStarting: boolean;
 }
 
 interface JobStatusCardProps {
@@ -840,9 +835,6 @@ function ListingPreviewCard({
   imageUrl,
   loading,
   error,
-  jobStatus,
-  jobError,
-  jobStarting,
 }: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
   const heading = (() => {
@@ -895,7 +887,6 @@ function ListingPreviewCard({
         )}
       </div>
       {imageUrl ? <span className="sr-only">{srStatus}</span> : null}
-          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={jobCompleted} />
     </aside>
   );
 }

@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { useEffect, useState } from "react";
 
 interface SiteHeaderProps {
   showAction?: boolean;
-  actionHref?: string;
+  actionHref?: Route;
   actionLabel?: string;
 }
 
