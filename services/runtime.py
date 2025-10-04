@@ -26,7 +26,7 @@ def load_environment() -> None:
         from dotenv import load_dotenv  # type: ignore
     except Exception:  # pragma: no cover - optional dependency
         return
-    load_dotenv()
+    load_dotenv(_project_root() / ".env")
 
 
 def prepare_workdir(root: Path) -> None:

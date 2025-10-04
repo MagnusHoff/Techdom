@@ -29,9 +29,6 @@ export interface AnalysisPayload {
   maint_pct: string;
   vacancy_pct: string;
   other_costs: string;
-  tg2_items: string[];
-  tg3_items: string[];
-  tg_data_available?: boolean;
 }
 
 export interface AnalysisResponse {
@@ -44,6 +41,16 @@ export interface AnalysisResponse {
   ai_text: string;
 }
 
+export interface ProspectJobResult {
+  analysis?: AnalysisResponse;
+  listing?: Record<string, unknown> | null;
+  ai_extract?: Record<string, unknown> | null;
+  rent_estimate?: Record<string, unknown> | null;
+  interest_estimate?: Record<string, unknown> | null;
+  pdf_text_excerpt?: unknown;
+  [key: string]: unknown;
+}
+
 export interface JobStatus {
   id: string;
   status: string;
@@ -53,4 +60,18 @@ export interface JobStatus {
   pdf_url?: string | null;
   created_at?: string;
   updated_at?: string;
+  finnkode?: string;
+  result?: ProspectJobResult | null;
+  artifacts?: Record<string, unknown> | null;
+  payload?: Record<string, unknown> | null;
+  error?: string | null;
+}
+
+export interface StatsResponse {
+  total_analyses: number;
+}
+
+export interface AnalyzeJobResponse {
+  job_id: string;
+  status: string;
 }

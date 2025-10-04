@@ -17,6 +17,7 @@ from techdom.domain.analysis_service import (
     compute_analysis,
     normalise_params,
 )
+from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
 
 app = FastAPI(title="Boliganalyse API (MVP)")
@@ -104,6 +105,10 @@ class AnalyzeReq(BaseModel):
     finnkode: str
 
 
+class StatsResp(BaseModel):
+    total_analyses: int
+
+
 @app.post("/analysis", response_model=AnalysisResp)
 def analysis(req: AnalysisReq) -> AnalysisResp:
     params = req.to_params()
@@ -145,6 +150,12 @@ def pdf_link(finnkode: str):
     if not os.path.exists(path):
         raise HTTPException(404, "not ready")
     return {"path": path}
+
+
+@app.get("/stats", response_model=StatsResp)
+def stats() -> StatsResp:
+    total = get_total_count()
+    return StatsResp(total_analyses=total)
 
 
 __all__ = ["app"]

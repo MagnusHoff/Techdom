@@ -25,7 +25,7 @@ def load_environment() -> None:
         from dotenv import load_dotenv  # type: ignore
     except Exception:  # pragma: no cover
         return
-    load_dotenv()
+    load_dotenv(_project_root() / ".env")
 
 
 __all__ = ["ensure_bootstrap", "load_environment"]

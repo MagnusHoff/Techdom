@@ -39,6 +39,16 @@ from .link_scoring import (
     gather_candidate_links,
     score_pdf_link_for_prospect,
 )
+
+
+def _gather_candidate_links(*args, **kwargs):
+    """Backward-compatible alias for legacy callers."""
+    return gather_candidate_links(*args, **kwargs)
+
+
+def _extract_pdf_urls_from_html(*args, **kwargs):
+    """Backward-compatible alias for legacy callers."""
+    return extract_pdf_urls_from_html(*args, **kwargs)
 from .prospect_paths import CACHE_DIR, PROSPEKT_DIR, FAIL_DIR, LOCAL_MIRROR
 from .prospect_store import (
     FAILCASE_BUCKET,
@@ -688,7 +698,14 @@ def fetch_prospectus_from_finn(
         if not pdf_url and megler_url:
             soup2, html2 = _new_bs_soup(sess, megler_url, referer=finn_url)
 
-            cand2 = _gather_candidate_links(soup2, megler_url)
+            # Older naming left a stray reference; keep this shim around for safety.
+            cand2 = gather_candidate_links(soup2, megler_url)
+            if not cand2:
+                # some historical callers referenced `_gather_candidate_links`
+                try:
+                    cand2 = _gather_candidate_links(soup2, megler_url)  # type: ignore[name-defined]
+                except NameError:
+                    cand2 = []
             if cand2:
                 pdf_url = _resolve_first_pdf(
                     sess, [(s, u) for (s, u, _t) in cand2], referer=megler_url

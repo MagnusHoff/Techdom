@@ -1,4 +1,4 @@
-import { AnalysisPayload, AnalysisResponse, JobStatus } from "./types";
+import { AnalyzeJobResponse, AnalysisPayload, AnalysisResponse, JobStatus, StatsResponse } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -30,4 +30,26 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
     cache: "no-store",
   });
   return handleResponse<JobStatus>(res);
+}
+
+export async function fetchStats(): Promise<StatsResponse> {
+  if (!BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
+  }
+  const res = await fetch(`${BASE_URL}/stats`, {
+    cache: "no-store",
+  });
+  return handleResponse<StatsResponse>(res);
+}
+
+export async function startAnalysisJob(finnkode: string): Promise<AnalyzeJobResponse> {
+  if (!BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_BASE_URL mangler. Sett den i .env.");
+  }
+  const res = await fetch(`${BASE_URL}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ finnkode }),
+  });
+  return handleResponse<AnalyzeJobResponse>(res);
 }
