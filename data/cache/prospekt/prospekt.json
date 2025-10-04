@@ -1,9 +1,9 @@
 {
   "finnkode": "prospekt",
-  "source_pdf_url": "https://file-proxy.rfcdn.io/file-proxy/public/v1/aktiv/novh/doc/MSAKTV~F62B9D34-E83F-4720-9197-09D811963140~827489874143368~43/Digital~salgsoppgave.PDF?t=1758903650",
-  "saved_at": "2025-10-02T18:18:33.762984Z",
-  "sha256": "3b371037892f6df4e73643137882865c899aab47043eb8f44b2c38ce662107bf",
-  "size": 5693632,
+  "source_pdf_url": "https://dnbeiendom.no/api/v1/properties/bae618af-a3de-4491-2cbb-08ddf67e2ef4/documents/bae618af-a3de-4491-2cbb-08ddf67e2ef4.pdf",
+  "saved_at": "2025-10-04T13:44:42.031163Z",
+  "sha256": "37eeb2221b551bb37995ac5b625d8199a8fe2e33df965224f4468025b90b33ec",
+  "size": 7924373,
   "s3": {
     "bucket": null,
     "key": null,

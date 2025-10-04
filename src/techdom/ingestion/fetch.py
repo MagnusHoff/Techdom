@@ -777,8 +777,10 @@ def fetch_prospectus_from_finn(
                 ],
                 allow_only_if_url_contains=[
                     "prospekt",
+                    "prospect",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "documents",
                     "webmegler",
                     "wngetfile",
                 ],
@@ -809,8 +811,10 @@ def fetch_prospectus_from_finn(
                 ],
                 allow_only_if_url_contains=[
                     "prospekt",
+                    "prospect",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "documents",
                     "webmegler",
                     "wngetfile",
                 ],

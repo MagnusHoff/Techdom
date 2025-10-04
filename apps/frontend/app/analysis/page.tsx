@@ -564,7 +564,12 @@ function AnalysisPageContent() {
         />
 
         <section className="analysis-form-card">
-          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} />
+          <JobStatusCard
+            status={jobStatus}
+            jobError={jobError}
+            starting={jobStarting}
+            listingUrl={listingUrl}
+          />
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
               <FormField
@@ -721,9 +726,10 @@ interface JobStatusCardProps {
   status: JobStatus | null;
   jobError: string | null;
   starting: boolean;
+  listingUrl: string;
 }
 
-function JobStatusCard({ status, jobError, starting }: JobStatusCardProps) {
+function JobStatusCard({ status, jobError, starting, listingUrl }: JobStatusCardProps) {
   if (!status && !starting && !jobError) {
     return null;
   }
@@ -734,12 +740,28 @@ function JobStatusCard({ status, jobError, starting }: JobStatusCardProps) {
   const effectiveMessage = stringOrNull(status?.message) ?? (stateKey === "failed" ? stringOrNull(status?.error) : null) ?? jobError;
   const pdfUrl = stringOrNull(status?.pdf_url);
   const finnkode = stringOrNull(status?.finnkode);
+  const listingHref = (() => {
+    const candidate = stringOrNull(listingUrl);
+    if (!candidate) {
+      return null;
+    }
+    try {
+      return new URL(candidate).toString();
+    } catch {
+      return null;
+    }
+  })();
   const showProgress = progress !== null && stateKey !== "done" && stateKey !== "failed";
 
   return (
     <div className="job-card">
-      <p className="job-label">Automatisk innhenting</p>
-      <p className="job-value">{label}</p>
+      <div className="job-card-top">
+        <div>
+          <p className="job-label">Automatisk innhenting</p>
+          <p className="job-value">{label}</p>
+        </div>
+        <ResourceLinkGroup pdfUrl={pdfUrl} listingUrl={listingHref} />
+      </div>
       {finnkode ? <p className="job-message">FINN-kode: {finnkode}</p> : null}
       {showProgress ? <p className="progress">Fremdrift: {progress}%</p> : null}
       {effectiveMessage ? <p className="job-message">{effectiveMessage}</p> : null}
@@ -748,6 +770,39 @@ function JobStatusCard({ status, jobError, starting }: JobStatusCardProps) {
           Prospekt: <a href={pdfUrl} target="_blank" rel="noreferrer">last ned</a>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+interface ResourceLinkGroupProps {
+  pdfUrl: string | null;
+  listingUrl: string | null;
+}
+
+function ResourceLinkGroup({ pdfUrl, listingUrl }: ResourceLinkGroupProps) {
+  return (
+    <div className="resource-links" aria-label="Ressurser">
+      {pdfUrl ? (
+        <a className="resource-chip" href={pdfUrl} target="_blank" rel="noreferrer">
+          Salgsoppgave
+        </a>
+      ) : (
+        <span className="resource-chip disabled" aria-disabled="true">
+          Salgsoppgave
+        </span>
+      )}
+      {listingUrl ? (
+        <a className="resource-chip" href={listingUrl} target="_blank" rel="noreferrer">
+          Annonse
+        </a>
+      ) : (
+        <span className="resource-chip disabled" aria-disabled="true">
+          Annonse
+        </span>
+      )}
+      <span className="resource-chip disabled" aria-disabled="true">
+        Alle detaljer
+      </span>
     </div>
   );
 }
