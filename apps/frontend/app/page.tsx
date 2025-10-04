@@ -41,7 +41,8 @@ export default function LandingPage() {
 
     setError(null);
     const encoded = encodeURIComponent(trimmed);
-    router.push(`/analysis?listing=${encoded}`);
+    const runToken = Date.now().toString(36);
+    router.push(`/analysis?listing=${encoded}&run=${runToken}`);
   };
 
   return (

@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
@@ -264,8 +264,10 @@ function keyColorClass(farge?: string): string {
 }
 
 function AnalysisPageContent() {
+  const router = useRouter();
   const params = useSearchParams();
   const listing = params.get("listing") ?? "";
+  const runToken = params.get("run") ?? "";
 
   const listingUrl = normaliseListingUrl(listing);
 
@@ -285,6 +287,16 @@ function AnalysisPageContent() {
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    if (runToken) {
+      return;
+    }
+    const token = Date.now().toString(36);
+    const paramsCopy = new URLSearchParams(Array.from(params.entries()));
+    paramsCopy.set("run", token);
+    router.replace(`?${paramsCopy.toString()}`);
+  }, [runToken, params, router]);
+
   const decisionUi: DecisionUi | null = result?.decision_ui ?? null;
 
   const scoreValue = useMemo(() => {
@@ -302,6 +314,18 @@ function AnalysisPageContent() {
   const jobInProgress = jobStarting || (jobStatus ? !["done", "failed"].includes((jobStatus.status ?? "").toLowerCase()) : false);
   const submitDisabled = analyzing || jobInProgress;
   const submitLabel = jobInProgress ? "Henter data..." : analyzing ? "Beregner..." : "Kjør analyse";
+  const resourcePdfUrl = stringOrNull(jobStatus?.pdf_url);
+  const resourceListingUrl = useMemo(() => {
+    const candidate = stringOrNull(listingUrl);
+    if (!candidate) {
+      return null;
+    }
+    try {
+      return new URL(candidate).toString();
+    } catch {
+      return null;
+    }
+  }, [listingUrl]);
 
   const handleChange = (field: keyof AnalysisPayload) =>
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -330,6 +354,9 @@ function AnalysisPageContent() {
 
   useEffect(() => {
     const trimmed = listing.trim();
+    if (!runToken) {
+      return;
+    }
     if (!trimmed) {
       jobListingRef.current = null;
       jobAppliedRef.current = null;
@@ -340,12 +367,13 @@ function AnalysisPageContent() {
     }
 
     const normalised = normaliseListingUrl(trimmed);
-    if (jobListingRef.current === normalised) {
+    const key = normalised ? `${normalised}::${runToken}` : runToken ? `::${runToken}` : normalised;
+    if (jobListingRef.current === key) {
       return;
     }
 
     const finnkode = extractFinnkode(trimmed);
-    jobListingRef.current = normalised;
+    jobListingRef.current = key;
     jobAppliedRef.current = null;
 
     setForm({ ...DEFAULT_FORM });
@@ -373,6 +401,10 @@ function AnalysisPageContent() {
         if (cancelled) {
           return;
         }
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug("job created", job.job_id, job.status);
+        }
         setJobId(job.job_id);
         setJobStatus({ id: job.job_id, status: job.status ?? "queued", finnkode });
       } catch (err) {
@@ -389,7 +421,7 @@ function AnalysisPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [listing]);
+  }, [listing, runToken]);
 
   useEffect(() => {
     if (!listing) {
@@ -454,10 +486,14 @@ function AnalysisPageContent() {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
-      try {
+     try {
         const next = await getJobStatus(jobId);
         if (cancelled) {
           return;
+        }
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug("job status", jobId, next.status);
         }
         setJobStatus(next);
         if (next.status === "failed") {
@@ -561,15 +597,15 @@ function AnalysisPageContent() {
           listingAddress={previewAddress}
           loading={previewLoading}
           error={previewError}
+          jobStatus={jobStatus}
+          jobError={jobError}
+          jobStarting={jobStarting}
         />
 
         <section className="analysis-form-card">
-          <JobStatusCard
-            status={jobStatus}
-            jobError={jobError}
-            starting={jobStarting}
-            listingUrl={listingUrl}
-          />
+          <div className="form-card-header">
+            <ResourceLinkGroup pdfUrl={resourcePdfUrl} listingUrl={resourceListingUrl} />
+          </div>
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
               <FormField
@@ -720,48 +756,36 @@ interface ListingPreviewCardProps {
   imageUrl: string | null;
   loading: boolean;
   error: string | null;
+  jobStatus: JobStatus | null;
+  jobError: string | null;
+  jobStarting: boolean;
 }
 
 interface JobStatusCardProps {
   status: JobStatus | null;
   jobError: string | null;
   starting: boolean;
-  listingUrl: string;
+  completed: boolean;
 }
 
-function JobStatusCard({ status, jobError, starting, listingUrl }: JobStatusCardProps) {
-  if (!status && !starting && !jobError) {
+function JobStatusCard({ status, jobError, starting, completed }: JobStatusCardProps) {
+  if (!status && !starting && !jobError && !completed) {
     return null;
   }
 
-  const stateKey = status?.status ?? (jobError ? "failed" : starting ? "queued" : undefined);
+  const derivedState = completed ? "done" : undefined;
+  const stateKey = status?.status ?? derivedState ?? (jobError ? "failed" : starting ? "queued" : undefined);
   const label = jobStatusLabel(stateKey);
   const progress = typeof status?.progress === "number" ? Math.round(status.progress) : null;
   const effectiveMessage = stringOrNull(status?.message) ?? (stateKey === "failed" ? stringOrNull(status?.error) : null) ?? jobError;
   const pdfUrl = stringOrNull(status?.pdf_url);
   const finnkode = stringOrNull(status?.finnkode);
-  const listingHref = (() => {
-    const candidate = stringOrNull(listingUrl);
-    if (!candidate) {
-      return null;
-    }
-    try {
-      return new URL(candidate).toString();
-    } catch {
-      return null;
-    }
-  })();
   const showProgress = progress !== null && stateKey !== "done" && stateKey !== "failed";
 
   return (
     <div className="job-card">
-      <div className="job-card-top">
-        <div>
-          <p className="job-label">Automatisk innhenting</p>
-          <p className="job-value">{label}</p>
-        </div>
-        <ResourceLinkGroup pdfUrl={pdfUrl} listingUrl={listingHref} />
-      </div>
+      <p className="job-label">Automatisk innhenting</p>
+      <p className="job-value">{label}</p>
       {finnkode ? <p className="job-message">FINN-kode: {finnkode}</p> : null}
       {showProgress ? <p className="progress">Fremdrift: {progress}%</p> : null}
       {effectiveMessage ? <p className="job-message">{effectiveMessage}</p> : null}
@@ -807,7 +831,17 @@ function ResourceLinkGroup({ pdfUrl, listingUrl }: ResourceLinkGroupProps) {
   );
 }
 
-function ListingPreviewCard({ listingUrl, listingTitle, listingAddress, imageUrl, loading, error }: ListingPreviewCardProps) {
+function ListingPreviewCard({
+  listingUrl,
+  listingTitle,
+  listingAddress,
+  imageUrl,
+  loading,
+  error,
+  jobStatus,
+  jobError,
+  jobStarting,
+}: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
   const heading = (() => {
     const trimmedAddress = listingAddress?.trim();
@@ -859,6 +893,7 @@ function ListingPreviewCard({ listingUrl, listingTitle, listingAddress, imageUrl
         )}
       </div>
       {imageUrl ? <span className="sr-only">{srStatus}</span> : null}
+          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={Boolean(result)} />
     </aside>
   );
 }

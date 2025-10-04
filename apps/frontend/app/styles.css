@@ -398,6 +398,12 @@ main {
   width: 100%;
 }
 
+.form-card-header {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .analysis-form {
   display: flex;
   flex-direction: column;
@@ -710,18 +716,12 @@ main {
   gap: 0.6rem;
 }
 
-.job-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
 .resource-links {
-  display: inline-flex;
+  display: flex;
   gap: 0.5rem;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .resource-chip {
