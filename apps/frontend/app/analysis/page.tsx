@@ -332,7 +332,7 @@ function AnalysisPageContent() {
       setForm((prev) => ({ ...prev, [field]: event.target.value }));
     };
 
-  const jobCompleted = Boolean(result);
+  const jobCompleted = useMemo(() => Boolean(result), [result]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
