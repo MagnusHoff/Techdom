@@ -1,0 +1,20 @@
+# Global ignores
+.git
+.gitignore
+.env
+.env.*
+__pycache__/
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+
+# Node/Next.js artifacts
+node_modules
+**/node_modules
+apps/frontend/.next
+apps/frontend/out
+apps/frontend/.turbo
+apps/frontend/.cache
+
+# Misc development files
+.DS_Store
