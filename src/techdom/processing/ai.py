@@ -4,9 +4,7 @@ from __future__ import annotations
 import os
 import re
 import json
-from typing import Dict, Any, List, TypedDict, Optional
-
-import streamlit as st
+from typing import Dict, Any, List, TypedDict
 from openai import OpenAI
 
 
@@ -41,15 +39,9 @@ def _local_explain(inputs: Inputs, m: Metrics) -> str:
 
 
 def _get_key() -> str:
-    """Hent OpenAI-nøkkel fra env eller Streamlit secrets – uten å trigge typefeil."""
+    """Hent OpenAI-nøkkel fra miljøvariabler."""
     env_key = os.getenv("OPENAI_API_KEY") or ""
-    if env_key:
-        return env_key
-    try:
-        # st.secrets kan mangle lokalt; bruk try/except for å blidgjøre Pylance.
-        return st.secrets.get("OPENAI_API_KEY", "")  # type: ignore[no-any-return]
-    except Exception:
-        return ""
+    return env_key
 
 
 def ai_explain(inputs: Inputs, m: Metrics) -> str:
