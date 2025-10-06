@@ -9,7 +9,7 @@
 | Infrastruktur | `src/techdom/infrastructure/` | Konfig, telleverk og andre tverrgående komponenter. |
 | Tjenester | `src/techdom/services/` | Applikasjonsnære tjenester (jobbkøer, orchestrering). |
 | CLI | `src/techdom/cli/` | Gjenbrukbare kommandolinjeverktøy. Kjør eksempelvis `PYTHONPATH=src python -m techdom.cli.build_rent_csv`. |
-| Apper | `apps/` | Frontend (`streamlit`) og API (`api`) som bruker tjenestene over. |
+| Apper | `apps/` | Next.js-frontend (`frontend`) og API (`api`) som bruker tjenestene over. |
 | Data | `data/` | Rådata, bearbeidede datasett, cache og debug-filer. |
 | Dokumentasjon | `docs/` | Arkitektur, migrasjoner og referanseinformasjon. |
 

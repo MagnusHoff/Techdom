@@ -10,9 +10,8 @@
   - `services/`: applikasjonsnære tjenester (jobbkøer m.m.).
   - `cli/`, `web/`: plassholdere for kommandolinje-verktøy og delte webkomponenter.
 - `apps/`
-  - `streamlit/`: Streamlit-app med `main.py`, visninger under `views/`, og hjelpetjenester under `services/`.
+  - `frontend/`: Next.js-app som bygger den offentlige web-frontend-en.
   - `api/`: FastAPI-app i `main.py` – gjenbruker tjenester fra `techdom.services`.
-- `app.py`: tynn wrapper som lar `streamlit run app.py` starte `apps.streamlit.main`.
 - `api/app.py`: wrapper for `uvicorn` som re-eksporterer `apps.api.main`.
 - `scripts/`: legacy-inngangspunkt som bare videresender til `techdom.cli.*`. Nye verktøy legges direkte under `src/techdom/cli/`.
 - `data/`: delt inn i `raw/`, `processed/`, `cache/`, `static/` og `debug/`.
