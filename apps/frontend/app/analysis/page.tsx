@@ -28,6 +28,7 @@ const DEFAULT_FORM: AnalysisPayload = {
 };
 
 const JOB_POLL_INTERVAL = 2_500;
+const STRONG_RED_HEX = "#c1121f";
 
 function extractFinnkode(raw: string): string | null {
   const trimmed = raw.trim();
@@ -108,6 +109,80 @@ function formatInteger(value: unknown): string {
   return String(Math.round(parsed));
 }
 
+function formatCurrencyLabel(value: unknown): string | null {
+  const formatted = formatCurrency(value);
+  return formatted ? `kr ${formatted}` : null;
+}
+
+function formatSquareMetres(value: unknown): string | null {
+  const parsed = parseNumber(value);
+  if (parsed === null) {
+    return null;
+  }
+  return `${formatNumberWithSpaces(parsed)} m²`;
+}
+
+function formatIntegerLabel(value: unknown): string | null {
+  const formatted = formatInteger(value);
+  return formatted ? formatted : null;
+}
+
+function formatBooleanLabel(value: unknown): string | null {
+  if (typeof value === "boolean") {
+    return value ? "Ja" : "Nei";
+  }
+  return null;
+}
+
+function formatPlainLabel(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return formatNumberWithSpaces(value);
+  }
+  return formatBooleanLabel(value);
+}
+
+function getNestedValue(source: Record<string, unknown>, path: string): unknown {
+  if (!path.includes(".")) {
+    return source[path];
+  }
+  return path.split(".").reduce<unknown>((acc, segment) => {
+    if (!acc || typeof acc !== "object") {
+      return undefined;
+    }
+    return (acc as Record<string, unknown>)[segment];
+  }, source);
+}
+
+function formatEnergyLabel(value: unknown): string | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const label = formatPlainLabel(record.label) ?? formatPlainLabel(record.grade) ?? formatPlainLabel(record.symbol);
+    const color = formatPlainLabel(record.color) ?? formatPlainLabel(record.level);
+    if (label && color) {
+      if (label.toLowerCase().includes(color.toLowerCase())) {
+        return label;
+      }
+      return `${label} ${color}`.trim();
+    }
+    return label ?? color;
+  }
+  return null;
+}
+
 function buildFormFromParams(params: Record<string, unknown> | null | undefined): AnalysisPayload {
   return {
     price: params ? formatCurrency(params.price) || DEFAULT_FORM.price : DEFAULT_FORM.price,
@@ -162,29 +237,216 @@ function extractListingInfo(job: JobStatus | null): Record<string, unknown> | nu
   return null;
 }
 
-function pickListingImage(listing: Record<string, unknown>): string | null {
-  const direct = stringOrNull(listing.image ?? listing.image_url ?? listing.cover_image ?? listing.main_image ?? listing.primary_image);
-  if (direct) {
-    return direct;
-  }
-  const images = listing.images;
-  if (Array.isArray(images)) {
-    for (const entry of images) {
-      if (typeof entry === "string") {
-        const candidate = stringOrNull(entry);
-        if (candidate) {
-          return candidate;
+function collectListingImages(listing: Record<string, unknown>): string[] {
+  const results: string[] = [];
+  const seen = new Set<string>();
+  const visited = new WeakSet<object>();
+
+  const pushCandidate = (value: string | null) => {
+    if (value && !seen.has(value)) {
+      seen.add(value);
+      results.push(value);
+    }
+  };
+
+  const explore = (value: unknown): void => {
+    if (value == null) {
+      return;
+    }
+    if (typeof value === "string") {
+      pushCandidate(stringOrNull(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        explore(entry);
+      }
+      return;
+    }
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (visited.has(record)) {
+        return;
+      }
+      visited.add(record);
+      const candidateKeys = [
+        "url",
+        "href",
+        "src",
+        "large",
+        "image",
+        "imageUrl",
+        "image_url",
+        "full",
+        "fullsize",
+        "original",
+        "value",
+        "default",
+      ];
+      for (const key of candidateKeys) {
+        if (key in record) {
+          explore(record[key]);
         }
-      } else if (entry && typeof entry === "object") {
-        const record = entry as Record<string, unknown>;
-        const candidate = stringOrNull(record.url ?? record.large ?? record.src);
-        if (candidate) {
-          return candidate;
+      }
+      const nestedKeys = ["sizes", "variants", "items", "images", "media"] as const;
+      for (const key of nestedKeys) {
+        if (key in record) {
+          explore(record[key]);
         }
       }
     }
+  };
+
+  const directKeys = [
+    "image",
+    "image_url",
+    "imageUrl",
+    "cover_image",
+    "coverImage",
+    "main_image",
+    "mainImage",
+    "primary_image",
+    "primaryImage",
+    "hero_image",
+    "heroImage",
+    "thumbnail",
+    "thumbnailUrl",
+    "thumbnail_url",
+  ] as const;
+
+  for (const key of directKeys) {
+    if (key in listing) {
+      explore(listing[key]);
+    }
   }
-  return null;
+
+  const collectionPaths = [
+    "images",
+    "gallery",
+    "gallery.images",
+    "gallery.items",
+    "photos",
+    "photos.items",
+    "photos.list",
+    "media",
+    "media.images",
+    "media.gallery",
+    "media.items",
+    "media.resources",
+    "media.photos",
+    "photo_gallery",
+    "photoGallery",
+    "carousel",
+    "carousel.images",
+    "carousel.items",
+  ];
+
+  for (const path of collectionPaths) {
+    const value = getNestedValue(listing, path);
+    if (value !== undefined) {
+      explore(value);
+    }
+  }
+
+  return dedupeImageList(results);
+}
+
+function dedupeImageList(values: Iterable<string>): string[] {
+  const map = new Map<string, { url: string; score: number; order: number }>();
+  let order = 0;
+
+  const toCandidate = (value: string): { key: string; url: string; score: number } | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const withProtocol = trimmed.startsWith("//") ? `https://${trimmed}` : trimmed;
+    let url: URL;
+    try {
+      url = new URL(withProtocol);
+    } catch {
+      return null;
+    }
+    url.search = "";
+    url.hash = "";
+
+    const rawSegments = url.pathname.split("/").filter(Boolean);
+    if (rawSegments.length === 0) {
+      return null;
+    }
+
+    const segments: string[] = [];
+    let maxWidth = 0;
+
+    for (let i = 0; i < rawSegments.length; i += 1) {
+      const segment = decodeURIComponent(rawSegments[i]);
+      const lower = segment.toLowerCase();
+
+      if (lower === "dynamic") {
+        if (i + 1 < rawSegments.length) {
+          const widthCandidate = decodeURIComponent(rawSegments[i + 1]);
+          const widthMatch = widthCandidate.match(/(\d{2,4})/);
+          if (widthMatch) {
+            const width = Number.parseInt(widthMatch[1], 10);
+            if (Number.isFinite(width) && width > maxWidth) {
+              maxWidth = width;
+            }
+          }
+          if (/^\d+[xw]?$/i.test(widthCandidate) || /^w\d+$/i.test(widthCandidate)) {
+            i += 1;
+            continue;
+          }
+        }
+        continue;
+      }
+
+      if (/^(?:\d+(?:x|w)?|w\d+|h\d+|c\d+|s\d+|q\d+|m\d+|xs|sm|md|lg)$/i.test(lower)) {
+        continue;
+      }
+
+      if (IMAGE_IDENTITY_SEGMENT_IGNORE.has(lower)) {
+        continue;
+      }
+
+      segments.push(segment);
+    }
+
+    if (segments.length === 0) {
+      return null;
+    }
+
+    const imagesIndex = segments.findIndex((segment) => segment.toLowerCase() === "images");
+    const identitySegments = imagesIndex >= 0 ? segments.slice(imagesIndex) : segments.slice(Math.max(segments.length - 3, 0));
+    if (identitySegments.length === 0) {
+      return null;
+    }
+
+    const key = [url.hostname.toLowerCase(), ...identitySegments.map((segment) => segment.toLowerCase())].join("/");
+    return { key, url: url.toString(), score: maxWidth };
+  };
+
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const candidate = toCandidate(value);
+    if (!candidate) {
+      continue;
+    }
+    const existing = map.get(candidate.key);
+    if (!existing) {
+      map.set(candidate.key, { url: candidate.url, score: candidate.score, order: order++ });
+      continue;
+    }
+    if (candidate.score > existing.score) {
+      existing.url = candidate.url;
+      existing.score = candidate.score;
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.url);
 }
 
 function pickListingTitle(listing: Record<string, unknown>): string | null {
@@ -294,11 +556,8 @@ function scoreFillColor(percent: number | null): string {
   if (percent === null) {
     return "rgba(148, 163, 184, 0.35)";
   }
-  if (percent < 16) {
-    return "#7f1d1d"; // mørkerød
-  }
   if (percent < 32) {
-    return "#dc2626"; // rødt
+    return STRONG_RED_HEX;
   }
   if (percent < 50) {
     return "#f97316"; // oransje
@@ -325,7 +584,8 @@ function AnalysisPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [prospectus, setProspectus] = useState<ProspectusExtract | null>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [previewImageIndex, setPreviewImageIndex] = useState(0);
   const [previewTitle, setPreviewTitle] = useState<string | null>(null);
   const [previewAddress, setPreviewAddress] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -334,9 +594,18 @@ function AnalysisPageContent() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [jobStarting, setJobStarting] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
   const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
+
+  const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
+
+  useEffect(() => {
+    if (!listingDetails) {
+      setDetailsOpen(false);
+    }
+  }, [listingDetails]);
 
   useEffect(() => {
     if (runToken) {
@@ -426,6 +695,27 @@ function AnalysisPageContent() {
 
   const jobCompleted = useMemo(() => Boolean(result), [result]);
 
+  const previewImageTotal = previewImages.length;
+  const safePreviewIndex = previewImageTotal > 0 ? Math.max(0, Math.min(previewImageIndex, previewImageTotal - 1)) : 0;
+  const handlePreviewPrevious = () => {
+    if (previewImageTotal < 2) {
+      return;
+    }
+    setPreviewImageIndex((prev) => {
+      const next = prev - 1;
+      return next < 0 ? previewImageTotal - 1 : next;
+    });
+  };
+  const handlePreviewNext = () => {
+    if (previewImageTotal < 2) {
+      return;
+    }
+    setPreviewImageIndex((prev) => {
+      const next = prev + 1;
+      return next >= previewImageTotal ? 0 : next;
+    });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAnalyzing(true);
@@ -489,7 +779,8 @@ function AnalysisPageContent() {
     setJobId(null);
     setJobError(null);
     setProspectus(null);
-    setPreviewImage(null);
+    setPreviewImages([]);
+    setPreviewImageIndex(0);
     setPreviewTitle(null);
     setPreviewAddress(null);
     setPreviewError(null);
@@ -535,7 +826,8 @@ function AnalysisPageContent() {
 
   useEffect(() => {
     if (!listing) {
-      setPreviewImage(null);
+      setPreviewImages([]);
+      setPreviewImageIndex(0);
       setPreviewTitle(null);
       setPreviewError(null);
       setPreviewAddress(null);
@@ -554,27 +846,43 @@ function AnalysisPageContent() {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
-        return res.json() as Promise<{ image?: string | null; title?: string | null; address?: string | null }>;
+        return res.json() as Promise<{
+          image?: string | null;
+          images?: Array<string | null | undefined> | null;
+          title?: string | null;
+          address?: string | null;
+        }>;
       })
       .then((data) => {
         if (cancelled) {
           return;
         }
         const imageValue = typeof data?.image === "string" && data.image ? data.image : null;
+        const imageList = Array.isArray(data?.images)
+          ? data.images
+              .map((value) => (typeof value === "string" ? value.trim() : ""))
+              .filter((value) => Boolean(value))
+          : [];
+        const uniqueImages = imageList.length > 0 ? dedupeImageList(imageList) : [];
         const titleValue = typeof data?.title === "string" && data.title ? data.title : null;
         const addressValue = typeof data?.address === "string" && data.address ? data.address : null;
-        setPreviewImage(imageValue);
+        const mergedImages = uniqueImages.length > 0 ? uniqueImages : imageValue ? dedupeImageList([imageValue]) : [];
+        setPreviewImages(mergedImages);
+        setPreviewImageIndex(0);
         setPreviewTitle(titleValue);
         setPreviewAddress(addressValue);
-        if (!imageValue) {
-          setPreviewError("Fant ikke bilde for denne annonsen.");
+        if (mergedImages.length === 0) {
+          setPreviewError("Fant ikke bilder for denne annonsen.");
+        } else {
+          setPreviewError(null);
         }
       })
       .catch(() => {
         if (cancelled) {
           return;
         }
-        setPreviewImage(null);
+        setPreviewImages([]);
+        setPreviewImageIndex(0);
         setPreviewTitle(null);
         setPreviewAddress(null);
         setPreviewError("Kunne ikke hente bilde fra annonsen.");
@@ -648,7 +956,7 @@ function AnalysisPageContent() {
     }
 
     const statusKey = (jobStatus.status ?? "").toLowerCase();
-    const listingInfo = extractListingInfo(jobStatus);
+    const listingInfo = listingDetails;
 
     if (statusKey === "done" && jobAppliedRef.current !== jobId) {
       const paramsFromJob = extractAnalysisParams(jobStatus);
@@ -661,9 +969,26 @@ function AnalysisPageContent() {
       const prospectusExtract = extractProspectusFromJob(jobStatus);
       setProspectus(prospectusExtract);
       if (listingInfo) {
-        const imageValue = pickListingImage(listingInfo);
-        if (imageValue) {
-          setPreviewImage(imageValue);
+        const images = collectListingImages(listingInfo);
+        if (images.length > 0) {
+          setPreviewImages((prev) => {
+            const combined = dedupeImageList([...prev, ...images]);
+            setPreviewImageIndex((currentIndex) => {
+              if (combined.length === 0) {
+                return 0;
+              }
+              const safePrevIndex = prev.length > 0 ? Math.max(0, Math.min(currentIndex, prev.length - 1)) : 0;
+              const currentImage = prev[safePrevIndex];
+              if (currentImage) {
+                const preservedIndex = combined.indexOf(currentImage);
+                if (preservedIndex !== -1) {
+                  return preservedIndex;
+                }
+              }
+              return Math.max(0, Math.min(currentIndex, combined.length - 1));
+            });
+            return combined;
+          });
           setPreviewError(null);
         }
         const addressValue = pickListingAddress(listingInfo);
@@ -698,23 +1023,50 @@ function AnalysisPageContent() {
         if (titleValue) {
           setPreviewTitle(titleValue);
         }
-        const imageValue = pickListingImage(listingInfo);
-        if (imageValue) {
-          setPreviewImage(imageValue);
+        const images = collectListingImages(listingInfo);
+        if (images.length > 0) {
+          setPreviewImages((prev) => {
+            const combined = dedupeImageList([...prev, ...images]);
+            setPreviewImageIndex((currentIndex) => {
+              if (combined.length === 0) {
+                return 0;
+              }
+              const safePrevIndex = prev.length > 0 ? Math.max(0, Math.min(currentIndex, prev.length - 1)) : 0;
+              const currentImage = prev[safePrevIndex];
+              if (currentImage) {
+                const preservedIndex = combined.indexOf(currentImage);
+                if (preservedIndex !== -1) {
+                  return preservedIndex;
+                }
+              }
+              return Math.max(0, Math.min(currentIndex, combined.length - 1));
+            });
+            return combined;
+          });
           setPreviewError(null);
         }
       }
       setPreviewLoading(false);
       jobAppliedRef.current = `${jobId}:failed`;
     }
-  }, [jobStatus, jobId]);
+  }, [jobStatus, jobId, listingDetails]);
 
   return (
     <>
+      <ListingDetailsModal
+        open={detailsOpen}
+        details={listingDetails}
+        onClose={() => setDetailsOpen(false)}
+        title={previewTitle}
+        address={previewAddress}
+      />
       <section className="analysis-inputs">
         <ListingPreviewCard
           listingUrl={listingUrl}
-          imageUrl={previewImage}
+          imageUrls={previewImages}
+          currentIndex={safePreviewIndex}
+          onNavigatePrevious={handlePreviewPrevious}
+          onNavigateNext={handlePreviewNext}
           listingTitle={previewTitle}
           listingAddress={previewAddress}
           loading={previewLoading}
@@ -735,7 +1087,12 @@ function AnalysisPageContent() {
 
         <section className="analysis-form-card">
           <div className="form-card-header">
-            <ResourceLinkGroup pdfUrl={resourcePdfUrl} listingUrl={resourceListingUrl} />
+            <ResourceLinkGroup
+              pdfUrl={resourcePdfUrl}
+              listingUrl={resourceListingUrl}
+              detailsAvailable={Boolean(listingDetails && Object.keys(listingDetails).length > 0)}
+              onShowDetails={() => setDetailsOpen(true)}
+            />
           </div>
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
@@ -930,7 +1287,13 @@ function AnalysisPageContent() {
                   />
                   <ProspectusCard
                     title="❓ Spørsmål til megler"
-                    items={prospectus.questions ?? []}
+                    items={(prospectus.questions ?? []).map((question) => {
+                      const trimmed = question.trim();
+                      const alreadyQuoted =
+                        (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+                        (trimmed.startsWith("«") && trimmed.endsWith("»"));
+                      return alreadyQuoted ? trimmed : `"${trimmed}"`;
+                    })}
                     empty="Ingen spørsmål generert."
                     className="prospectus-card-span"
                   />
@@ -972,10 +1335,13 @@ export default function AnalysisPage() {
 }
 
 interface ListingPreviewCardProps {
-  listingUrl: string;
+  listingUrl: string | null;
   listingTitle: string | null;
   listingAddress: string | null;
-  imageUrl: string | null;
+  imageUrls: string[];
+  currentIndex: number;
+  onNavigatePrevious: () => void;
+  onNavigateNext: () => void;
   loading: boolean;
   error: string | null;
   statusCard?: ReactNode;
@@ -1042,12 +1408,38 @@ function JobStatusCard({ status, jobError, starting, completed }: JobStatusCardP
   );
 }
 
+type ListingFieldConfig = {
+  label: string;
+  keys: string[];
+  format?: (value: unknown) => string | null;
+};
+
+const LISTING_DETAIL_FIELDS: ListingFieldConfig[] = [
+  { label: "Totalpris", keys: ["total_price", "pricing.total", "pricing.total_price"], format: formatCurrencyLabel },
+  { label: "Prisantydning", keys: ["asking_price", "pricing.asking_price", "price_asking"], format: formatCurrencyLabel },
+  { label: "Omkostninger", keys: ["costs", "pricing.costs", "omkostninger"], format: formatCurrencyLabel },
+  { label: "Felleskostnader", keys: ["hoa_month", "shared_costs_month", "felleskostnader_mnd"], format: formatCurrencyLabel },
+  { label: "Formuesverdi", keys: ["formuesverdi", "tax_value"], format: formatCurrencyLabel },
+  { label: "Boligtype", keys: ["property_type", "housing_type", "type"] },
+  { label: "Eierform", keys: ["ownership_type", "ownership", "ownership_form"] },
+  { label: "Soverom", keys: ["bedrooms", "bedroom_count"], format: formatIntegerLabel },
+  { label: "Rom", keys: ["rooms", "room_count"], format: formatIntegerLabel },
+  { label: "Primærrom", keys: ["primary_room", "primary_room_m2", "prom"], format: formatSquareMetres },
+  { label: "Bruksareal", keys: ["area_m2", "bra_m2", "usable_area", "bra"], format: formatSquareMetres },
+  { label: "Eksternt bruksareal", keys: ["external_bra_m2", "external_area"], format: formatSquareMetres },
+  { label: "Tomt", keys: ["plot_area", "plot_area_m2", "plot_m2"], format: formatSquareMetres },
+  { label: "Byggeår", keys: ["built_year", "construction_year", "year_built"], format: formatIntegerLabel },
+  { label: "Energimerking", keys: ["energy_label", "energy_rating", "energy"], format: formatEnergyLabel },
+];
+
 interface ResourceLinkGroupProps {
   pdfUrl: string | null;
   listingUrl: string | null;
+  detailsAvailable: boolean;
+  onShowDetails: () => void;
 }
 
-function ResourceLinkGroup({ pdfUrl, listingUrl }: ResourceLinkGroupProps) {
+function ResourceLinkGroup({ pdfUrl, listingUrl, detailsAvailable, onShowDetails }: ResourceLinkGroupProps) {
   return (
     <div className="resource-links" aria-label="Ressurser">
       {pdfUrl ? (
@@ -1068,9 +1460,96 @@ function ResourceLinkGroup({ pdfUrl, listingUrl }: ResourceLinkGroupProps) {
           Annonse
         </span>
       )}
-      <span className="resource-chip disabled" aria-disabled="true">
-        Alle detaljer
-      </span>
+      {detailsAvailable ? (
+        <button type="button" className="resource-chip" onClick={onShowDetails}>
+          Alle detaljer
+        </button>
+      ) : (
+        <span className="resource-chip disabled" aria-disabled="true">
+          Alle detaljer
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface ListingDetailsModalProps {
+  open: boolean;
+  details: Record<string, unknown> | null;
+  onClose: () => void;
+  title: string | null;
+  address: string | null;
+}
+
+function ListingDetailsModal({ open, details, onClose, title, address }: ListingDetailsModalProps) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.addEventListener("keydown", handleKeydown);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeydown);
+    };
+  }, [open, onClose]);
+
+  const detailItems = useMemo(() => {
+    if (!open || !details) {
+      return [] as Array<{ label: string; value: string }>;
+    }
+    const record = details as Record<string, unknown>;
+    return LISTING_DETAIL_FIELDS.map((field) => {
+      for (const key of field.keys) {
+        const raw = getNestedValue(record, key);
+        if (raw === undefined || raw === null) {
+          continue;
+        }
+        const formatted = field.format ? field.format(raw) : formatPlainLabel(raw);
+        if (formatted) {
+          return { label: field.label, value: formatted };
+        }
+      }
+      return null;
+    }).filter(Boolean) as Array<{ label: string; value: string }>;
+  }, [details, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  const heading = "Boligdetaljer";
+  const subtitle = address || title;
+
+  return (
+    <div className="listing-details-overlay" role="dialog" aria-modal="true" aria-labelledby="listing-details-title">
+      <div className="listing-details-modal">
+        <button type="button" className="listing-details-close" aria-label="Lukk detaljer" onClick={onClose}>
+          ×
+        </button>
+        <h2 className="listing-details-title" id="listing-details-title">
+          {heading}
+        </h2>
+        {subtitle ? <p className="listing-details-subtitle">{subtitle}</p> : null}
+        {detailItems.length ? (
+          <div className="listing-details-grid">
+            {detailItems.map((item) => (
+              <div key={item.label} className="listing-details-item">
+                <span className="listing-details-item-label">{item.label}</span>
+                <span className="listing-details-item-value">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="listing-details-empty">Detaljer er ikke tilgjengelig for denne annonsen ennå.</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -1079,12 +1558,19 @@ function ListingPreviewCard({
   listingUrl,
   listingTitle,
   listingAddress,
-  imageUrl,
+  imageUrls,
+  currentIndex,
+  onNavigatePrevious,
+  onNavigateNext,
   loading,
   error,
   statusCard,
 }: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
+  const imageCount = Array.isArray(imageUrls) ? imageUrls.length : 0;
+  const hasImages = imageCount > 0;
+  const safeIndex = hasImages ? Math.max(0, Math.min(currentIndex, imageCount - 1)) : 0;
+  const currentImage = hasImages ? imageUrls[safeIndex] : null;
   const heading = (() => {
     const trimmedAddress = listingAddress?.trim();
     if (trimmedAddress) {
@@ -1116,25 +1602,63 @@ function ListingPreviewCard({
     if (!hasListing) {
       return "Ingen FINN-lenke valgt";
     }
-    if (!imageUrl) {
-      return error ?? "Fant ikke bilde for denne annonsen";
+    if (!hasImages) {
+      return error ?? "Fant ikke bilder for denne annonsen";
     }
-    return listingAddress ?? listingTitle ?? "Bilde fra FINN-annonsen";
+    const baseDescription = listingAddress ?? listingTitle ?? "Bilde fra FINN-annonsen";
+    return imageCount > 1
+      ? `Viser bilde ${safeIndex + 1} av ${imageCount} fra FINN-annonsen`
+      : baseDescription;
   })();
+  const altText = (() => {
+    const baseDescription = listingAddress ?? listingTitle ?? "Bilde fra FINN-annonsen";
+    if (!hasImages) {
+      return baseDescription;
+    }
+    return imageCount > 1 ? `${baseDescription} (${safeIndex + 1} av ${imageCount})` : baseDescription;
+  })();
+  const navigationDisabled = imageCount < 2;
 
   return (
     <aside className="listing-preview-card">
       {heading ? <h2 className="preview-heading">{heading}</h2> : null}
       <div className="preview-frame">
-        {imageUrl ? (
-          <img src={imageUrl} alt="Første bilde fra FINN-annonsen" className="listing-image" />
+        {currentImage ? (
+          <>
+            <img src={currentImage} alt={altText} className="listing-image" />
+            {imageCount > 1 ? (
+              <>
+                <button
+                  type="button"
+                  className="preview-nav-button preview-nav-prev"
+                  onClick={onNavigatePrevious}
+                  disabled={navigationDisabled}
+                  aria-label="Forrige bilde"
+                >
+                  <span aria-hidden="true">{"<"}</span>
+                </button>
+                <button
+                  type="button"
+                  className="preview-nav-button preview-nav-next"
+                  onClick={onNavigateNext}
+                  disabled={navigationDisabled}
+                  aria-label="Neste bilde"
+                >
+                  <span aria-hidden="true">{">"}</span>
+                </button>
+                <div className="preview-index" aria-label={`Totalt ${imageCount} bilder`}>
+                  {safeIndex + 1} / {imageCount}
+                </div>
+              </>
+            ) : null}
+          </>
         ) : (
           <div className="listing-placeholder">
             <span>{srStatus}</span>
           </div>
         )}
       </div>
-      {imageUrl ? <span className="sr-only">{srStatus}</span> : null}
+      {currentImage ? <span className="sr-only">{srStatus}</span> : null}
       {statusCard ? <div className="listing-status-card">{statusCard}</div> : null}
     </aside>
   );

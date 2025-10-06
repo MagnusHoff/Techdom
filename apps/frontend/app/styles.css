@@ -3,6 +3,8 @@
   background-color: #040814;
   color: #f8fafc;
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --color-red-strong: #c1121f;
+  --color-red-strong-rgb: 193, 18, 31;
 }
 
 body {
@@ -363,7 +365,7 @@ main {
 
 .error-text {
   margin: -0.5rem 0 0;
-  color: #f87171;
+  color: var(--color-red-strong);
   font-size: 0.88rem;
 }
 
@@ -539,6 +541,69 @@ main {
   object-fit: cover;
 }
 
+.preview-nav-button {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: #e2e8f0;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  backdrop-filter: blur(6px);
+}
+
+.preview-nav-button span {
+  font-size: 1.25rem;
+  line-height: 1;
+  margin-top: -2px;
+}
+
+.preview-nav-button:hover:not(:disabled) {
+  background: rgba(30, 64, 175, 0.68);
+  border-color: rgba(148, 163, 184, 0.55);
+}
+
+.preview-nav-button:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.95);
+  outline-offset: 2px;
+}
+
+.preview-nav-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.preview-nav-prev {
+  left: 14px;
+}
+
+.preview-nav-next {
+  right: 14px;
+}
+
+.preview-index {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  padding: 0.32rem 0.85rem;
+  font-size: 0.86rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: #e2e8f0;
+  backdrop-filter: blur(6px);
+}
+
 .listing-placeholder {
   width: 100%;
   height: 100%;
@@ -649,9 +714,9 @@ main {
 
 .error-banner {
   border-radius: 12px;
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(248, 113, 113, 0.12);
-  color: #fecaca;
+  border: 1px solid rgba(var(--color-red-strong-rgb), 0.38);
+  background: rgba(var(--color-red-strong-rgb), 0.12);
+  color: var(--color-red-strong);
   padding: 0.85rem 1rem;
 }
 
@@ -760,8 +825,8 @@ main {
 }
 
 .prospectus-badge.danger {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fecaca;
+  background: rgba(var(--color-red-strong-rgb), 0.2);
+  color: var(--color-red-strong);
 }
 
 .prospectus-badge.warn {
@@ -924,8 +989,8 @@ main {
 }
 
 .score-chip.red {
-  background: rgba(239, 68, 68, 0.22);
-  color: #fecaca;
+  background: rgba(var(--color-red-strong-rgb), 0.22);
+  color: var(--color-red-strong);
 }
 
 .score-chip.orange {
@@ -990,7 +1055,7 @@ main {
 }
 
 .key-value.red {
-  color: #fca5a5;
+  color: var(--color-red-strong);
 }
 
 .key-value.orange {
@@ -1148,11 +1213,18 @@ main {
   font-size: 0.82rem;
   font-weight: 500;
   transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+  gap: 0.3rem;
 }
 
 .resource-chip:hover {
   border-color: rgba(59, 130, 246, 0.8);
   color: #ebf4ff;
+}
+
+.resource-chip:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.8);
+  outline-offset: 2px;
 }
 
 .resource-chip.disabled {
@@ -1162,6 +1234,7 @@ main {
   pointer-events: none;
   color: inherit;
 }
+
 
 .job-label {
   text-transform: uppercase;
@@ -1231,4 +1304,81 @@ main {
   margin: 0;
   font-size: 0.95rem;
   opacity: 0.76;
+}
+
+.listing-details-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  z-index: 1200;
+}
+
+.listing-details-modal {
+  position: relative;
+  width: min(720px, 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 30px 60px rgba(15, 23, 42, 0.55);
+  padding: 1.8rem;
+  color: #f8fafc;
+}
+
+.listing-details-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.45rem;
+  font-weight: 600;
+}
+
+.listing-details-subtitle {
+  margin: 0 0 1.4rem;
+  opacity: 0.72;
+}
+
+.listing-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1.1rem 1.5rem;
+}
+
+.listing-details-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.listing-details-item-label {
+  font-size: 0.85rem;
+  opacity: 0.65;
+}
+
+.listing-details-item-value {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.listing-details-empty {
+  margin: 1.6rem 0 0;
+  opacity: 0.75;
+}
+
+.listing-details-close {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.9rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.listing-details-close:hover {
+  color: #bfdbfe;
 }
