@@ -24,6 +24,17 @@ app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
 
 
+def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """Return a serialisable dict for Pydantic models or passthrough other values."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump()  # type: ignore[no-any-return]
+    if hasattr(value, "dict"):
+        return value.dict()  # type: ignore[no-any-return]
+    return value  # type: ignore[return-value]
+
+
 def _cors_origins() -> list[str]:
     raw = os.getenv("API_CORS_ORIGINS")
     if raw:
