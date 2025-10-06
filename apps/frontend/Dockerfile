@@ -1,16 +1,20 @@
 # syntax=docker/dockerfile:1
 # Next.js App Router frontend. Build stage compiles the production bundle,
 # runtime stage serves it via `next start`.
+ARG APP_DIR=apps/frontend
+
 FROM node:20-alpine AS deps
+ARG APP_DIR
 WORKDIR /app
 
-COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* ./
+COPY ${APP_DIR}/package.json ${APP_DIR}/package-lock.json* ${APP_DIR}/pnpm-lock.yaml* ${APP_DIR}/yarn.lock* ./
 RUN npm install --frozen-lockfile || npm install
 
 FROM node:20-alpine AS build
+ARG APP_DIR
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY ${APP_DIR}/ ./
 RUN npm run build
 
 FROM node:20-alpine AS runner
