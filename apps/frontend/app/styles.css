@@ -541,6 +541,11 @@ main {
   object-fit: cover;
 }
 
+.listing-image-contain {
+  object-fit: contain;
+  background: rgba(15, 23, 42, 0.92);
+}
+
 .preview-nav-button {
   position: absolute;
   top: 50%;

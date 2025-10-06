@@ -135,11 +135,11 @@ function createImageCollector(): ImageCollectorState {
 
 function extractImageIdentity(url: URL): { key: string; score: number } | null {
   const rawSegments = url.pathname.split("/").filter(Boolean);
-  if (!rawSegments.length) {
+  if (rawSegments.length === 0) {
     return null;
   }
 
-  const segments: string[] = [];
+  const cleanedSegments: string[] = [];
   let maxWidth = 0;
 
   for (let i = 0; i < rawSegments.length; i += 1) {
@@ -164,7 +164,7 @@ function extractImageIdentity(url: URL): { key: string; score: number } | null {
       continue;
     }
 
-    if (/^(?:\d+(?:x|w)?|w\d+|h\d+|c\d+|s\d+|q\d+|m\d+|xs|sm|md|lg)$/i.test(lower)) {
+    if (/^(?:\d{1,4}(?:x|w)?|w\d{1,4}|h\d{1,4}|c\d{1,4}|s\d{1,4}|q\d{1,4}|m\d{1,4}|xs|sm|md|lg)$/i.test(lower)) {
       continue;
     }
 
@@ -172,21 +172,29 @@ function extractImageIdentity(url: URL): { key: string; score: number } | null {
       continue;
     }
 
-    segments.push(segment);
+    cleanedSegments.push(segment);
   }
 
-  if (!segments.length) {
+  if (cleanedSegments.length === 0) {
     return null;
   }
 
-  const imagesIndex = segments.findIndex((segment) => segment.toLowerCase() === "images");
-  const identitySegments = imagesIndex >= 0 ? segments.slice(imagesIndex) : segments.slice(Math.max(segments.length - 3, 0));
-  if (!identitySegments.length) {
-    return null;
-  }
+  const filenameSegment = cleanedSegments[cleanedSegments.length - 1];
+  const siblingSegment = cleanedSegments.length > 1 ? cleanedSegments[cleanedSegments.length - 2] : null;
 
-  const key = [url.hostname.toLowerCase(), ...identitySegments.map((segment) => segment.toLowerCase())].join("/");
-  return { key, score: maxWidth };
+  const filenameLower = filenameSegment.toLowerCase();
+  const dotIndex = filenameLower.lastIndexOf(".");
+  const baseName = dotIndex > 0 ? filenameLower.slice(0, dotIndex) : filenameLower;
+  const trimmedBaseName = baseName.replace(/[-_](?:\d{1,2}|[a-f0-9]{1,4})$/i, "");
+  const identityName = trimmedBaseName || baseName || filenameLower;
+
+  const keySegments = [url.hostname.toLowerCase()];
+  if (siblingSegment) {
+    keySegments.push(siblingSegment.toLowerCase());
+  }
+  keySegments.push(identityName);
+
+  return { key: keySegments.join("/"), score: maxWidth };
 }
 
 function addImageCandidate(state: ImageCollectorState, value: string | null | undefined) {

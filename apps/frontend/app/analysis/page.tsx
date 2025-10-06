@@ -29,6 +29,21 @@ const DEFAULT_FORM: AnalysisPayload = {
 
 const JOB_POLL_INTERVAL = 2_500;
 const STRONG_RED_HEX = "#c1121f";
+const IMAGE_IDENTITY_SEGMENT_IGNORE = new Set([
+  "original",
+  "full",
+  "fullsize",
+  "master",
+  "scaled",
+  "scale",
+  "web",
+  "desktop",
+  "mobile",
+  "widescreen",
+  "optimized",
+  "variant",
+  "quality",
+]);
 
 function extractFinnkode(raw: string): string | null {
   const trimmed = raw.trim();
@@ -375,7 +390,7 @@ function dedupeImageList(values: Iterable<string>): string[] {
       return null;
     }
 
-    const segments: string[] = [];
+    const cleanedSegments: string[] = [];
     let maxWidth = 0;
 
     for (let i = 0; i < rawSegments.length; i += 1) {
@@ -400,7 +415,7 @@ function dedupeImageList(values: Iterable<string>): string[] {
         continue;
       }
 
-      if (/^(?:\d+(?:x|w)?|w\d+|h\d+|c\d+|s\d+|q\d+|m\d+|xs|sm|md|lg)$/i.test(lower)) {
+      if (/^(?:\d{1,4}(?:x|w)?|w\d{1,4}|h\d{1,4}|c\d{1,4}|s\d{1,4}|q\d{1,4}|m\d{1,4}|xs|sm|md|lg)$/i.test(lower)) {
         continue;
       }
 
@@ -408,20 +423,29 @@ function dedupeImageList(values: Iterable<string>): string[] {
         continue;
       }
 
-      segments.push(segment);
+      cleanedSegments.push(segment);
     }
 
-    if (segments.length === 0) {
+    if (cleanedSegments.length === 0) {
       return null;
     }
 
-    const imagesIndex = segments.findIndex((segment) => segment.toLowerCase() === "images");
-    const identitySegments = imagesIndex >= 0 ? segments.slice(imagesIndex) : segments.slice(Math.max(segments.length - 3, 0));
-    if (identitySegments.length === 0) {
-      return null;
-    }
+    const filenameSegment = cleanedSegments[cleanedSegments.length - 1];
+    const siblingSegment = cleanedSegments.length > 1 ? cleanedSegments[cleanedSegments.length - 2] : null;
 
-    const key = [url.hostname.toLowerCase(), ...identitySegments.map((segment) => segment.toLowerCase())].join("/");
+    const filenameLower = filenameSegment.toLowerCase();
+    const dotIndex = filenameLower.lastIndexOf(".");
+    const baseName = dotIndex > 0 ? filenameLower.slice(0, dotIndex) : filenameLower;
+    const trimmedBaseName = baseName.replace(/[-_](?:\d{1,2}|[a-f0-9]{1,4})$/i, "");
+    const identityName = trimmedBaseName || baseName || filenameLower;
+
+    const keySegments = [url.hostname.toLowerCase()];
+    if (siblingSegment) {
+      keySegments.push(siblingSegment.toLowerCase());
+    }
+    keySegments.push(identityName);
+
+    const key = keySegments.join("/");
     return { key, url: url.toString(), score: maxWidth };
   };
 
@@ -973,6 +997,10 @@ function AnalysisPageContent() {
         if (images.length > 0) {
           setPreviewImages((prev) => {
             const combined = dedupeImageList([...prev, ...images]);
+            const unchanged = combined.length === prev.length && combined.every((value, index) => value === prev[index]);
+            if (unchanged) {
+              return prev;
+            }
             setPreviewImageIndex((currentIndex) => {
               if (combined.length === 0) {
                 return 0;
@@ -1027,6 +1055,10 @@ function AnalysisPageContent() {
         if (images.length > 0) {
           setPreviewImages((prev) => {
             const combined = dedupeImageList([...prev, ...images]);
+            const unchanged = combined.length === prev.length && combined.every((value, index) => value === prev[index]);
+            if (unchanged) {
+              return prev;
+            }
             setPreviewImageIndex((currentIndex) => {
               if (combined.length === 0) {
                 return 0;
@@ -1287,13 +1319,9 @@ function AnalysisPageContent() {
                   />
                   <ProspectusCard
                     title="❓ Spørsmål til megler"
-                    items={(prospectus.questions ?? []).map((question) => {
-                      const trimmed = question.trim();
-                      const alreadyQuoted =
-                        (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-                        (trimmed.startsWith("«") && trimmed.endsWith("»"));
-                      return alreadyQuoted ? trimmed : `"${trimmed}"`;
-                    })}
+                    items={(prospectus.questions ?? [])
+                      .map((question) => formatProspectusQuestion(question))
+                      .filter(Boolean)}
                     empty="Ingen spørsmål generert."
                     className="prospectus-card-span"
                   />
@@ -1571,6 +1599,13 @@ function ListingPreviewCard({
   const hasImages = imageCount > 0;
   const safeIndex = hasImages ? Math.max(0, Math.min(currentIndex, imageCount - 1)) : 0;
   const currentImage = hasImages ? imageUrls[safeIndex] : null;
+  const shouldContainImage = useMemo(() => {
+    if (!currentImage) {
+      return false;
+    }
+    const lowered = currentImage.toLowerCase();
+    return /plan|plantegning|floor/.test(lowered);
+  }, [currentImage]);
   const heading = (() => {
     const trimmedAddress = listingAddress?.trim();
     if (trimmedAddress) {
@@ -1625,7 +1660,11 @@ function ListingPreviewCard({
       <div className="preview-frame">
         {currentImage ? (
           <>
-            <img src={currentImage} alt={altText} className="listing-image" />
+            <img
+              src={currentImage}
+              alt={altText}
+              className={shouldContainImage ? "listing-image listing-image-contain" : "listing-image"}
+            />
             {imageCount > 1 ? (
               <>
                 <button
@@ -1734,6 +1773,236 @@ function ProspectusCard({ title, items, empty, badge, className }: ProspectusCar
       )}
     </div>
   );
+}
+
+function formatProspectusQuestion(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const stripped = stripOuterQuotes(trimmed);
+  const cleaned = stripped.replace(/^[•\-\s]+/, "").replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  const base = cleaned.replace(/[?!\.]+$/, "").trim();
+  if (!base) {
+    return "";
+  }
+
+  const lowerBase = base.toLowerCase();
+  const questionWords = /^(kan|har|hva|hvem|hvilke|hvilken|hvilket|hvordan|når|hvor|finnes|er|skal|bør|må|kommer|stemmer|vil|blir|får)\b/;
+  if (questionWords.test(lowerBase)) {
+    const question = ensureQuestionMark(cleaned);
+    return question ? wrapWithQuotes(capitaliseFirst(question)) : "";
+  }
+
+  const [primaryRaw, secondaryRaw] = base.split(/:\s*/, 2);
+  const primary = primaryRaw.trim();
+  const secondary = secondaryRaw?.trim() ?? "";
+  const primaryLower = primary.toLowerCase();
+  const secondaryLower = secondary.toLowerCase();
+  const primaryLcFirst = lowerCaseFirst(primary);
+  const secondaryLcFirst = lowerCaseFirst(secondary);
+
+  const combinedLower = `${primaryLower} ${secondaryLower}`.trim();
+
+  const hasCost = includesAny(combinedLower, [
+    "kostnad",
+    "kostnader",
+    "kostnadsram",
+    "pris",
+    "utgift",
+    "estimert",
+    "anslått",
+    "budsjett",
+    "totalpris",
+  ]);
+  const hasTimeline = includesAny(combinedLower, ["timing", "tidspunkt", "tidshorisont", "planlagt", "planlagte"]);
+  const hasWork = includesAny(combinedLower, ["oppgradering", "rehabilitering", "utskifting", "renovering", "tiltak"]);
+
+  let question: string;
+
+  if (secondary) {
+    if (primaryLower.includes("tilstandsrapport")) {
+      question = buildConditionReportQuestion(secondary);
+    } else if (includesAny(primaryLower, ["dokumentasjon", "fdv", "kvittering"])) {
+      question = `Kan du sende dokumentasjon på ${secondaryLcFirst}`;
+    } else if (hasCost) {
+      question = buildCostQuestion(secondaryLcFirst, primaryLower);
+    } else if (includesAny(primaryLower, ["avvik", "mangel", "mangler"])) {
+      question = `Finnes det ${secondaryLcFirst} relatert til ${primaryLcFirst}`;
+    } else if (hasWork) {
+      question = `Hva er status på ${secondaryLcFirst} knyttet til ${primaryLcFirst}`;
+    } else {
+      question = `Kan du avklare ${secondaryLcFirst} i ${primaryLcFirst}`;
+    }
+  } else {
+    if (includesAny(primaryLower, ["dokumentasjon", "fdv", "kvittering"])) {
+      question = `Kan du sende ${primaryLcFirst}`;
+    } else if (primaryLower.includes("tilstandsrapport")) {
+      question = `Kan du dele detaljer fra ${primaryLcFirst}`;
+    } else if (includesAny(primaryLower, ["alder", "tilstand", "tilstandsgrad", "levetid"])) {
+      question = `Hva er ${primaryLcFirst}`;
+    } else if (includesAny(primaryLower, ["avvik", "mangel", "mangler"])) {
+      question = `Finnes det ${primaryLcFirst}`;
+    } else if (hasCost) {
+      question = buildCostQuestion(primaryLcFirst, primaryLower);
+    } else if (hasTimeline || includesAny(primaryLower, ["planlagt", "planlagte", "planer"]) || hasWork) {
+      question = hasTimeline ? `Hva er tidshorisonten for ${primaryLcFirst}` : `Hva er status på ${primaryLcFirst}`;
+    } else if (includesAny(primaryLower, ["ansvar", "ansvarlig"])) {
+      question = `Hvem har ${primaryLcFirst}`;
+    } else {
+      question = `Kan du avklare ${primaryLcFirst}`;
+    }
+  }
+
+  const finalQuestion = question.trim();
+  if (!finalQuestion) {
+    return "";
+  }
+
+  return wrapWithQuotes(capitaliseFirst(ensureQuestionMark(finalQuestion)));
+}
+
+function lowerCaseFirst(value: string): string {
+  if (!value) {
+    return "";
+  }
+  return value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+function capitaliseFirst(value: string): string {
+  if (!value) {
+    return "";
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function stripOuterQuotes(value: string): string {
+  return value.replace(/^["'“”«»]+/, "").replace(/["'“”«»]+$/, "");
+}
+
+function ensureQuestionMark(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.endsWith("?") ? trimmed : `${trimmed}?`;
+}
+
+function wrapWithQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const alreadyWrapped = (trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("«") && trimmed.endsWith("»"));
+  return alreadyWrapped ? trimmed : `"${trimmed}"`;
+}
+
+function includesAny(value: string, needles: string[]): boolean {
+  if (!value) {
+    return false;
+  }
+  return needles.some((needle) => value.includes(needle));
+}
+
+function buildConditionReportQuestion(secondary: string): string {
+  const trimmed = secondary.trim();
+  if (!trimmed) {
+    return "Kan du utdype funnene fra tilstandsrapporten";
+  }
+
+  const lower = trimmed.toLowerCase();
+  const hasTG3 = lower.includes("tg3");
+  const hasTG2 = lower.includes("tg2");
+  const hasCosts = includesAny(lower, ["kostnad", "kostnader", "kostnadsram", "pris", "utgift", "estimert", "anslått"]);
+  const hasMeasures = includesAny(lower, ["tiltak", "utbedring", "reparasjon", "rehabilitering", "oppgradering"]);
+
+  if (hasTG3 || hasTG2) {
+    let tgSubject = "";
+    if (hasTG3 && hasTG2) {
+      tgSubject = "TG3- og TG2-punktene";
+    } else if (hasTG3) {
+      tgSubject = "TG3-punktene";
+    } else if (hasTG2) {
+      tgSubject = "TG2-punktene";
+    }
+    if (hasCosts) {
+      return `Kan du beskrive ${tgSubject} og anslåtte utbedringskostnader`;
+    }
+    return `Kan du beskrive ${tgSubject} som er identifisert`;
+  }
+
+  const topic = extractQuestionTopic(trimmed);
+  const topicLcFirst = topic ? lowerCaseFirst(topic) : lowerCaseFirst(trimmed);
+  const topicLower = (topic || trimmed).toLowerCase();
+
+  if (hasCosts) {
+    return buildCostQuestion(topicLcFirst, topicLower);
+  }
+  if (hasMeasures) {
+    const target = topicLcFirst || "dette området";
+    return `Hvilke tiltak anbefaler du for ${target}`;
+  }
+
+  return `Kan du utdype ${topicLcFirst || lowerCaseFirst(trimmed)}`;
+}
+
+function extractQuestionTopic(phrase: string): string {
+  let result = phrase.trim();
+  result = result.replace(/^(detaljer|detaljene|oversikt|informasjon|info)\s+(om|for)\s+/i, "");
+  result = result.replace(/^(anbefalte|anbefalt|foreslåtte|mulige|planlagte|eventuelle)\s+tiltak\s+for\s+/i, "");
+  result = result.replace(/^tiltak\s+for\s+/i, "");
+  result = result.replace(/^(kostnader|kostnadsoverslag|kostnadsanslag|kostnadsramme|pris)\s+for\s+/i, "");
+  result = result.replace(/^(kontroll|tilsyn|vurdering|status)\s+av\s+/i, "");
+  result = result.replace(/^(kontroll|tilsyn|vurdering|status)\s+for\s+/i, "");
+  result = result.replace(/^(oppfølging|informasjon)\s+om\s+/i, "");
+  return result.trim();
+}
+
+function buildCostQuestion(subject: string, baseHint?: string): string {
+  const trimmed = subject.trim();
+  const base = (baseHint ?? subject).trim().toLowerCase();
+  if (!trimmed && !base) {
+    return "Hva er anslått kostnad";
+  }
+
+  const lowerSubject = trimmed.toLowerCase();
+  const costless = trimmed
+    .replace(/^(kostnadsrammen?|kostnadene?|kostnader|kostnaden|kostnad)\s*(for\s*)?/i, "")
+    .replace(/^(pris(en)?)\s*(for\s*)?/i, "")
+    .replace(/^(budsjett(et)?)\s*(for\s*)?/i, "")
+    .replace(/^(totalpris(en)?)\s*(for\s*)?/i, "")
+    .trim();
+  const rest = costless ? lowerCaseFirst(costless) : "";
+
+  if (base.startsWith("pris") || lowerSubject.startsWith("pris")) {
+    return rest ? `Hva er prisen for ${rest}` : "Hva er prisen";
+  }
+  if (base.startsWith("kostnadsram") || lowerSubject.startsWith("kostnadsram")) {
+    return rest ? `Hva er kostnadsrammen for ${rest}` : "Hva er kostnadsrammen";
+  }
+  if (base.startsWith("budsjett") || lowerSubject.startsWith("budsjett")) {
+    return rest ? `Hva er budsjettet for ${rest}` : "Hva er budsjettet";
+  }
+  if (base.startsWith("kostnad") || lowerSubject.startsWith("kostnad")) {
+    return rest ? `Hva er anslått kostnad for ${rest}` : "Hva er anslått kostnad";
+  }
+  if (base.startsWith("kostnader") || lowerSubject.startsWith("kostnader")) {
+    return rest ? `Hva er anslåtte kostnader for ${rest}` : "Hva er anslåtte kostnader";
+  }
+  if (base.startsWith("totalpris") || lowerSubject.startsWith("totalpris")) {
+    return rest ? `Hva er totalprisen for ${rest}` : "Hva er totalprisen";
+  }
+
+  if (rest) {
+    return `Hva er anslått kostnad for ${rest}`;
+  }
+
+  return "Hva er anslått kostnad";
 }
 
 function toStringArray(value: unknown, limit?: number): string[] {
