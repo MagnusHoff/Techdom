@@ -10,6 +10,7 @@ openai>=1.30,<2
 fastapi>=0.118,<0.119
 uvicorn>=0.30,<0.31
 SQLAlchemy>=2.0,<3
+aiosqlite>=0.19,<1
 asyncpg>=0.29,<1
 passlib[bcrypt]>=1.7,<2
 python-jose[cryptography]>=3.3,<4
