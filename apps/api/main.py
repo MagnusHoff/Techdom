@@ -25,7 +25,7 @@ job_service = ProspectJobService()
 
 
 def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
-    """Helper that extracts a serialisable dict from Pydantic/BaseModel objects."""
+    """Return a serialisable dict for Pydantic/BaseModel values or passthrough others."""
     if value is None:
         return None
     if hasattr(value, "model_dump"):
