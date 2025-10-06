@@ -58,6 +58,10 @@ def ensure_session_defaults() -> None:
     st.session_state.setdefault("ai_text", "")
     st.session_state.setdefault("rent", None)
     st.session_state.setdefault("brutto_leie", 0)
+    st.session_state.setdefault("show_login_modal", False)
+    st.session_state.setdefault("login_email", "")
+    st.session_state.setdefault("login_password", "")
+    st.session_state.setdefault("auth_flow", "login")
 
 
 __all__ = [

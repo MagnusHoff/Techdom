@@ -9,6 +9,15 @@ export interface ScoreGauge {
   farge?: string;
 }
 
+export interface ProspectusExtract {
+  summary_md?: string;
+  tg3?: string[];
+  tg2?: string[];
+  upgrades?: string[];
+  watchouts?: string[];
+  questions?: string[];
+}
+
 export interface DecisionUi {
   status?: DecisionStatus;
   scorelinjal?: ScoreGauge;
@@ -17,6 +26,8 @@ export interface DecisionUi {
   risiko?: string[];
   nokkel_tall?: Array<Record<string, unknown>>;
   dom_notat?: string | null;
+  score_breakdown?: Array<{ id: string; label: string; value: number }>;
+  tg_cap_used?: boolean;
 }
 
 export interface AnalysisPayload {
@@ -29,6 +40,14 @@ export interface AnalysisPayload {
   maint_pct: string;
   vacancy_pct: string;
   other_costs: string;
+  tg2_items?: string[];
+  tg3_items?: string[];
+  tg_data_available?: boolean;
+  upgrades?: string[];
+  warnings?: string[];
+  bath_age_years?: number | null;
+  kitchen_age_years?: number | null;
+  roof_age_years?: number | null;
 }
 
 export interface AnalysisResponse {
@@ -44,7 +63,7 @@ export interface AnalysisResponse {
 export interface ProspectJobResult {
   analysis?: AnalysisResponse;
   listing?: Record<string, unknown> | null;
-  ai_extract?: Record<string, unknown> | null;
+  ai_extract?: ProspectusExtract | null;
   rent_estimate?: Record<string, unknown> | null;
   interest_estimate?: Record<string, unknown> | null;
   pdf_text_excerpt?: unknown;

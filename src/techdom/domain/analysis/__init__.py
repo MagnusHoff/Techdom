@@ -12,7 +12,8 @@ from .contracts import (
 )
 from .risk import calc_risk_score, calc_total_score
 from .scoring import (
-    beregn_score_og_dom,
+    ScoreSummary,
+    compute_scores,
     farge_for_break_even_gap,
     farge_for_cashflow,
     farge_for_roe,
@@ -27,7 +28,8 @@ __all__ = [
     "InputContract",
     "KeyFigure",
     "build_calculated_metrics",
-    "beregn_score_og_dom",
+    "ScoreSummary",
+    "compute_scores",
     "farge_for_break_even_gap",
     "farge_for_cashflow",
     "farge_for_roe",

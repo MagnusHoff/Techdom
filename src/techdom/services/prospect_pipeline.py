@@ -164,12 +164,24 @@ class ProspectAnalysisPipeline:
             ai_extract = analyze_prospectus(pdf_text or "") if pdf_text else {}
             self.job_service.store_artifact(job_id, "ai_extract", ai_extract)
 
-            tg2_items = [str(item) for item in ai_extract.get("tg2", [])] if isinstance(ai_extract, dict) else []
-            tg3_items = [str(item) for item in ai_extract.get("tg3", [])] if isinstance(ai_extract, dict) else []
+            tg2_items = [
+                str(item) for item in ai_extract.get("tg2", [])
+            ] if isinstance(ai_extract, dict) else []
+            tg3_items = [
+                str(item) for item in ai_extract.get("tg3", [])
+            ] if isinstance(ai_extract, dict) else []
+            upgrades = [
+                str(item) for item in ai_extract.get("upgrades", [])
+            ] if isinstance(ai_extract, dict) else []
+            warnings = [
+                str(item) for item in ai_extract.get("watchouts", [])
+            ] if isinstance(ai_extract, dict) else []
             ctx = AnalysisDecisionContext(
                 tg2_items=tg2_items,
                 tg3_items=tg3_items,
                 tg_data_available=bool(tg2_items or tg3_items),
+                upgrades_recent=upgrades,
+                warnings=warnings,
             )
 
             self.job_service.mark_running(

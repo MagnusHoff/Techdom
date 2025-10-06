@@ -24,6 +24,17 @@ app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
 
 
+def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
+    """Helper that extracts a serialisable dict from Pydantic/BaseModel objects."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump()  # type: ignore[no-any-return]
+    if hasattr(value, "dict"):
+        return value.dict()  # type: ignore[no-any-return]
+    return value  # type: ignore[return-value]
+
+
 def _cors_origins() -> list[str]:
     raw = os.getenv("API_CORS_ORIGINS")
     if raw:
@@ -31,6 +42,8 @@ def _cors_origins() -> list[str]:
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "https://techdom-frontend.onrender.com",
     ]
 
@@ -57,6 +70,11 @@ class AnalysisReq(BaseModel):
     tg2_items: List[str] = Field(default_factory=list)
     tg3_items: List[str] = Field(default_factory=list)
     tg_data_available: Optional[bool] = None
+    upgrades: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    bath_age_years: Optional[float] = None
+    kitchen_age_years: Optional[float] = None
+    roof_age_years: Optional[float] = None
 
     def to_params(self) -> Dict[str, Any]:
         return {
@@ -81,6 +99,11 @@ class AnalysisReq(BaseModel):
             tg2_items=self.tg2_items,
             tg3_items=self.tg3_items,
             tg_data_available=available,
+            upgrades_recent=self.upgrades,
+            warnings=self.warnings,
+            bath_age_years=self.bath_age_years,
+            kitchen_age_years=self.kitchen_age_years,
+            roof_age_years=self.roof_age_years,
         )
 
 

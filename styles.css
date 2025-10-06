@@ -6,6 +6,62 @@
   --td-blue-3: #0f2f91;
 }
 
+/* --- Sticky header --- */
+.td-header-wrapper {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(13, 42, 122, 0.1);
+  padding: 16px 0 12px;
+  margin-bottom: 18px;
+}
+
+.td-header-wrapper > div[data-testid="stHorizontalBlock"] {
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.td-header-wrapper > div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+  display: flex;
+  align-items: center;
+}
+
+.td-header-wrapper > div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child {
+  justify-content: flex-start;
+}
+
+.td-header-wrapper > div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:not(:first-child) {
+  justify-content: flex-end;
+}
+
+.td-login-intro {
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  color: rgba(33, 37, 41, 0.72);
+}
+
+div#header_forgot_password button,
+div#header_create_account button {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--td-blue-2) !important;
+  padding: 0 !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  justify-content: flex-start;
+}
+
+div#header_forgot_password button:hover,
+div#header_create_account button:hover {
+  color: var(--td-blue-3) !important;
+  filter: none !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
 /* Primary buttons everywhere (normal buttons and form submit) */
 .stButton>button,
 .stForm button[kind="primary"],
@@ -242,6 +298,25 @@ button.chip:hover {
 }
 
 @media (prefers-color-scheme: dark) {
+  .td-header-wrapper {
+    background: rgba(11, 31, 85, 0.88);
+    border-bottom-color: rgba(231, 236, 255, 0.12);
+  }
+
+  .td-login-intro {
+    color: rgba(231, 236, 255, 0.75);
+  }
+
+  div#header_forgot_password button,
+  div#header_create_account button {
+    color: rgba(231, 236, 255, 0.82) !important;
+  }
+
+  div#header_forgot_password button:hover,
+  div#header_create_account button:hover {
+    color: #ffffff !important;
+  }
+
   .td-footer-wrapper {
     border-top-color: rgba(255, 255, 255, 0.14);
   }
