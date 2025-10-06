@@ -3,11 +3,17 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
 import { getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
-import type { AnalysisPayload, AnalysisResponse, DecisionUi, JobStatus } from "@/lib/types";
+import type {
+  AnalysisPayload,
+  AnalysisResponse,
+  DecisionUi,
+  JobStatus,
+  ProspectusExtract,
+} from "@/lib/types";
 
 const DEFAULT_FORM: AnalysisPayload = {
   price: "",
@@ -230,6 +236,23 @@ function jobStatusLabel(status: string | undefined): string {
   }
 }
 
+function jobStatusHeadline(status: JobStatus | null, stateKey: string | undefined): string {
+  const key = (stateKey ?? "").toLowerCase();
+  const message = stringOrNull(status?.message);
+  switch (key) {
+    case "queued":
+      return "Forbereder analyse";
+    case "running":
+      return message ?? "Automatisk innhenting pågår";
+    case "done":
+      return "Analyse fullført";
+    case "failed":
+      return "Analysen feilet";
+    default:
+      return jobStatusLabel(key);
+  }
+}
+
 function normaliseListingUrl(value: string): string {
   if (!value) {
     return "";
@@ -243,6 +266,8 @@ function colorClass(farge?: string): string {
       return "score-chip red";
     case "orange":
       return "score-chip orange";
+    case "yellow":
+      return "score-chip yellow";
     case "green":
       return "score-chip green";
     default:
@@ -256,11 +281,35 @@ function keyColorClass(farge?: string): string {
       return "key-value red";
     case "orange":
       return "key-value orange";
+    case "yellow":
+      return "key-value orange";
     case "green":
       return "key-value green";
     default:
       return "key-value neutral";
   }
+}
+
+function scoreFillColor(percent: number | null): string {
+  if (percent === null) {
+    return "rgba(148, 163, 184, 0.35)";
+  }
+  if (percent < 16) {
+    return "#7f1d1d"; // mørkerød
+  }
+  if (percent < 32) {
+    return "#dc2626"; // rødt
+  }
+  if (percent < 50) {
+    return "#f97316"; // oransje
+  }
+  if (percent < 66) {
+    return "#a3e635"; // grønn-oransje (lime)
+  }
+  if (percent < 84) {
+    return "#22c55e"; // grønn
+  }
+  return "#14532d"; // mørkegrønn
 }
 
 function AnalysisPageContent() {
@@ -275,6 +324,7 @@ function AnalysisPageContent() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const [prospectus, setProspectus] = useState<ProspectusExtract | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewTitle, setPreviewTitle] = useState<string | null>(null);
   const [previewAddress, setPreviewAddress] = useState<string | null>(null);
@@ -286,6 +336,7 @@ function AnalysisPageContent() {
   const [jobStarting, setJobStarting] = useState(false);
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
+  const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
 
   useEffect(() => {
     if (runToken) {
@@ -307,13 +358,54 @@ function AnalysisPageContent() {
     return (gaugeValue ?? statusScore) ?? null;
   }, [decisionUi]);
 
+  const scorePercent = useMemo(() => {
+    const gauge = decisionUi?.scorelinjal;
+    if (gauge && typeof gauge.value === "number" && Number.isFinite(gauge.value)) {
+      return Math.max(0, Math.min(100, gauge.value));
+    }
+    if (typeof scoreValue === "number" && Number.isFinite(scoreValue)) {
+      return Math.max(0, Math.min(100, scoreValue));
+    }
+    return null;
+  }, [decisionUi, scoreValue]);
+
   const scoreColor = colorClass(decisionUi?.scorelinjal?.farge);
   const domLabel = decisionUi?.status?.dom ?? "";
   const statusSentence = decisionUi?.status?.setning ?? "";
+  const tg2Items = useMemo(() => prospectus?.tg2 ?? [], [prospectus]);
+  const tg3Items = useMemo(() => prospectus?.tg3 ?? [], [prospectus]);
+  const tgDataAvailable = tg2Items.length > 0 || tg3Items.length > 0;
+  const scoreBreakdownEntries = useMemo(() => {
+    const entries = Array.isArray(decisionUi?.score_breakdown)
+      ? decisionUi.score_breakdown
+      : [];
+    const defaults = [
+      { id: "econ", label: "Økonomi" },
+      { id: "tr", label: "Tilstand" },
+    ];
+    return defaults.map((template) => {
+      const match = entries.find((entry) => entry && entry.id === template.id);
+      const rawValue = typeof match?.value === "number" ? match.value : null;
+      const value = rawValue === null ? null : Math.max(0, Math.min(100, Math.round(rawValue)));
+      return {
+        id: template.id,
+        label: match?.label ?? template.label,
+        value,
+      };
+    });
+  }, [decisionUi]);
+  const scoreFillStyle = useMemo(() => {
+    const percentValue = scorePercent ?? 0;
+    return {
+      width: `${percentValue}%`,
+      "--score-fill-color": scoreFillColor(scorePercent),
+    } as CSSProperties;
+  }, [scorePercent]);
 
   const jobInProgress = jobStarting || (jobStatus ? !["done", "failed"].includes((jobStatus.status ?? "").toLowerCase()) : false);
   const submitDisabled = analyzing || jobInProgress;
-  const submitLabel = jobInProgress ? "Henter data..." : analyzing ? "Beregner..." : "Kjør analyse";
+  const fieldsDisabled = submitDisabled;
+  const submitLabel = analyzing ? "Oppdaterer..." : "Oppdater";
   const resourcePdfUrl = stringOrNull(jobStatus?.pdf_url);
   const resourceListingUrl = useMemo(() => {
     const candidate = stringOrNull(listingUrl);
@@ -338,10 +430,14 @@ function AnalysisPageContent() {
     event.preventDefault();
     setAnalyzing(true);
     setError(null);
-    setResult(null);
 
     const payload: AnalysisPayload = {
       ...form,
+      tg2_items: tg2Items,
+      tg3_items: tg3Items,
+      tg_data_available: tgDataAvailable,
+      upgrades: prospectus?.upgrades ?? [],
+      warnings: prospectus?.watchouts ?? [],
     };
 
     try {
@@ -355,10 +451,16 @@ function AnalysisPageContent() {
   };
 
   useEffect(() => {
+    if (skipJobInitRef.current) {
+      skipJobInitRef.current = false;
+      return;
+    }
     const trimmed = listing.trim();
     if (!runToken) {
       return;
     }
+    // eslint-disable-next-line no-console
+    console.log("listing effect", { listing, trimmed, runToken });
     if (!trimmed) {
       jobListingRef.current = null;
       jobAppliedRef.current = null;
@@ -375,6 +477,8 @@ function AnalysisPageContent() {
     }
 
     const finnkode = extractFinnkode(trimmed);
+    // eslint-disable-next-line no-console
+    console.log("job key", key);
     jobListingRef.current = key;
     jobAppliedRef.current = null;
 
@@ -384,6 +488,7 @@ function AnalysisPageContent() {
     setJobStatus(null);
     setJobId(null);
     setJobError(null);
+    setProspectus(null);
     setPreviewImage(null);
     setPreviewTitle(null);
     setPreviewAddress(null);
@@ -398,15 +503,15 @@ function AnalysisPageContent() {
     setJobStarting(true);
 
     (async () => {
+      // eslint-disable-next-line no-console
+      console.log("starting job", { finnkode, runToken });
       try {
         const job = await startAnalysisJob(finnkode);
         if (cancelled) {
           return;
         }
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("job created", job.job_id, job.status);
-        }
+        // eslint-disable-next-line no-console
+        console.log("job created", job.job_id, job.status);
         setJobId(job.job_id);
         setJobStatus({ id: job.job_id, status: job.status ?? "queued", finnkode });
       } catch (err) {
@@ -422,6 +527,9 @@ function AnalysisPageContent() {
 
     return () => {
       cancelled = true;
+      if (jobListingRef.current === key) {
+        jobListingRef.current = null;
+      }
     };
   }, [listing, runToken]);
 
@@ -433,6 +541,9 @@ function AnalysisPageContent() {
       setPreviewAddress(null);
       return;
     }
+
+    // eslint-disable-next-line no-console
+    console.log("preview effect", listing);
 
     let cancelled = false;
     setPreviewLoading(true);
@@ -484,19 +595,22 @@ function AnalysisPageContent() {
       return;
     }
 
+    // eslint-disable-next-line no-console
+    console.log("jobId effect start", jobId);
+
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
-     try {
+      try {
+        // eslint-disable-next-line no-console
+        console.log("polling job", jobId);
         const next = await getJobStatus(jobId);
         if (cancelled) {
           return;
         }
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("job status", jobId, next.status);
-        }
+        // eslint-disable-next-line no-console
+        console.log("job status", jobId, next.status);
         setJobStatus(next);
         if (next.status === "failed") {
           setJobError(next.message ?? next.error ?? "Analysen feilet.");
@@ -508,6 +622,8 @@ function AnalysisPageContent() {
         }
         timer = setTimeout(poll, JOB_POLL_INTERVAL);
       } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("job status poll failed", jobId, err);
         if (cancelled) {
           return;
         }
@@ -542,6 +658,8 @@ function AnalysisPageContent() {
       if (jobStatus.result?.analysis) {
         setResult(jobStatus.result.analysis);
       }
+      const prospectusExtract = extractProspectusFromJob(jobStatus);
+      setProspectus(prospectusExtract);
       if (listingInfo) {
         const imageValue = pickListingImage(listingInfo);
         if (imageValue) {
@@ -569,6 +687,8 @@ function AnalysisPageContent() {
       if (jobStatus.result?.analysis) {
         setResult(jobStatus.result.analysis);
       }
+      const prospectusExtract = extractProspectusFromJob(jobStatus);
+      setProspectus(prospectusExtract);
       if (listingInfo) {
         const addressValue = pickListingAddress(listingInfo);
         if (addressValue) {
@@ -599,13 +719,24 @@ function AnalysisPageContent() {
           listingAddress={previewAddress}
           loading={previewLoading}
           error={previewError}
+          statusCard={
+            analyzing ? (
+              <AnalysisUpdateCard />
+            ) : (
+              <JobStatusCard
+                status={jobStatus}
+                jobError={jobError}
+                starting={jobStarting}
+                completed={jobCompleted}
+              />
+            )
+          }
         />
 
         <section className="analysis-form-card">
           <div className="form-card-header">
             <ResourceLinkGroup pdfUrl={resourcePdfUrl} listingUrl={resourceListingUrl} />
           </div>
-          <JobStatusCard status={jobStatus} jobError={jobError} starting={jobStarting} completed={jobCompleted} />
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
               <FormField
@@ -613,54 +744,63 @@ function AnalysisPageContent() {
                 value={form.price}
                 placeholder="4 500 000"
                 onChange={handleChange("price")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Egenkapital"
                 value={form.equity}
                 placeholder="675 000"
                 onChange={handleChange("equity")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Rente % p.a."
                 value={form.interest}
                 placeholder="5.10"
                 onChange={handleChange("interest")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Lånetid (år)"
                 value={form.term_years}
                 placeholder="30"
                 onChange={handleChange("term_years")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Leie (mnd)"
                 value={form.rent}
                 placeholder="18 000"
                 onChange={handleChange("rent")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Felleskost (mnd)"
                 value={form.hoa}
                 placeholder="3 000"
                 onChange={handleChange("hoa")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Vedlikehold % av leie"
                 value={form.maint_pct}
                 placeholder="6.0"
                 onChange={handleChange("maint_pct")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Andre kost (mnd)"
                 value={form.other_costs}
                 placeholder="800"
                 onChange={handleChange("other_costs")}
+                disabled={fieldsDisabled}
               />
               <FormField
                 label="Ledighet %"
                 value={form.vacancy_pct}
                 placeholder="0.0"
                 onChange={handleChange("vacancy_pct")}
+                disabled={fieldsDisabled}
               />
             </div>
 
@@ -676,53 +816,135 @@ function AnalysisPageContent() {
 
       {result ? (
         <section className="analysis-results">
-          <div className="score-card">
-            <div>
-              <p className="overline">Total score</p>
-              <div className="score-value">{scoreValue ?? "-"}</div>
-            </div>
-            <span className={scoreColor}>{domLabel || "N/A"}</span>
-          </div>
-
-          {statusSentence ? <p className="status-sentence">{statusSentence}</p> : null}
-          {decisionUi?.dom_notat ? <p className="status-note">{decisionUi.dom_notat}</p> : null}
-
-          <div className="key-grid">
-            {(decisionUi?.nokkel_tall ?? []).map((item, index) => {
-              const navn = typeof item.navn === "string" ? item.navn : "";
-              const verdi = typeof item.verdi === "string" ? item.verdi : String(item.verdi ?? "");
-              const farge = typeof item.farge === "string" ? item.farge : undefined;
-              return (
-                <div className="key-card" key={`${navn}-${index}`}>
-                  <p className="key-name">{navn}</p>
-                  <p className={keyColorClass(farge)}>{verdi}</p>
+          <div className="analysis-results-grid">
+            <div className="analysis-score-block">
+              <h2 className="analysis-column-title">Resultat – forsterket av OpenAI</h2>
+              <div className="score-card">
+                <div className="score-card-header">
+                  <div>
+                    <p className="overline">Total score</p>
+                    <div className="score-value">{scoreValue ?? "-"}</div>
+                  </div>
+                  <span className={scoreColor}>{domLabel || "N/A"}</span>
                 </div>
-              );
-            })}
-          </div>
+                <div
+                  className={`score-progress${scorePercent === 100 ? " complete" : ""}`}
+                  role="progressbar"
+                  aria-label="Total score"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={scorePercent ?? undefined}
+                >
+                  <span className="score-progress-fill" style={scoreFillStyle} />
+                </div>
+                <div className="score-breakdown">
+                  {scoreBreakdownEntries.map((entry) => {
+                    const percent = entry.value ?? 0;
+                    const valueText = entry.value === null ? "–" : `${percent}%`;
+                    const fillStyle = {
+                      width: `${percent}%`,
+                      "--score-fill-color": scoreFillColor(entry.value ?? null),
+                    } as CSSProperties;
+                    return (
+                      <div className="score-breakdown-item" key={entry.id}>
+                        <div className="score-breakdown-header">
+                          <span className="score-breakdown-label">{entry.label}</span>
+                          <span className="score-breakdown-value">{valueText}</span>
+                        </div>
+                        <div
+                          className="score-breakdown-bar"
+                          role="progressbar"
+                          aria-label={entry.label}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={entry.value ?? undefined}
+                        >
+                          <span className="score-breakdown-fill" style={fillStyle} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="score-card-footer">
+                  {statusSentence ? <p className="status-sentence">{statusSentence}</p> : null}
+                </div>
+              </div>
+              {decisionUi?.dom_notat ? <p className="status-note">{decisionUi.dom_notat}</p> : null}
+            </div>
 
-          <div className="list-grid">
-            <DecisionList
-              title="🔧 Tiltak"
-              items={decisionUi?.tiltak ?? []}
-              empty="Ingen tiltak anbefalt."
-            />
-            <DecisionList
-              title="✅ Det som er bra"
-              items={decisionUi?.positivt ?? []}
-              empty="Ingen positive funn ennå."
-            />
-            <DecisionList
-              title="⚠️ Risiko"
-              items={decisionUi?.risiko ?? []}
-              empty="Ingen risikopunkter registrert."
-            />
-          </div>
+            <div className="analysis-score-spacer" aria-hidden="true" />
 
-          <article className="ai-copy">
-            <h2>AI-oppsummering</h2>
-            <p>{result.ai_text}</p>
-          </article>
+            <div className="analysis-column analysis-column-economy">
+              <div className="key-grid">
+                {(decisionUi?.nokkel_tall ?? []).map((item, index) => {
+                  const navn = typeof item.navn === "string" ? item.navn : "";
+                  const verdi = typeof item.verdi === "string" ? item.verdi : String(item.verdi ?? "");
+                  const farge = typeof item.farge === "string" ? item.farge : undefined;
+                  return (
+                    <div className="key-card" key={`${navn}-${index}`}>
+                      <p className="key-name">{navn}</p>
+                      <p className={keyColorClass(farge)}>{verdi}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="list-grid">
+                <DecisionList
+                  title="🔧 Tiltak"
+                  items={decisionUi?.tiltak ?? []}
+                  empty="Ingen tiltak anbefalt."
+                />
+                <DecisionList
+                  title="✅ Det som er bra"
+                  items={decisionUi?.positivt ?? []}
+                  empty="Ingen positive funn ennå."
+                />
+              </div>
+            </div>
+
+            <div className="analysis-column analysis-column-prospectus">
+              {prospectus ? (
+                <div className="prospectus-grid">
+                  <ProspectusCard
+                    title="🛑 TG3 (alvorlig)"
+                    badge={{ label: "Høy risiko", tone: "danger" }}
+                    items={prospectus.tg3 ?? []}
+                    empty="Ingen TG3-punkter funnet."
+                  />
+                  <ProspectusCard
+                    title="🛠️ Tiltak / bør pusses opp"
+                    items={prospectus.upgrades ?? []}
+                    empty="Ingen oppgraderingsforslag registrert."
+                  />
+                  <ProspectusCard
+                    title="⚠️ TG2"
+                    badge={{ label: "Middels risiko", tone: "warn" }}
+                    items={prospectus.tg2 ?? []}
+                    empty="Ingen TG2-punkter funnet."
+                  />
+                  <ProspectusCard
+                    title="👀 Vær oppmerksom på"
+                    items={prospectus.watchouts ?? []}
+                    empty="Ingen risikopunkter notert."
+                  />
+                  <ProspectusCard
+                    title="❓ Spørsmål til megler"
+                    items={prospectus.questions ?? []}
+                    empty="Ingen spørsmål generert."
+                    className="prospectus-card-span"
+                  />
+                </div>
+              ) : (
+                <div className="prospectus-empty">
+                  <p>Ingen salgsoppgave analysert ennå.</p>
+                  <p className="prospectus-empty-note">
+                    Last opp eller hent salgsoppgaven for å se risiko- og tiltaksvurderinger.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         </section>
       ) : null}
     </>
@@ -756,6 +978,7 @@ interface ListingPreviewCardProps {
   imageUrl: string | null;
   loading: boolean;
   error: string | null;
+  statusCard?: ReactNode;
 }
 
 interface JobStatusCardProps {
@@ -765,6 +988,19 @@ interface JobStatusCardProps {
   completed: boolean;
 }
 
+function AnalysisUpdateCard() {
+  return (
+    <div className="job-card" role="status">
+      <p className="job-label">Oppdaterer analyse</p>
+      <p className="job-value">Beregner på nytt</p>
+      <div className="job-progress">
+        <span className="job-progress-fill indeterminate" />
+      </div>
+      <p className="job-message">Oppdaterer økonomitall basert på parametrene.</p>
+    </div>
+  );
+}
+
 function JobStatusCard({ status, jobError, starting, completed }: JobStatusCardProps) {
   if (!status && !starting && !jobError && !completed) {
     return null;
@@ -772,25 +1008,36 @@ function JobStatusCard({ status, jobError, starting, completed }: JobStatusCardP
 
   const derivedState = completed ? "done" : undefined;
   const stateKey = status?.status ?? derivedState ?? (jobError ? "failed" : starting ? "queued" : undefined);
-  const label = jobStatusLabel(stateKey);
-  const progress = typeof status?.progress === "number" ? Math.round(status.progress) : null;
-  const effectiveMessage = stringOrNull(status?.message) ?? (stateKey === "failed" ? stringOrNull(status?.error) : null) ?? jobError;
-  const pdfUrl = stringOrNull(status?.pdf_url);
-  const finnkode = stringOrNull(status?.finnkode);
-  const showProgress = progress !== null && stateKey !== "done" && stateKey !== "failed";
+  const label = jobStatusHeadline(status, stateKey);
+  const progressValueRaw = typeof status?.progress === "number" ? Math.max(0, Math.min(100, status.progress)) : null;
+  const isActive = stateKey !== "failed" && stateKey !== "done";
+  const progressValue = isActive ? null : (stateKey === "done" ? 100 : progressValueRaw);
+  const showIndeterminate = isActive;
+  const showProgress = stateKey !== "failed";
+  const failureMessage = stateKey === "failed"
+    ? stringOrNull(status?.message) ?? stringOrNull(status?.error) ?? jobError
+    : null;
 
   return (
     <div className="job-card">
       <p className="job-label">Automatisk innhenting</p>
       <p className="job-value">{label}</p>
-      {finnkode ? <p className="job-message">FINN-kode: {finnkode}</p> : null}
-      {showProgress ? <p className="progress">Fremdrift: {progress}%</p> : null}
-      {effectiveMessage ? <p className="job-message">{effectiveMessage}</p> : null}
-      {pdfUrl ? (
-        <p className="job-message">
-          Prospekt: <a href={pdfUrl} target="_blank" rel="noreferrer">last ned</a>
-        </p>
+      {showProgress ? (
+        <div
+          className={`job-progress${stateKey === "done" ? " complete" : ""}`}
+          role="progressbar"
+          aria-label="Fremdrift for automatisk innhenting"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={showIndeterminate ? undefined : progressValue ?? undefined}
+        >
+          <span
+            className={`job-progress-fill${showIndeterminate ? " indeterminate" : ""}`}
+            style={progressValue !== null ? { width: `${progressValue}%` } : undefined}
+          />
+        </div>
       ) : null}
+      {failureMessage ? <p className="job-message">{failureMessage}</p> : null}
     </div>
   );
 }
@@ -835,6 +1082,7 @@ function ListingPreviewCard({
   imageUrl,
   loading,
   error,
+  statusCard,
 }: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
   const heading = (() => {
@@ -887,6 +1135,7 @@ function ListingPreviewCard({
         )}
       </div>
       {imageUrl ? <span className="sr-only">{srStatus}</span> : null}
+      {statusCard ? <div className="listing-status-card">{statusCard}</div> : null}
     </aside>
   );
 }
@@ -896,13 +1145,15 @@ interface FormFieldProps {
   value: string;
   placeholder?: string;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  disabled?: boolean;
 }
 
-function FormField({ label, value, placeholder, onChange }: FormFieldProps) {
+function FormField({ label, value, placeholder, onChange, disabled }: FormFieldProps) {
+  const fieldClass = disabled ? "form-field form-field-disabled" : "form-field";
   return (
-    <label className="form-field">
+    <label className={fieldClass}>
       <span>{label}</span>
-      <input value={value} placeholder={placeholder} onChange={onChange} />
+      <input value={value} placeholder={placeholder} onChange={onChange} disabled={disabled} />
     </label>
   );
 }
@@ -929,4 +1180,104 @@ function DecisionList({ title, items, empty }: DecisionListProps) {
       )}
     </div>
   );
+}
+
+interface ProspectusCardProps {
+  title: string;
+  items: string[];
+  empty: string;
+  badge?: { label: string; tone: "danger" | "warn" | "info" };
+  className?: string;
+}
+
+function ProspectusCard({ title, items, empty, badge, className }: ProspectusCardProps) {
+  const hasItems = items.length > 0;
+  const cardClass = className ? `prospectus-card ${className}` : "prospectus-card";
+  return (
+    <div className={cardClass}>
+      <div className="prospectus-card-header">
+        <h3>{title}</h3>
+        {badge ? <span className={`prospectus-badge ${badge.tone}`}>{badge.label}</span> : null}
+      </div>
+      {hasItems ? (
+        <ul>
+          {items.slice(0, 6).map((item, index) => (
+            <li key={`${item}-${index}`}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="placeholder">{empty}</p>
+      )}
+    </div>
+  );
+}
+
+function toStringArray(value: unknown, limit?: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const cleaned = value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+      if (item === null || item === undefined) {
+        return "";
+      }
+      return String(item).trim();
+    })
+    .filter(Boolean);
+  if (typeof limit === "number" && limit > 0) {
+    return cleaned.slice(0, limit);
+  }
+  return cleaned;
+}
+
+function normaliseProspectusExtract(value: unknown): ProspectusExtract | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const tg3 = toStringArray(record.tg3);
+  const tg2 = toStringArray(record.tg2);
+  const upgrades = toStringArray(record.upgrades);
+  const watchouts = toStringArray(record.watchouts);
+  const questions = toStringArray(record.questions);
+  const extract: ProspectusExtract = {
+    summary_md: typeof record.summary_md === "string" ? record.summary_md : undefined,
+    tg3,
+    tg2,
+    upgrades,
+    watchouts,
+    questions,
+  };
+  if (
+    !extract.summary_md &&
+    tg3.length === 0 &&
+    tg2.length === 0 &&
+    upgrades.length === 0 &&
+    watchouts.length === 0 &&
+    questions.length === 0
+  ) {
+    return null;
+  }
+  return extract;
+}
+
+function extractProspectusFromJob(job: JobStatus | null): ProspectusExtract | null {
+  if (!job) {
+    return null;
+  }
+  const resultExtract = job.result?.ai_extract;
+  if (resultExtract) {
+    const normalised = normaliseProspectusExtract(resultExtract);
+    if (normalised) {
+      return normalised;
+    }
+  }
+  const artifacts = job.artifacts && typeof job.artifacts === "object" ? (job.artifacts as Record<string, unknown>) : null;
+  if (artifacts && "ai_extract" in artifacts) {
+    return normaliseProspectusExtract((artifacts as { ai_extract?: unknown }).ai_extract);
+  }
+  return null;
 }

@@ -8,7 +8,7 @@ from techdom.domain.analysis_contracts import (
     farge_for_cashflow,
     farge_for_roe,
     farge_for_break_even_gap,
-    beregn_score_og_dom,
+    compute_scores,
     DecisionVerdict,
     build_decision_result,
     DecisionResult,
@@ -93,7 +93,7 @@ class FargekoderTests(unittest.TestCase):
 
 
 class ScoringTests(unittest.TestCase):
-    def test_klar_gronn_dom(self) -> None:
+    def test_compute_scores_returns_strong_result(self) -> None:
         metrics = CalculatedMetrics(
             cashflow_mnd=1_500.0,
             break_even_leie_mnd=15_000.0,
@@ -113,19 +113,21 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_000.0,
         )
 
-        score, dom, econ_score, used_cap = beregn_score_og_dom(
+        summary = compute_scores(
             metrics,
             contract,
-            risk_score=100,
-            has_tg_data=True,
+            tg2_items=[],
+            tg3_items=[],
+            tg_data_available=True,
         )
 
-        self.assertEqual(score, 100)
-        self.assertEqual(dom, DecisionVerdict.BRA)
-        self.assertEqual(econ_score, 100)
-        self.assertFalse(used_cap)
+        self.assertEqual(summary.econ_score, 96)
+        self.assertEqual(summary.tr_score, 100)
+        self.assertEqual(summary.total_score, 98)
+        self.assertEqual(summary.verdict, DecisionVerdict.BRA)
+        self.assertFalse(summary.tg_cap_used)
 
-    def test_svak_gronn_dom(self) -> None:
+    def test_compute_scores_penalises_tg_findings(self) -> None:
         metrics = CalculatedMetrics(
             cashflow_mnd=1_200.0,
             break_even_leie_mnd=19_100.0,
@@ -145,30 +147,30 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_200.0,
         )
 
-        score, dom, econ_score, used_cap = beregn_score_og_dom(
+        summary = compute_scores(
             metrics,
             contract,
-            risk_score=100,
-            has_tg_data=True,
+            tg2_items=["Normal slitasje"],
+            tg3_items=["Fuktskade"],
+            tg_data_available=True,
         )
 
-        self.assertEqual(score, 85)
-        self.assertEqual(dom, DecisionVerdict.BRA)
-        self.assertEqual(econ_score, 78)
-        self.assertFalse(used_cap)
+        self.assertEqual(summary.tr_score, 80)
+        self.assertEqual(summary.total_score, 79)
+        self.assertEqual(summary.verdict, DecisionVerdict.OK)
 
-    def test_gul_dom(self) -> None:
+    def test_compute_scores_caps_without_tg_data(self) -> None:
         metrics = CalculatedMetrics(
-            cashflow_mnd=800.0,
-            break_even_leie_mnd=20_500.0,
-            noi_aar=120_000.0,
-            roe_pct=8.0,
-            lanekost_mnd=11_000.0,
-            aarlig_nedbetaling_lan=60_000.0,
+            cashflow_mnd=2_500.0,
+            break_even_leie_mnd=15_000.0,
+            noi_aar=180_000.0,
+            roe_pct=12.5,
+            lanekost_mnd=8_500.0,
+            aarlig_nedbetaling_lan=85_000.0,
         )
         contract = InputContract(
-            kjopesum=4_500_000.0,
-            egenkapital=900_000.0,
+            kjopesum=5_200_000.0,
+            egenkapital=1_040_000.0,
             rente_pct_pa=5.0,
             lanetid_ar=25,
             brutto_leie_mnd=20_000.0,
@@ -177,49 +179,48 @@ class ScoringTests(unittest.TestCase):
             andre_kost_mnd=1_100.0,
         )
 
-        score, dom, econ_score, used_cap = beregn_score_og_dom(
+        summary = compute_scores(
             metrics,
             contract,
-            risk_score=100,
-            has_tg_data=True,
+            tg2_items=[],
+            tg3_items=[],
+            tg_data_available=False,
         )
 
-        self.assertEqual(score, 71)
-        self.assertEqual(dom, DecisionVerdict.OK)
-        self.assertEqual(econ_score, 58)
-        self.assertFalse(used_cap)
+        self.assertTrue(summary.tg_cap_used)
+        self.assertEqual(summary.total_score, 74)
+        self.assertEqual(summary.verdict, DecisionVerdict.OK)
 
-    def test_rod_dom(self) -> None:
+    def test_compute_scores_can_return_svak(self) -> None:
         metrics = CalculatedMetrics(
-            cashflow_mnd=-2_500.0,
-            break_even_leie_mnd=22_000.0,
-            noi_aar=80_000.0,
-            roe_pct=5.0,
+            cashflow_mnd=-1_000.0,
+            break_even_leie_mnd=23_000.0,
+            noi_aar=100_000.0,
+            roe_pct=5.5,
             lanekost_mnd=12_000.0,
-            aarlig_nedbetaling_lan=40_000.0,
+            aarlig_nedbetaling_lan=50_000.0,
         )
         contract = InputContract(
-            kjopesum=4_200_000.0,
-            egenkapital=840_000.0,
-            rente_pct_pa=5.0,
+            kjopesum=4_500_000.0,
+            egenkapital=675_000.0,
+            rente_pct_pa=5.5,
             lanetid_ar=25,
-            brutto_leie_mnd=20_000.0,
-            felleskost_mnd=3_000.0,
+            brutto_leie_mnd=18_000.0,
+            felleskost_mnd=3_500.0,
             vedlikehold_pct_av_leie=6.0,
-            andre_kost_mnd=1_000.0,
+            andre_kost_mnd=1_200.0,
         )
 
-        score, dom, econ_score, used_cap = beregn_score_og_dom(
+        summary = compute_scores(
             metrics,
             contract,
-            risk_score=100,
-            has_tg_data=True,
+            tg2_items=[],
+            tg3_items=[],
+            tg_data_available=True,
         )
 
-        self.assertEqual(score, 30)
-        self.assertEqual(dom, DecisionVerdict.DAARLIG)
-        self.assertEqual(econ_score, 0)
-        self.assertFalse(used_cap)
+        self.assertEqual(summary.verdict, DecisionVerdict.SVAK)
+        self.assertEqual(summary.total_score, 55)
 
 
 class DecisionResultTests(unittest.TestCase):
@@ -244,6 +245,13 @@ class DecisionResultTests(unittest.TestCase):
         )
 
         result = build_decision_result(contract, metrics)
+        summary = compute_scores(
+            metrics,
+            contract,
+            tg2_items=[],
+            tg3_items=[],
+            tg_data_available=True,
+        )
 
         self.assertIsInstance(result, DecisionResult)
         self.assertEqual(
@@ -262,9 +270,14 @@ class DecisionResultTests(unittest.TestCase):
         self.assertEqual(result.risiko, [])
         self.assertEqual(result.nokkel_tall[0].farge, "orange")
         self.assertTrue(result.nokkel_tall[0].verdi.endswith(" kr/mnd"))
-        self.assertEqual(result.score_0_100, 35)
-        self.assertEqual(result.dom, DecisionVerdict.DAARLIG)
-        self.assertIsNone(result.dom_notat)
+        self.assertEqual(result.econ_score_0_100, summary.econ_score)
+        self.assertEqual(result.tr_score_0_100, summary.tr_score)
+        self.assertEqual(result.score_0_100, summary.total_score)
+        self.assertEqual(result.dom, summary.verdict)
+        self.assertEqual(
+            result.dom_notat,
+            "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå.",
+        )
 
     def test_positive_cashflow_high_roe_adds_positive_bullets(self) -> None:
         metrics = CalculatedMetrics(
@@ -287,6 +300,13 @@ class DecisionResultTests(unittest.TestCase):
         )
 
         result = build_decision_result(contract, metrics)
+        summary = compute_scores(
+            metrics,
+            contract,
+            tg2_items=[],
+            tg3_items=[],
+            tg_data_available=False,
+        )
 
         self.assertEqual(
             result.status_setning,
@@ -299,8 +319,10 @@ class DecisionResultTests(unittest.TestCase):
         self.assertLessEqual(len(result.positivt), 4)
         self.assertEqual(result.nokkel_tall[-1].farge, "green")
         self.assertTrue(result.nokkel_tall[-1].verdi.endswith(" %"))
-        self.assertEqual(result.score_0_100, 74)
-        self.assertEqual(result.dom, DecisionVerdict.OK)
+        self.assertEqual(result.econ_score_0_100, summary.econ_score)
+        self.assertEqual(result.tr_score_0_100, summary.tr_score)
+        self.assertEqual(result.score_0_100, summary.total_score)
+        self.assertEqual(result.dom, summary.verdict)
         self.assertEqual(
             result.dom_notat,
             "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå.",
@@ -334,9 +356,18 @@ class DecisionResultTests(unittest.TestCase):
             tg3_items=["Fuktskade i kjeller"],
             tg_data_available=True,
         )
+        summary = compute_scores(
+            metrics,
+            contract,
+            tg2_items=["Normal slitasje på kjøkken"],
+            tg3_items=["Fuktskade i kjeller"],
+            tg_data_available=True,
+        )
 
-        self.assertEqual(result.score_0_100, 80)
-        self.assertEqual(result.dom, DecisionVerdict.BRA)
+        self.assertEqual(result.econ_score_0_100, summary.econ_score)
+        self.assertEqual(result.tr_score_0_100, summary.tr_score)
+        self.assertEqual(result.score_0_100, summary.total_score)
+        self.assertEqual(result.dom, summary.verdict)
         self.assertEqual(result.dom_notat, None)
         self.assertIn("TG3: Fuktskade i kjeller", result.risiko)
         self.assertIn("TG2: Normal slitasje på kjøkken", result.risiko)
@@ -373,12 +404,16 @@ class DecisionResultMapperTests(unittest.TestCase):
             "risiko",
             "nokkel_tall",
             "scorelinjal",
+            "score_breakdown",
+            "tg_cap_used",
             "dom_notat",
         })
         self.assertEqual(data["status"]["score"], decision.score_0_100)
         self.assertEqual(data["status"]["dom"], decision.dom.value)
         self.assertEqual(data["scorelinjal"]["value"], decision.score_0_100)
-        self.assertEqual(data["scorelinjal"]["farge"], "orange")
+        self.assertEqual({entry["id"] for entry in data["score_breakdown"]}, {"econ", "tr"})
+        self.assertEqual(data["tg_cap_used"], decision.tg_cap_used)
+        self.assertEqual(data["scorelinjal"]["farge"], "yellow")
         self.assertEqual(len(data["nokkel_tall"]), len(decision.nokkel_tall))
         self.assertEqual(data["dom_notat"], decision.dom_notat)
 
@@ -386,6 +421,9 @@ class DecisionResultMapperTests(unittest.TestCase):
         decision = DecisionResult(
             score_0_100=45,
             dom=DecisionVerdict.DAARLIG,
+            econ_score_0_100=30,
+            tr_score_0_100=55,
+            tg_cap_used=False,
             status_setning="",
             tiltak=[],
             positivt=[],
@@ -400,7 +438,14 @@ class DecisionResultMapperTests(unittest.TestCase):
             "score_0_100": 60,
         })
         data_ok = map_decision_to_ui(decision_ok)
-        self.assertEqual(data_ok["scorelinjal"]["farge"], "orange")
+        self.assertEqual(data_ok["scorelinjal"]["farge"], "yellow")
+
+        decision_svak = decision.model_copy(update={
+            "dom": DecisionVerdict.SVAK,
+            "score_0_100": 55,
+        })
+        data_svak = map_decision_to_ui(decision_svak)
+        self.assertEqual(data_svak["scorelinjal"]["farge"], "orange")
 
         decision_good = decision.model_copy(update={
             "dom": DecisionVerdict.BRA,

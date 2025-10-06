@@ -1,9 +1,32 @@
 import type { AnalyzeJobResponse, AnalysisPayload, AnalysisResponse, JobStatus, StatsResponse } from "./types";
 
+function withApiPrefix(path: string): string {
+  if (!path.startsWith("/")) {
+    return `/api/${path}`;
+  }
+  return path === "/api" || path.startsWith("/api/") ? path : `/api${path}`;
+}
+
 function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
+  if (typeof input !== "string") {
+    return fetch(input, init);
+  }
+
+  if (input.startsWith("http")) {
+    return fetch(input, init);
+  }
+
   const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
-  const url = typeof input === "string" && input.startsWith("http") ? input : `${base}${input}`;
-  return fetch(url, init);
+
+  if (typeof window !== "undefined") {
+    return fetch(withApiPrefix(input), init);
+  }
+
+  if (base) {
+    return fetch(`${base}${input}`, init);
+  }
+
+  return fetch(withApiPrefix(input), init);
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {

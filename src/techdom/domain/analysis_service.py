@@ -96,6 +96,11 @@ class AnalysisDecisionContext:
     tg2_items: Sequence[str] = ()
     tg3_items: Sequence[str] = ()
     tg_data_available: bool = False
+    upgrades_recent: Sequence[str] = ()
+    warnings: Sequence[str] = ()
+    bath_age_years: Optional[float] = None
+    kitchen_age_years: Optional[float] = None
+    roof_age_years: Optional[float] = None
 
 
 @dataclass
@@ -157,6 +162,11 @@ def compute_analysis(
             tg2_items=list(ctx.tg2_items),
             tg3_items=list(ctx.tg3_items),
             tg_data_available=ctx.tg_data_available,
+            upgrades=list(ctx.upgrades_recent),
+            warnings=list(ctx.warnings),
+            bath_age_years=ctx.bath_age_years,
+            kitchen_age_years=ctx.kitchen_age_years,
+            roof_age_years=ctx.roof_age_years,
         )
         decision_ui = map_decision_to_ui(decision_result)
     except ValidationError:

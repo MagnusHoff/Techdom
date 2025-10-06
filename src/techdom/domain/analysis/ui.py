@@ -1,7 +1,7 @@
 """Oppbygning av beslutningsresultat for visning i UI."""
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Sequence
 
 from techdom.domain.analysis.contracts import (
     CalculatedMetrics,
@@ -10,9 +10,9 @@ from techdom.domain.analysis.contracts import (
     InputContract,
     KeyFigure,
 )
-from techdom.domain.analysis.risk import calc_risk_score
 from techdom.domain.analysis.scoring import (
-    beregn_score_og_dom,
+    ScoreSummary,
+    compute_scores,
     farge_for_break_even_gap,
     farge_for_cashflow,
     farge_for_roe,
@@ -25,6 +25,11 @@ def build_decision_result(
     tg2_items: Optional[Iterable[str]] = None,
     tg3_items: Optional[Iterable[str]] = None,
     tg_data_available: Optional[bool] = None,
+    upgrades: Optional[Iterable[str]] = None,
+    warnings: Optional[Iterable[str]] = None,
+    bath_age_years: Optional[float] = None,
+    kitchen_age_years: Optional[float] = None,
+    roof_age_years: Optional[float] = None,
 ) -> DecisionResult:
     """Lag deterministisk beslutningsresultat for visning i UI."""
 
@@ -35,21 +40,25 @@ def build_decision_result(
         if tg_data_available is not None
         else bool(tg2_list or tg3_list)
     )
-    risk_score = calc_risk_score(
-        tg2_list,
-        tg3_list,
-        has_tg_data=has_tg_data,
-    )
 
-    score, dom, _econ_score, used_no_tg_cap = beregn_score_og_dom(
+    upgrades_list: Sequence[str] = list(upgrades or [])
+    warning_list: Sequence[str] = list(warnings or [])
+
+    summary: ScoreSummary = compute_scores(
         calc,
         input_contract,
-        risk_score=risk_score,
-        has_tg_data=has_tg_data,
+        tg2_list,
+        tg3_list,
+        tg_data_available=has_tg_data,
+        upgrades_recent=upgrades_list,
+        warnings=warning_list,
+        bath_age_years=bath_age_years,
+        kitchen_age_years=kitchen_age_years,
+        roof_age_years=roof_age_years,
     )
 
     dom_notat: Optional[str] = None
-    if used_no_tg_cap:
+    if summary.tg_cap_used:
         dom_notat = "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå."
 
     risiko_entries: List[str] = []
@@ -121,8 +130,11 @@ def build_decision_result(
     ]
 
     return DecisionResult(
-        score_0_100=score,
-        dom=dom,
+        score_0_100=summary.total_score,
+        dom=summary.verdict,
+        econ_score_0_100=summary.econ_score,
+        tr_score_0_100=summary.tr_score,
+        tg_cap_used=summary.tg_cap_used,
         status_setning=status,
         tiltak=tiltak,
         positivt=positivt,
@@ -160,6 +172,19 @@ def map_decision_to_ui(decision: DecisionResult) -> dict[str, Any]:
             "value": decision.score_0_100,
             "farge": _dom_til_farge(decision.dom),
         },
+        "score_breakdown": [
+            {
+                "id": "econ",
+                "label": "Økonomi",
+                "value": decision.econ_score_0_100,
+            },
+            {
+                "id": "tr",
+                "label": "Tilstand",
+                "value": decision.tr_score_0_100,
+            },
+        ],
+        "tg_cap_used": decision.tg_cap_used,
         "dom_notat": decision.dom_notat,
     }
 
@@ -167,7 +192,8 @@ def map_decision_to_ui(decision: DecisionResult) -> dict[str, Any]:
 def _dom_til_farge(dom: DecisionVerdict) -> str:
     mapping = {
         DecisionVerdict.DAARLIG: "red",
-        DecisionVerdict.OK: "orange",
+        DecisionVerdict.SVAK: "orange",
+        DecisionVerdict.OK: "yellow",
         DecisionVerdict.BRA: "green",
     }
     return mapping.get(dom, "neutral")

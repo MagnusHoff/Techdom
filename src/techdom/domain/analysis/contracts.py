@@ -40,6 +40,7 @@ class DecisionFacts(BaseModel):
 
 class DecisionVerdict(str, Enum):
     DAARLIG = "Dårlig"
+    SVAK = "Svak"
     OK = "OK"
     BRA = "Bra"
 
@@ -53,6 +54,9 @@ class KeyFigure(BaseModel):
 class DecisionResult(BaseModel):
     score_0_100: int
     dom: DecisionVerdict
+    econ_score_0_100: int
+    tr_score_0_100: int
+    tg_cap_used: bool = False
     status_setning: str
     tiltak: List[str] = Field(default_factory=list)
     positivt: List[str] = Field(default_factory=list)
