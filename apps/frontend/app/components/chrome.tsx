@@ -156,7 +156,6 @@ export function SiteHeader({
     }
     closeModal();
   };
-
   const handleLogout = async () => {
     try {
       await logoutUser();

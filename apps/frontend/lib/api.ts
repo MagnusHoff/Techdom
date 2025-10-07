@@ -115,7 +115,6 @@ export async function confirmPasswordReset(
 
   await handleResponse<unknown>(res);
 }
-
 export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisResponse> {
   const res = await apiFetch("/analysis", {
     method: "POST",

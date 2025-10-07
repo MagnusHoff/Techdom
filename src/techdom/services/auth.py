@@ -150,8 +150,6 @@ async def reset_password(
     await session.commit()
     await session.refresh(user)
     return user
-
-
 async def get_user_by_email(
     session: AsyncSession, *, email: str
 ) -> Optional[User]:
