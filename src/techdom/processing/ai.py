@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 import json
-from typing import Dict, Any, List, TypedDict
+from typing import Dict, Any, Iterable, List, Sequence, TypedDict
 from openai import OpenAI
 
 
@@ -44,6 +44,73 @@ def _get_key() -> str:
     return env_key
 
 
+def _clean_question_subject(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[\-\*\u2022]+\s*", "", text)
+    text = re.sub(r"\bTG\s*\d[:\-]?\s*", "", text, flags=re.I)
+    text = re.sub(r"^\d+[\.\)]\s*", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = text.strip(" \t-–—:;.")
+    if len(text) > 160:
+        text = text[:157].rstrip(",;:- ") + "..."
+    return text
+
+
+def _generate_follow_up_questions(
+    tg3: Iterable[str],
+    watchouts: Iterable[str],
+    tg2: Iterable[str],
+    upgrades: Iterable[str],
+    limit: int = 6,
+) -> List[str]:
+    templates = {
+        "tg3": "Når utbedres «{item}», og hvem dekker kostnaden?",
+        "watch": "Hva er risiko og neste steg for «{item}»?",
+        "tg2": "Trengs tiltak snart for «{item}», og hva er kostnaden?",
+        "upgrade": "Er det budsjettert for «{item}», og når gjøres det?",
+        "fallback": "Kan dere utdype «{item}» og hvilke kostnader den medfører?",
+    }
+    questions: List[str] = []
+    seen: set[str] = set()
+
+    def add_question(category: str, raw: str) -> None:
+        if len(questions) >= limit:
+            return
+        subject = _clean_question_subject(raw)
+        if not subject:
+            return
+        key = subject.casefold()
+        if key in seen:
+            return
+        template = templates.get(category) or templates["fallback"]
+        questions.append(template.format(item=subject))
+        seen.add(key)
+
+    for item in tg3:
+        add_question("tg3", item)
+        if len(questions) >= limit:
+            return questions
+
+    for item in watchouts:
+        add_question("watch", item)
+        if len(questions) >= limit:
+            return questions
+
+    for item in tg2:
+        add_question("tg2", item)
+        if len(questions) >= limit:
+            return questions
+
+    for item in upgrades:
+        add_question("upgrade", item)
+        if len(questions) >= limit:
+            return questions
+
+    return questions
+
+
 def ai_explain(inputs: Inputs, m: Metrics) -> str:
     key = _get_key()
     if not key:
@@ -72,6 +139,248 @@ def ai_explain(inputs: Inputs, m: Metrics) -> str:
         return content or _local_explain(inputs, m)
     except Exception:
         return _local_explain(inputs, m)
+
+
+_PROSPECTUS_COMPONENT_TERMS: Sequence[str] = (
+    "bad",
+    "baderom",
+    "vaskerom",
+    "vatrm",
+    "kjokken",
+    "kjokkeninnredning",
+    "kjeller",
+    "loft",
+    "tak",
+    "taket",
+    "taktekking",
+    "takstein",
+    "takbelegg",
+    "pipe",
+    "piper",
+    "skorstein",
+    "vindu",
+    "vinduer",
+    "dorer",
+    "ytterdor",
+    "ytterdoer",
+    "innervegg",
+    "yttervegg",
+    "vegg",
+    "vegger",
+    "gulv",
+    "bjelkelag",
+    "grunnmur",
+    "fundament",
+    "drener",
+    "radon",
+    "ventilasjon",
+    "avtrekk",
+    "terrasse",
+    "balkong",
+    "veranda",
+    "rekkverk",
+    "trapp",
+    "fasade",
+    "kledning",
+    "isolasjon",
+    "mur",
+    "betong",
+    "puss",
+    "sikringsskap",
+    "elanlegg",
+    "elektrisk",
+    "elektro",
+    "varmtvannsbereder",
+    "bereder",
+    "ror",
+    "avlop",
+    "avloppsror",
+    "sanitar",
+    "sluk",
+    "membran",
+    "vatrom",
+    "garasje",
+    "carport",
+    "bod",
+    "takstol",
+    "bjaelke",
+    "loftsbjelke",
+    "nedlop",
+    "takrenne",
+    "renne",
+    "yttertett",
+    "tegl",
+)
+
+_PROSPECTUS_ISSUE_TERMS: Sequence[str] = (
+    "ikke godkjent",
+    "fukt",
+    "fuktskade",
+    "lekk",
+    "rate",
+    "raate",
+    "mugg",
+    "sopp",
+    "skade",
+    "skader",
+    "sprekk",
+    "sprekker",
+    "defekt",
+    "mangel",
+    "avvik",
+    "korrosjon",
+    "rust",
+    "utett",
+    "svikt",
+    "brudd",
+    "fare",
+    "risiko",
+    "eldre",
+    "gammel",
+    "slitt",
+    "slitasje",
+    "oppgradering",
+    "utbedring",
+    "rehab",
+    "oppussing",
+    "avrenning",
+    "setnings",
+    "skjev",
+    "ubehandlet",
+    "sprukket",
+    "manglende",
+    "ukjent",
+    "byttes",
+    "bytte",
+    "ma skiftes",
+    "utskift",
+    "brann",
+    "brannfare",
+    "kondens",
+    "tett",
+    "kondens",
+)
+
+
+def _simplify_text(value: str) -> str:
+    text = value.casefold()
+    return (
+        text.replace("ø", "o")
+        .replace("å", "a")
+        .replace("æ", "ae")
+        .replace("é", "e")
+        .replace("ü", "u")
+        .replace("ö", "o")
+    )
+
+
+def _prospectus_tokens(value: str) -> List[str]:
+    return [token for token in re.split(r"[^a-z0-9]+", value) if token]
+
+
+def _normalise_prospectus_text(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[\-\*\u2022\u2043\u2219\u25cf]+\s*", "", text)
+    text = re.sub(r"\btilstands?grad\s*\d\b[:\-–—\s]*", "", text, flags=re.I)
+    text = re.sub(r"\bTG\s*[-/]*\s*(?:0|1|2|3|iu)\b[:\-–—\s]*", "", text, flags=re.I)
+    text = re.sub(r"\bTG\s*(?:0|1|2|3)\b", "", text, flags=re.I)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = text.strip(" .,:;–—-")
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _looks_specific_issue(text: str) -> bool:
+    if not text:
+        return False
+    normalised = _simplify_text(text)
+    if len(normalised) < 8:
+        return False
+    tokens = set(_prospectus_tokens(normalised))
+
+    def _contains(term: str) -> bool:
+        if " " in term:
+            return term in normalised
+        return term in tokens
+
+    has_component = any(_contains(term) for term in _PROSPECTUS_COMPONENT_TERMS)
+    has_issue = any(_contains(term) for term in _PROSPECTUS_ISSUE_TERMS)
+    if _contains("ikke godkjent"):
+        has_issue = True
+    if has_component and (has_issue or len(text.split()) >= 3):
+        return True
+    if has_issue and has_component:
+        return True
+    return False
+
+
+def _dedupe_preserve_order(items: Iterable[str], limit: int) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for item in items:
+        candidate = item.strip()
+        if not candidate:
+            continue
+        key = _simplify_text(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(candidate[:200])
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _gather_issue_block(lines: Sequence[str], start: int) -> str:
+    block_parts: List[str] = [lines[start]]
+    for offset in range(1, 4):
+        idx = start + offset
+        if idx >= len(lines):
+            break
+        next_line = lines[idx]
+        if re.search(r"\bTG\s*\d\b", next_line, re.I):
+            break
+        block_parts.append(next_line)
+        if len(" ".join(block_parts)) > 300:
+            break
+    raw = " ".join(block_parts)
+    return _normalise_prospectus_text(raw)
+
+
+def _extract_tagged_issues(lines: Sequence[str], tag_regex: re.Pattern[str]) -> List[str]:
+    collected: List[str] = []
+    for index, line in enumerate(lines):
+        if not tag_regex.search(line):
+            continue
+        snippet = _gather_issue_block(lines, index)
+        if not snippet:
+            continue
+        if not _looks_specific_issue(snippet):
+            continue
+        collected.append(snippet)
+    return _dedupe_preserve_order(collected, 10)
+
+
+def _extract_watchout_issues(lines: Sequence[str], exclude: Sequence[str]) -> List[str]:
+    collected: List[str] = []
+    exclude_keys = {_simplify_text(item) for item in exclude}
+    for index, line in enumerate(lines):
+        simplified = _simplify_text(line)
+        if not any(term in simplified for term in _PROSPECTUS_ISSUE_TERMS):
+            continue
+        snippet = _gather_issue_block(lines, index)
+        if not snippet:
+            continue
+        key = _simplify_text(snippet)
+        if key in exclude_keys:
+            continue
+        if not _looks_specific_issue(snippet):
+            continue
+        collected.append(snippet)
+    return _dedupe_preserve_order(collected, 12)
 
 
 def analyze_prospectus(text: str) -> Dict[str, Any]:
@@ -128,41 +437,28 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
                 "tg2": [str(x) for x in (obj.get("tg2") or [])],
                 "upgrades": [str(x) for x in (obj.get("upgrades") or [])],
                 "watchouts": [str(x) for x in (obj.get("watchouts") or [])],
-                "questions": [str(x) for x in (obj.get("questions") or [])],
             }
+            out["questions"] = _generate_follow_up_questions(
+                out["tg3"], out["watchouts"], out["tg2"], out["upgrades"]
+            )
             return out
         except Exception:
             # faller til regex-basert
             pass
 
     # --- Fallback uten OpenAI: enkel regex-plukk ---
-    tg3: List[str] = []
-    tg2: List[str] = []
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    for l in lines:
-        if re.search(r"\bTG\s*3\b", l, re.I):
-            tg3.append(l[:200])
-        elif re.search(r"\bTG\s*2\b", l, re.I):
-            tg2.append(l[:200])
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    tg3 = _extract_tagged_issues(lines, re.compile(r"\bTG\s*3\b", re.I))
+    tg2 = _extract_tagged_issues(lines, re.compile(r"\bTG\s*2\b", re.I))
 
-    upgrades = [
-        l for l in lines if re.search(r"(oppgrad|rehab|utbedr|pusse)", l, re.I)
-    ][:8]
-    watch = [
-        l
-        for l in lines
-        if re.search(
-            r"(fukt|råte|lekk|skade|avvik|mangel|asbest|radon|drenering|el-anlegg)",
-            l,
-            re.I,
-        )
-    ][:8]
-    questions = [
-        "Dokumentasjon på utførte arbeider og samsvar (FDV/kvitteringer)?",
-        "Tilstandsrapport: detaljer for TG3/TG2 og estimerte kostnader?",
-        "Alder/tilstand på tak, drenering, våtrom og el-anlegg?",
-        "Avvik i felleskostnader/vedtekter, planlagte rehabiliteringer?",
+    upgrades_candidates = [
+        _normalise_prospectus_text(line)
+        for line in lines
+        if re.search(r"(oppgrad|rehab|utbedr|pusse)", line, re.I)
     ]
+    upgrades = _dedupe_preserve_order(upgrades_candidates, 8)
+    watchouts = _extract_watchout_issues(lines, exclude=[*tg2, *tg3])
+    questions = _generate_follow_up_questions(tg3, watchouts, tg2, upgrades)
     return {
         "summary_md": (
             "Funn basert på enkel tekstskanning (begrenset uten AI-nøkkel). "
@@ -171,6 +467,6 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
         "tg3": tg3[:10],
         "tg2": tg2[:10],
         "upgrades": upgrades[:8],
-        "watchouts": watch[:8],
+        "watchouts": watchouts[:8],
         "questions": questions,
     }

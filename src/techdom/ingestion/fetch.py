@@ -386,10 +386,33 @@ def choose_area_m2(attrs: Dict[str, str], page_text: str) -> Optional[float]:
     return _parse_m2_from_text(text)
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+
+
+def _norm_tokens(value: str | None) -> str:
+    if not value:
+        return ""
+    tokens = _TOKEN_RE.findall(value.lower())
+    return " ".join(tokens)
+
+
 def choose_rooms(attrs: Dict[str, str], page_text: str) -> Optional[int]:
-    for want in ["soverom", "antall soverom", "rom", "antall rom"]:
+    def _matches(key: str, want: str) -> bool:
+        want_norm = _norm_tokens(want)
+        key_norm = _norm_tokens(key)
+        if not want_norm or not key_norm:
+            return False
+        if key_norm == want_norm:
+            return True
+        if key_norm.startswith(f"{want_norm} "):
+            return True
+        if key_norm.endswith(f" {want_norm}"):
+            return True
+        return f" {want_norm} " in key_norm
+
+    for want in ["rom", "antall rom", "soverom", "antall soverom"]:
         for k, v in attrs.items():
-            if normalize(want) in normalize(k):
+            if _matches(k, want):
                 m = re.search(r"(\d+)", str(v))
                 if m:
                     return int(m.group(1))
@@ -780,7 +803,10 @@ def fetch_prospectus_from_finn(
                     "prospect",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "document",
                     "documents",
+                    "dokument",
+                    "download",
                     "webmegler",
                     "wngetfile",
                 ],
@@ -814,7 +840,10 @@ def fetch_prospectus_from_finn(
                     "prospect",
                     "salgsoppgav",
                     "salgsprospekt",
+                    "document",
                     "documents",
+                    "dokument",
+                    "download",
                     "webmegler",
                     "wngetfile",
                 ],
@@ -963,7 +992,15 @@ def fetch_prospectus_from_megler_url(
             b2, u2, bdbg = fetch_pdf_with_browser_filtered(
                 megler_url,
                 click_text_contains=["salgsoppgave", "prospekt", "salgsprospekt"],
-                allow_only_if_url_contains=["prospekt", "salgsoppgav", "salgsprospekt"],
+                allow_only_if_url_contains=[
+                    "prospekt",
+                    "salgsoppgav",
+                    "salgsprospekt",
+                    "document",
+                    "documents",
+                    "dokument",
+                    "download",
+                ],
                 deny_if_url_contains=[
                     "tilstandsrapport",
                     "boligsalgsrapport",
@@ -979,7 +1016,15 @@ def fetch_prospectus_from_megler_url(
             b2, u2, bdbg = fetch_pdf_with_browser_filtered(
                 megler_url,
                 click_text_contains=["salgsoppgave", "prospekt", "salgsprospekt"],
-                allow_only_if_url_contains=["prospekt", "salgsoppgav", "salgsprospekt"],
+                allow_only_if_url_contains=[
+                    "prospekt",
+                    "salgsoppgav",
+                    "salgsprospekt",
+                    "document",
+                    "documents",
+                    "dokument",
+                    "download",
+                ],
                 deny_if_url_contains=[
                     "tilstandsrapport",
                     "boligsalgsrapport",
