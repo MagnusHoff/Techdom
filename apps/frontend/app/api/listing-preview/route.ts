@@ -31,12 +31,335 @@ function extractMetaContent(html: string, attribute: "property" | "name", value:
   return null;
 }
 
+const IMAGE_KEYWORDS_ALLOW = ["image", "images", "media", "carousel", "gallery", "photo", "photos", "url"];
+const IMAGE_KEYWORDS_BLOCK = [
+  "logo",
+  "ikon",
+  "icon",
+  "placeholder",
+  "map",
+  "kart",
+  "floorplan",
+  "plantegning",
+  "fpa",
+  "document",
+  "doc",
+  "pdf",
+  "brochure",
+  "diagram",
+  "overlay",
+  "badge",
+  "avatar",
+  "profile",
+  "video",
+  "thumb",
+  "megler",
+  "proff",
+  "ansatt",
+  "agent",
+  "portrait",
+  "portrett",
+  "team",
+  "staff",
+  "profil",
+  "employee",
+  "human",
+  "person",
+  "people",
+  "nav",
+];
+
+const IMAGE_IDENTITY_SEGMENT_IGNORE = new Set([
+  "original",
+  "full",
+  "fullsize",
+  "master",
+  "scaled",
+  "scale",
+  "web",
+  "desktop",
+  "mobile",
+  "widescreen",
+  "optimized",
+  "variant",
+  "quality",
+]);
+
+type ImageCollectorEntry = {
+  url: string;
+  score: number;
+  order: number;
+};
+
+type ImageCollectorState = {
+  results: Map<string, ImageCollectorEntry>;
+  visited: WeakSet<object>;
+  order: { value: number };
+};
+
+function isLikelyListingImage(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  if (!hostname.endsWith("finncdn.no")) {
+    return false;
+  }
+
+  const path = url.pathname.toLowerCase();
+  if (!path.includes("/dynamic/")) {
+    return false;
+  }
+
+  for (const blocked of IMAGE_KEYWORDS_BLOCK) {
+    if (path.includes(blocked)) {
+      return false;
+    }
+  }
+
+  const sizeMatch = path.match(/\/dynamic\/(\d+)(?:x|w)/);
+  if (sizeMatch) {
+    const size = Number.parseInt(sizeMatch[1], 10);
+    if (Number.isFinite(size) && size > 0 && size < 400) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function createImageCollector(): ImageCollectorState {
+  return {
+    results: new Map<string, ImageCollectorEntry>(),
+    visited: new WeakSet<object>(),
+    order: { value: 0 },
+  };
+}
+
+function extractImageIdentity(url: URL): { key: string; score: number } | null {
+  const rawSegments = url.pathname.split("/").filter(Boolean);
+  if (rawSegments.length === 0) {
+    return null;
+  }
+
+  const cleanedSegments: string[] = [];
+  let maxWidth = 0;
+
+  for (let i = 0; i < rawSegments.length; i += 1) {
+    const segment = decodeURIComponent(rawSegments[i]);
+    const lower = segment.toLowerCase();
+
+    if (lower === "dynamic") {
+      if (i + 1 < rawSegments.length) {
+        const widthCandidate = decodeURIComponent(rawSegments[i + 1]);
+        const widthMatch = widthCandidate.match(/(\d{2,4})/);
+        if (widthMatch) {
+          const width = Number.parseInt(widthMatch[1], 10);
+          if (Number.isFinite(width) && width > maxWidth) {
+            maxWidth = width;
+          }
+        }
+        if (/^\d+[xw]?$/i.test(widthCandidate) || /^w\d+$/i.test(widthCandidate)) {
+          i += 1;
+          continue;
+        }
+      }
+      continue;
+    }
+
+    if (/^(?:\d{1,4}(?:x|w)?|w\d{1,4}|h\d{1,4}|c\d{1,4}|s\d{1,4}|q\d{1,4}|m\d{1,4}|xs|sm|md|lg)$/i.test(lower)) {
+      continue;
+    }
+
+    if (IMAGE_IDENTITY_SEGMENT_IGNORE.has(lower)) {
+      continue;
+    }
+
+    cleanedSegments.push(segment);
+  }
+
+  if (cleanedSegments.length === 0) {
+    return null;
+  }
+
+  const filenameSegment = cleanedSegments[cleanedSegments.length - 1];
+  const siblingSegment = cleanedSegments.length > 1 ? cleanedSegments[cleanedSegments.length - 2] : null;
+
+  const filenameLower = filenameSegment.toLowerCase();
+  const dotIndex = filenameLower.lastIndexOf(".");
+  const baseName = dotIndex > 0 ? filenameLower.slice(0, dotIndex) : filenameLower;
+  const trimmedBaseName = baseName.replace(/[-_](?:\d{1,2}|[a-f0-9]{1,4})$/i, "");
+  const identityName = trimmedBaseName || baseName || filenameLower;
+
+  const keySegments = [url.hostname.toLowerCase()];
+  if (siblingSegment) {
+    keySegments.push(siblingSegment.toLowerCase());
+  }
+  keySegments.push(identityName);
+
+  return { key: keySegments.join("/"), score: maxWidth };
+}
+
+function addImageCandidate(state: ImageCollectorState, value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return;
+  }
+  const normalised = normaliseImageUrl(value);
+  if (!normalised) {
+    return;
+  }
+  let url: URL;
+  try {
+    url = new URL(normalised);
+  } catch {
+    return;
+  }
+  const meta = extractImageIdentity(url);
+  if (!meta) {
+    return;
+  }
+
+  const existing = state.results.get(meta.key);
+  if (!existing) {
+    state.results.set(meta.key, {
+      url: normalised,
+      score: meta.score,
+      order: state.order.value++,
+    });
+    return;
+  }
+
+  if (meta.score > existing.score) {
+    existing.url = normalised;
+    existing.score = meta.score;
+  }
+}
+
+function normaliseImageUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim().replace(/&amp;/g, "&");
+  if (!trimmed) {
+    return null;
+  }
+  const withProtocol = trimmed.startsWith("//") ? `https:${trimmed}` : trimmed;
+  if (!/^https?:\/\//i.test(withProtocol)) {
+    return null;
+  }
+  try {
+    const url = new URL(withProtocol);
+    if (!/\.(?:jpe?g|png|webp|avif|gif)(?:[?#].*)?$/i.test(url.pathname + url.search)) {
+      return null;
+    }
+    if (!isLikelyListingImage(url)) {
+      return null;
+    }
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function findImageUrl(html: string): string | null {
   const candidates = [
     extractMetaContent(html, "property", "og:image"),
     extractMetaContent(html, "name", "twitter:image"),
   ];
-  return candidates.find((value) => typeof value === "string" && value.length > 0) ?? null;
+  for (const candidate of candidates) {
+    const normalised = normaliseImageUrl(candidate ?? null);
+    if (normalised) {
+      return normalised;
+    }
+  }
+  return null;
+}
+
+function collectImagesFromNode(node: unknown, state: ImageCollectorState) {
+  if (node == null) {
+    return;
+  }
+  if (typeof node === "string") {
+    addImageCandidate(state, node);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectImagesFromNode(entry, state);
+    }
+    return;
+  }
+  if (typeof node === "object") {
+    const record = node as Record<string, unknown>;
+    if (state.visited.has(record)) {
+      return;
+    }
+    state.visited.add(record);
+
+    for (const [key, value] of Object.entries(record)) {
+      const lowerKey = key.toLowerCase();
+      if (IMAGE_KEYWORDS_BLOCK.some((blocked) => lowerKey.includes(blocked))) {
+        continue;
+      }
+      if (!IMAGE_KEYWORDS_ALLOW.some((keyword) => lowerKey.includes(keyword))) {
+        if (typeof value !== "object" || value === null) {
+          continue;
+        }
+      }
+      if (typeof value === "string") {
+        addImageCandidate(state, value);
+      } else {
+        collectImagesFromNode(value, state);
+      }
+    }
+  }
+}
+
+function collectGalleryImages(html: string): string[] {
+  const collector = createImageCollector();
+
+  const scriptPattern = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = scriptPattern.exec(html))) {
+    const raw = match[1].trim();
+    if (!raw) continue;
+    try {
+      const json = JSON.parse(raw);
+      collectImagesFromNode(json, collector);
+    } catch {
+      // ignore malformed JSON blocks
+    }
+  }
+
+  const anyScriptPattern = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  while ((match = anyScriptPattern.exec(html))) {
+    const raw = match[1];
+    if (!raw || raw.includes("<")) {
+      continue;
+    }
+    const cleaned = raw.trim();
+    if (!cleaned.startsWith("{") && !cleaned.startsWith("[") && !cleaned.includes("{")) {
+      continue;
+    }
+    const jsonCandidate = cleaned.replace(/^window\.[^=]+\s*=\s*/, "").replace(/;\s*$/, "");
+    if (!jsonCandidate || jsonCandidate.length < 10) {
+      continue;
+    }
+    try {
+      const json = JSON.parse(jsonCandidate);
+      collectImagesFromNode(json, collector);
+    } catch {
+      // skip non-JSON script contents
+    }
+  }
+
+  const urlPattern = /https?:\/\/[^"'\s]+\.(?:jpe?g|png|webp|avif|gif)(?:[?#][^"'\s]*)?/gi;
+  while ((match = urlPattern.exec(html))) {
+    addImageCandidate(collector, match[0]);
+  }
+
+  return Array.from(collector.results.values())
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.url);
 }
 
 function findTitle(html: string): string | null {
@@ -184,12 +507,29 @@ export async function GET(request: Request) {
     }
 
     const html = await response.text();
-    const image = findImageUrl(html);
+    const images = collectGalleryImages(html);
+    const primaryOgImage = findImageUrl(html);
+    if (primaryOgImage) {
+      const existingIndex = images.findIndex((candidate) => candidate === primaryOgImage);
+      if (existingIndex === -1) {
+        images.unshift(primaryOgImage);
+      } else if (existingIndex > 0) {
+        images.splice(existingIndex, 1);
+        images.unshift(primaryOgImage);
+      }
+    }
+    const image = images.length ? images[0] : primaryOgImage;
     const title = findTitle(html);
     const address = findAddress(html);
 
     return NextResponse.json(
-      { image: image ?? null, title: title ?? null, address: address ?? null, source: targetUrl },
+      {
+        image: image ?? null,
+        images,
+        title: title ?? null,
+        address: address ?? null,
+        source: targetUrl,
+      },
       {
         status: 200,
         headers: {
