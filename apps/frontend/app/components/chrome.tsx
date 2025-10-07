@@ -2,9 +2,15 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "@/lib/api";
+import {
+  fetchCurrentUser,
+  loginUser,
+  logoutUser,
+  registerUser,
+  requestPasswordReset,
+} from "@/lib/api";
 import type { AuthUser } from "@/lib/types";
 
 interface SiteHeaderProps {
@@ -27,6 +33,7 @@ export function SiteHeader({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
+  const ignoreBackdropClickRef = useRef(false); // Avoid closing when dragging from inside modal
 
   useEffect(() => {
     const handleScroll = () => {
@@ -74,14 +81,11 @@ export function SiteHeader({
     }
   }, [authMode]);
 
-  const modalDescription = useMemo(() => {
+  const modalDescription = useMemo<string | null>(() => {
     if (authMode === "forgot") {
       return "Vi sender deg en lenke for å tilbakestille passordet ditt når systemet er klart.";
     }
-    if (authMode === "signup") {
-      return "Registrering av nye brukere blir tilgjengelig snart. Legg inn e-posten din så er du klar.";
-    }
-    return "Logg inn for å lagre analyser og synkronisere på tvers av enheter. Backend-koblingen kommer snart.";
+    return null;
   }, [authMode]);
 
   const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -90,7 +94,23 @@ export function SiteHeader({
     setLoginNotice(null);
 
     if (authMode === "forgot") {
-      setLoginNotice("Tilbakestilling av passord er ikke tilgjengelig ennå.");
+      setLoginLoading(true);
+      try {
+        await requestPasswordReset({ email });
+        setLoginNotice(
+          "Hvis vi finner e-posten din sender vi en lenke for å tilbakestille passordet."
+        );
+        setAuthMode("login");
+        setPassword("");
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Ukjent feil under forespørsel om tilbakestilling";
+        setLoginError(message);
+      } finally {
+        setLoginLoading(false);
+      }
       return;
     }
 
@@ -121,6 +141,7 @@ export function SiteHeader({
   };
 
   const closeModal = () => {
+    ignoreBackdropClickRef.current = false;
     setLoginOpen(false);
     setAuthMode("login");
     setPassword("");
@@ -128,6 +149,13 @@ export function SiteHeader({
     setLoginNotice(null);
   };
 
+  const handleBackdropClick = () => {
+    if (ignoreBackdropClickRef.current) {
+      ignoreBackdropClickRef.current = false;
+      return;
+    }
+    closeModal();
+  };
   const handleLogout = async () => {
     try {
       await logoutUser();
@@ -176,16 +204,27 @@ export function SiteHeader({
           className="login-modal-backdrop"
           role="dialog"
           aria-modal="true"
-          onClick={closeModal}
+          onClick={handleBackdropClick}
         >
-          <div className="login-modal" onClick={(event) => event.stopPropagation()}>
+          <div
+            className="login-modal"
+            onClick={(event) => event.stopPropagation()}
+            onMouseDown={() => {
+              ignoreBackdropClickRef.current = true;
+            }}
+            onMouseUp={() => {
+              ignoreBackdropClickRef.current = false;
+            }}
+          >
             <div className="login-modal-header">
               <h2>{modalHeadline}</h2>
               <button type="button" className="login-close" onClick={closeModal} aria-label="Lukk innlogging">
                 ×
               </button>
             </div>
-            <p className="login-modal-description">{modalDescription}</p>
+            {modalDescription ? (
+              <p className="login-modal-description">{modalDescription}</p>
+            ) : null}
             {loginError ? <div className="error-banner">{loginError}</div> : null}
             {loginNotice ? <p className="login-notice">{loginNotice}</p> : null}
             <form className="login-form" onSubmit={handleLoginSubmit}>
@@ -243,9 +282,9 @@ export function SiteHeader({
               <button
                 type="button"
                 className={authMode === "signup" ? "login-secondary-active" : "login-secondary-link"}
-                onClick={() => setAuthMode("signup")}
+                onClick={() => setAuthMode(authMode === "signup" ? "login" : "signup")}
               >
-                Lag ny bruker
+                {authMode === "signup" ? "Logg inn" : "Lag ny bruker"}
               </button>
             </div>
           </div>

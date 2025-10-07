@@ -117,3 +117,12 @@ export interface UserListResponse {
   total: number;
   items: AuthUser[];
 }
+
+export interface PasswordResetRequestPayload {
+  email: string;
+}
+
+export interface PasswordResetConfirmPayload {
+  token: string;
+  password: string;
+}

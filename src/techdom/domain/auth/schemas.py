@@ -42,3 +42,12 @@ class Token(BaseModel):
 
 class AuthResponse(Token):
     user: UserRead
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=1)
+    password: str = Field(min_length=8)
