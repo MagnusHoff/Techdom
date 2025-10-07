@@ -89,3 +89,55 @@ def send_password_reset_email(recipient: str, reset_url: str) -> None:
                 server.send_message(message)
     except Exception:
         logger.exception("Kunne ikke sende passordreset-epost til %s", recipient)
+
+
+def send_email_verification_email(recipient: str, verification_url: str) -> None:
+    config = _smtp_config()
+    port = _parse_port(config["port"])
+    host = config["host"].strip()
+
+    message = EmailMessage()
+    message["Subject"] = "Bekreft e-posten din"
+    message["From"] = config["sender"]
+    message["To"] = recipient
+    message.set_content(
+        "\n".join(
+            [
+                "Hei!",
+                "",
+                "Velkommen til Techdom.ai! Klikk lenken under for å bekrefte e-postadressen din:",
+                verification_url,
+                "",
+                "Hvis du ikke opprettet en konto, kan du ignorere denne e-posten.",
+                "",
+                "Hilsen Team Techdom",
+            ]
+        )
+    )
+
+    if not host or not port:
+        logger.info(
+            "Skip sending email verification via SMTP; missing SMTP_HOST/SMTP_PORT. Link for %s: %s",
+            recipient,
+            verification_url,
+        )
+        return
+
+    use_ssl = _should(config["use_ssl"], default=False)
+    use_tls = _should(config["use_tls"], default=not use_ssl)
+
+    try:
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=15) as server:
+                if config["username"] and config["password"]:
+                    server.login(config["username"], config["password"])
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as server:
+                if use_tls:
+                    server.starttls()
+                if config["username"] and config["password"]:
+                    server.login(config["username"], config["password"])
+                server.send_message(message)
+    except Exception:
+        logger.exception("Kunne ikke sende e-postverifisering til %s", recipient)

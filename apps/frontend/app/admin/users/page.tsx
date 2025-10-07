@@ -101,7 +101,8 @@ export default function UserAdminPage() {
     try {
       const updated = await changeUserRole(userId, { role: nextRole });
       setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
-      setFeedback(`Oppdatert ${updated.email} til ${ROLE_LABELS[updated.role]}.`);
+      const displayName = updated.username?.trim() || updated.email;
+      setFeedback(`Oppdatert ${displayName} til ${ROLE_LABELS[updated.role]}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Kunne ikke oppdatere bruker";
       setUpdateError(message);
@@ -140,7 +141,7 @@ export default function UserAdminPage() {
           {authChecked && isAdmin ? (
             <div className="admin-users-controls">
               <label className="admin-search-label" htmlFor="user-search">
-                Søk på e-post
+                Søk på e-post eller brukernavn
               </label>
               <input
                 id="user-search"
@@ -176,6 +177,7 @@ export default function UserAdminPage() {
                   <thead>
                     <tr>
                       <th>ID</th>
+                      <th>Brukernavn</th>
                       <th>E-post</th>
                       <th>Rolle</th>
                       <th>Status</th>
@@ -185,6 +187,7 @@ export default function UserAdminPage() {
                     {users.map((user) => (
                       <tr key={user.id}>
                         <td>{user.id}</td>
+                        <td>{user.username ?? "—"}</td>
                         <td>{user.email}</td>
                         <td>
                           <select

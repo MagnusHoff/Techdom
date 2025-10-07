@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -56,6 +57,50 @@ async def init_models() -> None:
     """Create database tables if they do not already exist."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+
+
+def _ensure_users_schema(sync_conn) -> None:
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("users"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "username" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(150);"))
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username "
+                "ON users (username) WHERE username IS NOT NULL;"
+            )
+        )
+        columns.add("username")
+
+    if "username_canonical" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN username_canonical VARCHAR(150);"))
+        sync_conn.execute(
+            text(
+                "UPDATE users SET username_canonical = LOWER(username) WHERE username IS NOT NULL;"
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_canonical "
+                "ON users (username_canonical) WHERE username_canonical IS NOT NULL;"
+            )
+        )
+
+    if "is_email_verified" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;"
+            )
+        )
+
+
+async def ensure_auth_schema() -> None:
+    """Ensure backward compatible auth schema (e.g. username column)."""
+    async with engine.begin() as connection:
+        await connection.run_sync(_ensure_users_schema)
 
 
 @asynccontextmanager

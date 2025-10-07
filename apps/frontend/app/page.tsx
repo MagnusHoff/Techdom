@@ -54,7 +54,7 @@ export default function LandingPage() {
   return (
     <main className="page-gradient">
       <PageContainer variant="narrow">
-        <SiteHeader showAction actionHref="/" />
+        <SiteHeader />
 
         <section className="landing-section">
           <div className="landing-intro">

@@ -20,7 +20,7 @@ from techdom.domain.analysis_service import (
 )
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
-from techdom.infrastructure.db import init_models
+from techdom.infrastructure.db import ensure_auth_schema, init_models
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
@@ -29,6 +29,7 @@ job_service = ProspectJobService()
 @app.on_event("startup")
 async def _startup() -> None:
     await init_models()
+    await ensure_auth_schema()
 
 
 def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:

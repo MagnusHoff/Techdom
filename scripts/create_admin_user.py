@@ -12,25 +12,26 @@ from techdom.services.auth import DuplicateEmailError, create_user
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create an admin user account")
     parser.add_argument("--email", required=True, help="Admin email address")
+    parser.add_argument("--username", required=True, help="Admin username")
     parser.add_argument("--password", required=True, help="Temporary password to set")
     return parser.parse_args()
 
 
-async def _create_admin(email: str, password: str) -> None:
+async def _create_admin(email: str, username: str, password: str) -> None:
     async with session_scope() as session:
         try:
             user = await create_user(
-                session, email=email, password=password, role=UserRole.ADMIN
+                session, email=email, username=username, password=password, role=UserRole.ADMIN
             )
         except DuplicateEmailError:
-            print(f"Admin user with email {email} already exists.")
+            print(f"Admin user with email/username {email}/{username} already exists.")
             return
-    print(f"Created admin user {user.email} with role {user.role.value}.")
+    print(f"Created admin user {user.email} ({user.username}) with role {user.role.value}.")
 
 
 def main() -> int:
     args = _parse_args()
-    asyncio.run(_create_admin(args.email, args.password))
+    asyncio.run(_create_admin(args.email, args.username, args.password))
     return 0
 
 
