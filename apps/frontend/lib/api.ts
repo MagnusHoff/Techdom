@@ -10,6 +10,10 @@ import type {
   UserListResponse,
   PasswordResetConfirmPayload,
   PasswordResetRequestPayload,
+  ChangePasswordPayload,
+  UpdateUsernamePayload,
+  EmailVerificationConfirmPayload,
+  StoredAnalysesResponse,
 } from "./types";
 
 function withApiPrefix(path: string): string {
@@ -64,6 +68,7 @@ export interface LoginPayload {
 
 export interface RegisterPayload {
   email: string;
+  username: string;
   password: string;
 }
 
@@ -111,6 +116,59 @@ export async function confirmPasswordReset(
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || "Kunne ikke tilbakestille passordet");
+  }
+
+  await handleResponse<unknown>(res);
+}
+
+export async function verifyEmail(
+  payload: EmailVerificationConfirmPayload,
+): Promise<void> {
+  const res = await apiFetch("/auth/verify-email/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke verifisere e-postadressen");
+  }
+
+  await handleResponse<unknown>(res);
+}
+
+export async function updateUsername(payload: UpdateUsernamePayload): Promise<AuthUser> {
+  const res = await apiFetch("/auth/me/username", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
+}
+
+export async function changePassword(payload: ChangePasswordPayload): Promise<void> {
+  const res = await apiFetch("/auth/me/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      current_password: payload.currentPassword,
+      new_password: payload.newPassword,
+    }),
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke oppdatere passordet");
   }
 
   await handleResponse<unknown>(res);
@@ -200,6 +258,13 @@ export async function fetchUsers(params: UserSearchParams = {}): Promise<UserLis
     cache: "no-store",
   });
   return handleResponse<UserListResponse>(res);
+}
+
+export async function fetchSavedAnalyses(): Promise<StoredAnalysesResponse> {
+  const res = await apiFetch("/analyses", {
+    cache: "no-store",
+  });
+  return handleResponse<StoredAnalysesResponse>(res);
 }
 
 export async function changeUserRole(

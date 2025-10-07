@@ -60,6 +60,24 @@ export interface AnalysisResponse {
   ai_text: string;
 }
 
+export interface StoredAnalysis {
+  id: string;
+  title: string;
+  address: string;
+  image: string | null;
+  savedAt: string | null;
+  totalScore: number | null;
+  riskLevel: string | null;
+  price: number | null;
+  finnkode: string | null;
+  summary: string | null;
+  sourceUrl: string | null;
+}
+
+export interface StoredAnalysesResponse {
+  items: StoredAnalysis[];
+}
+
 export interface ProspectJobResult {
   analysis?: AnalysisResponse;
   listing?: Record<string, unknown> | null;
@@ -98,8 +116,10 @@ export interface AnalyzeJobResponse {
 export interface AuthUser {
   id: number;
   email: string;
+  username?: string | null;
   role: "user" | "plus" | "admin";
   is_active: boolean;
+  is_email_verified: boolean;
 }
 
 export interface AuthResponse {
@@ -125,4 +145,17 @@ export interface PasswordResetRequestPayload {
 export interface PasswordResetConfirmPayload {
   token: string;
   password: string;
+}
+
+export interface UpdateUsernamePayload {
+  username: string;
+}
+
+export interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface EmailVerificationConfirmPayload {
+  token: string;
 }

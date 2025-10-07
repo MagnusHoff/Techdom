@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techdom.domain.auth import schemas
-from techdom.domain.auth.models import User
+from techdom.domain.auth.models import User, UserRole
 from techdom.infrastructure.db import get_session
 from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
-from techdom.services.auth import UserNotFoundError
-from techdom.infrastructure.email import send_password_reset_email
+from techdom.services.auth import (
+    DuplicateUsernameError,
+    ExpiredEmailVerificationTokenError,
+    InvalidCurrentPasswordError,
+    InvalidEmailVerificationTokenError,
+    InvalidPasswordError,
+    InvalidUsernameError,
+    UserNotFoundError,
+)
+from techdom.infrastructure.email import (
+    send_email_verification_email,
+    send_password_reset_email,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -25,35 +36,94 @@ logger = logging.getLogger(__name__)
     summary="Register a standard user",
 )
 async def register_user(
-    payload: schemas.UserCreate, session: AsyncSession = Depends(get_session)
+    payload: schemas.UserCreate,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
 ) -> schemas.UserRead:
     try:
         user = await auth_service.create_user(
-            session, email=payload.email, password=payload.password
+            session,
+            email=payload.email,
+            username=payload.username,
+            password=payload.password,
         )
-    except auth_service.DuplicateEmailError:
+    except (auth_service.DuplicateEmailError, DuplicateUsernameError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Email is already registered"
-        )
+            status_code=status.HTTP_409_CONFLICT,
+            detail="E-post eller brukernavn er allerede i bruk",
+        ) from exc
+    except InvalidUsernameError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except InvalidPasswordError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    verification = await auth_service.generate_email_verification_token(session, user_id=user.id)
+    if verification:
+        email_address, token = verification
+        verification_url = auth_service.build_email_verification_url(token)
+        if verification_url:
+            background_tasks.add_task(send_email_verification_email, email_address, verification_url)
+        else:
+            logger.warning(
+                "EMAIL_VERIFICATION_URL_BASE not configured; verification token for %s: %s",
+                email_address,
+                token,
+            )
     return schemas.UserRead.model_validate(user)
 
 
 @router.post("/login", response_model=schemas.AuthResponse, summary="Authenticate a user")
 async def login(
-    payload: schemas.UserLogin, session: AsyncSession = Depends(get_session)
+    payload: schemas.UserLogin,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
 ) -> schemas.AuthResponse:
+    normalized_email = payload.email.strip().lower()
+
+    if await auth_service.is_login_rate_limited(session, email=normalized_email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="For mange innloggingsforsøk. Vent 15 minutter og prøv igjen.",
+        )
+
     user = await auth_service.authenticate_user(
         session, email=payload.email, password=payload.password
     )
     if not user:
+        client_ip = request.client.host if request.client else None
+        await auth_service.register_failed_login_attempt(
+            session, email=normalized_email, ip_address=client_ip
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Ugyldig email eller passord",
         )
 
-    access_token = create_access_token(
-        data={"sub": user.email, "role": user.role.value}
-    )
+    await auth_service.clear_login_attempts(session, email=normalized_email)
+
+    if not user.is_email_verified:
+        verification = await auth_service.generate_email_verification_token(session, user_id=user.id)
+        if verification:
+            email_address, token = verification
+            verification_url = auth_service.build_email_verification_url(token)
+            if verification_url:
+                background_tasks.add_task(send_email_verification_email, email_address, verification_url)
+            else:
+                logger.warning(
+                    "EMAIL_VERIFICATION_URL_BASE not configured; refreshed verification token for %s: %s",
+                    email_address,
+                    token,
+                )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="E-postadressen er ikke verifisert. Sjekk innboksen din for verifisering.",
+        )
+
+    raw_role = getattr(user.role, "value", user.role)
+    fallback_role = UserRole.USER.value
+    role_value = str(raw_role or fallback_role)
+    access_token = create_access_token(data={"sub": user.email, "role": role_value})
     return schemas.AuthResponse(
         access_token=access_token, user=schemas.UserRead.model_validate(user)
     )
@@ -66,6 +136,68 @@ async def read_me(
     return schemas.UserRead.model_validate(current_user)
 
 
+@router.patch(
+    "/me/username",
+    response_model=schemas.UserRead,
+    summary="Oppdater brukernavn for innlogget bruker",
+)
+async def update_username(
+    payload: schemas.UpdateUsername,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_username(
+            session, user_id=current_user.id, username=payload.username
+        )
+    except DuplicateUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Brukernavn er allerede i bruk",
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+    except InvalidUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return schemas.UserRead.model_validate(user)
+
+
+@router.post(
+    "/me/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Oppdater passord for innlogget bruker",
+)
+async def change_password(
+    payload: schemas.ChangePassword,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    try:
+        await auth_service.change_password(
+            session,
+            user_id=current_user.id,
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+        )
+    except InvalidCurrentPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feil nåværende passord",
+        ) from exc
+    except InvalidPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
 @router.get(
     "/admin/ping",
     response_model=schemas.UserRead,
@@ -168,8 +300,31 @@ async def password_reset_confirm(
     except (
         auth_service.InvalidPasswordResetTokenError,
         auth_service.ExpiredPasswordResetTokenError,
+        InvalidPasswordError,
         UserNotFoundError,
     ) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Ugyldig eller utløpt token"
+        ) from exc
+
+
+@router.post(
+    "/verify-email/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Bekreft e-postadresse",
+)
+async def verify_email_confirm(
+    payload: schemas.EmailVerificationConfirm,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    try:
+        await auth_service.verify_email_token(session, token=payload.token)
+    except (InvalidEmailVerificationTokenError, ExpiredEmailVerificationTokenError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ugyldig eller utløpt token",
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
         ) from exc
