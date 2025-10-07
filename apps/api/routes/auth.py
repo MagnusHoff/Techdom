@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techdom.domain.auth import schemas
@@ -8,6 +8,7 @@ from techdom.domain.auth.models import User
 from techdom.infrastructure.db import get_session
 from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
+from techdom.services.auth import UserNotFoundError
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -81,3 +82,42 @@ async def signicat_initiate() -> dict[str, str]:
         "status": "not_implemented",
         "details": "Signicat BankID integration pending. Configure Signicat client credentials before enabling.",
     }
+
+
+@router.get(
+    "/users",
+    response_model=schemas.UserCollection,
+    summary="List users (admin only)",
+)
+async def list_users(
+    search: str | None = Query(default=None, description="Filter by email"),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> schemas.UserCollection:
+    users, total = await auth_service.list_users(
+        session, search=search, limit=limit, offset=offset
+    )
+    items = [schemas.UserRead.model_validate(user) for user in users]
+    return schemas.UserCollection(total=total, items=items)
+
+
+@router.patch(
+    "/users/{user_id}/role",
+    response_model=schemas.UserRead,
+    summary="Update user role (admin only)",
+)
+async def update_user_role(
+    user_id: int,
+    payload: schemas.UpdateUserRole,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_user_role(
+            session, user_id=user_id, role=payload.role
+        )
+    except UserNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
+    return schemas.UserRead.model_validate(user)

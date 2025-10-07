@@ -11,6 +11,7 @@ from techdom.infrastructure.db import Base
 
 class UserRole(str, enum.Enum):
     USER = "user"
+    PLUS = "plus"
     ADMIN = "admin"
 
 

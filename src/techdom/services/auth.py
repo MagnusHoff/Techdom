@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 class DuplicateEmailError(Exception):
     """Raised when attempting to register an email that already exists."""
+
+
+class UserNotFoundError(Exception):
+    """Raised when a user lookup fails."""
 
 
 async def get_user_by_email(
@@ -120,3 +124,45 @@ async def get_current_active_admin(
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+async def list_users(
+    session: AsyncSession,
+    *,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> tuple[list[User], int]:
+    statement = select(User).order_by(User.created_at.desc())
+    count_statement = select(func.count()).select_from(User)
+
+    if search:
+        term = f"%{search.strip()}%"
+        statement = statement.where(User.email.ilike(term))
+        count_statement = count_statement.where(User.email.ilike(term))
+
+    statement = statement.limit(limit).offset(offset)
+
+    result = await session.execute(statement)
+    users = result.scalars().all()
+
+    total = await session.scalar(count_statement)
+    return users, int(total or 0)
+
+
+async def update_user_role(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    role: UserRole,
+) -> User:
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    user.role = role
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
