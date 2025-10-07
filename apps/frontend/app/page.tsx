@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "./components/chrome";
 import { fetchStats } from "@/lib/api";
+import { extractFinnkode } from "@/lib/listing";
 
 const INITIAL_ANALYSED_COUNT = 48;
 
@@ -36,6 +37,11 @@ export default function LandingPage() {
     const trimmed = url.trim();
     if (!trimmed) {
       setError("Lim inn en FINN-lenke først.");
+      return;
+    }
+
+    if (!extractFinnkode(trimmed)) {
+      setError("ugyldig finn lenke");
       return;
     }
 

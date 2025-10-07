@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from techdom.domain.auth import schemas
@@ -9,9 +11,11 @@ from techdom.infrastructure.db import get_session
 from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
 from techdom.services.auth import UserNotFoundError
+from techdom.infrastructure.email import send_password_reset_email
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -44,7 +48,7 @@ async def login(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Ugyldig email eller passord",
         )
 
     access_token = create_access_token(
@@ -121,3 +125,51 @@ async def update_user_role(
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
     return schemas.UserRead.model_validate(user)
+
+
+@router.post(
+    "/password-reset/request",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request password reset link",
+)
+async def password_reset_request(
+    payload: schemas.PasswordResetRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    result = await auth_service.generate_password_reset_token(session, email=payload.email)
+    if result:
+        user_email, token = result
+        reset_url = auth_service.build_password_reset_url(token)
+        if reset_url:
+            background_tasks.add_task(send_password_reset_email, user_email, reset_url)
+        else:
+            logger.warning(
+                "PASSWORD_RESET_URL_BASE not configured; password reset token for %s: %s",
+                user_email,
+                token,
+            )
+    return {"status": "accepted"}
+
+
+@router.post(
+    "/password-reset/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Complete password reset",
+)
+async def password_reset_confirm(
+    payload: schemas.PasswordResetConfirm,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    try:
+        await auth_service.reset_password(
+            session, token=payload.token, new_password=payload.password
+        )
+    except (
+        auth_service.InvalidPasswordResetTokenError,
+        auth_service.ExpiredPasswordResetTokenError,
+        UserNotFoundError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Ugyldig eller utløpt token"
+        ) from exc

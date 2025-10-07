@@ -8,6 +8,8 @@ import type {
   JobStatus,
   StatsResponse,
   UserListResponse,
+  PasswordResetConfirmPayload,
+  PasswordResetRequestPayload,
 } from "./types";
 
 function withApiPrefix(path: string): string {
@@ -42,16 +44,14 @@ function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const raw = await res.text();
+    let parsedMessage: string | null = null;
     try {
       const data = JSON.parse(raw) as AuthErrorResponse;
-      const message = data.detail || data.error;
-      if (message) {
-        throw new Error(message);
-      }
+      parsedMessage = data.detail || data.error || null;
     } catch {
-      /* fall through */
+      /* ignore parse errors */
     }
-    const message = raw || `API error ${res.status}`;
+    const message = parsedMessage || raw || `API error ${res.status}`;
     throw new Error(message);
   }
   return (await res.json()) as T;
@@ -75,6 +75,45 @@ export interface UserSearchParams {
 
 export interface UpdateUserRolePayload {
   role: AuthUser["role"];
+}
+
+export async function requestPasswordReset(
+  payload: PasswordResetRequestPayload,
+): Promise<void> {
+  const res = await apiFetch("/auth/password-reset/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const message = await res.text();
+    throw new Error(message || "Kunne ikke starte tilbakestilling av passord");
+  }
+  if (res.status === 204 || res.status === 202) {
+    return;
+  }
+  await handleResponse<unknown>(res);
+}
+
+export async function confirmPasswordReset(
+  payload: PasswordResetConfirmPayload,
+): Promise<void> {
+  const res = await apiFetch("/auth/password-reset/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke tilbakestille passordet");
+  }
+
+  await handleResponse<unknown>(res);
 }
 
 export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisResponse> {

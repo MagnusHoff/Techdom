@@ -1,15 +1,20 @@
 # Authentication Setup
 
 ## Overview
-- The FastAPI app exposes `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/ping`, and a placeholder `/auth/signicat/initiate` route.
+- The FastAPI app exposes `/auth/register`, `/auth/login`, `/auth/me`, `/auth/admin/ping`, password reset endpoints (`/auth/password-reset/request` and `/auth/password-reset/confirm`), and a placeholder `/auth/signicat/initiate` route.
 - Users are stored in a relational database through SQLAlchemy. Postgres is the primary target; during local development the app falls back to SQLite (`data/local.db`) if `DATABASE_URL` is missing.
 - Passwords are hashed with `bcrypt`, and authentication uses JWT (HS256). The API returns an `access_token` that the frontend can keep in an `httpOnly` cookie.
 
 ## Environment variables
 - `DATABASE_URL`: e.g. `postgresql+asyncpg://user:password@host:5432/database`. Required in staging/production.
-- `AUTH_SECRET_KEY`: secret for JWT signing. Must be set everywhere except isolated local development. Store it in AWS Secrets Manager or SSM.
+- `AUTH_SECRET_KEY`: secret for JWT signing. Must be set everywhere except isolated local development. Store it in AWS Secrets Manager eller SSM.
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: optional override (default 30).
 - `SQLALCHEMY_ECHO`: set to `1` or `true` to log SQL for debugging.
+- `PASSWORD_RESET_URL_BASE`: base-URL til frontend (`https://techdom.ai`). Brukes i e-postlenker.
+- `PASSWORD_RESET_URL_PATH`: relativ sti til reset-siden (default `/password-reset`).
+- `PASSWORD_RESET_TOKEN_TTL_MINUTES`: gyldighetstid for tokens (default 60 minutter).
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`/`SMTP_USE_SSL`: SMTP-konfig for utsending av e-post.
+- `EMAIL_SENDER`: avsenderadresse i reset-eposten.
 
 ## Prepare AWS RDS Postgres
 - Create a Postgres instance inside the VPC that hosts the backend.
@@ -18,9 +23,16 @@
 - Configure `DATABASE_URL` as `postgresql+asyncpg://techdom_user:<password>@<host>:5432/techdom` in the API environment.
 
 ## Tables and first admin user
-- `init_models()` runs on FastAPI startup and creates the `users` table if it is missing. No migrations are required for this initial schema.
+- `init_models()` runs on FastAPI startup and creates the `users` table if it is missing. Password reset tokens lagres i tabellen `password_reset_tokens`. No migrations are required for this initial schema.
 - To create the first admin (useful before BankID is integrated), run `python scripts/create_admin_user.py --email admin@example.com --password TempPass123`. The script honours the same `.env` / environment variables as the API.
 - You can deactivate or rotate that admin once BankID handles privileged access.
+
+## Passordtilbakestilling
+1. Frontend sender `POST /auth/password-reset/request` med `{ "email": "bruker@example.com" }`.
+2. Backend validerer om brukeren finnes, genererer et engangstoken og sender en lenke til `PASSWORD_RESET_URL_BASE + PASSWORD_RESET_URL_PATH?token=<...>` via SMTP (eller logger lenken dersom SMTP ikke er konfigurert).
+3. Lenken åpner frontend-siden `/password-reset`, som kaller `POST /auth/password-reset/confirm` med `{ "token": "...", "password": "NyttPassord" }`.
+4. Ved suksess hashes det nye passordet, tokenet markeres brukt, og svaret er `204 No Content`.
+5. Feil (ukjent/utløpt token) returnerer `400` med `detail: "Ugyldig eller utløpt token"`.
 
 ## Signicat BankID placeholder
 - `GET /auth/signicat/initiate` currently returns `{status: "not_implemented"}`.
