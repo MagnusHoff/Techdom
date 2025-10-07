@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import asdict
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+import requests
+from requests import RequestException
 
 from techdom.domain.analysis_service import (
     AnalysisDecisionContext,
@@ -21,11 +26,119 @@ from techdom.ingestion.fetch import (
     fetch_prospectus_from_finn,
     save_pdf_locally,
 )
+from techdom.ingestion.http_headers import BROWSER_HEADERS
 from techdom.ingestion.scrape import scrape_finn
 from techdom.services.prospect_jobs import ProspectJob, ProspectJobService
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+_PDF_HEAD_TIMEOUT = 12
+
+
+def _verify_pdf_head(url: str, *, referer: Optional[str] = None) -> Tuple[bool, Optional[str], float, bool]:
+    """
+    Returnerer (ok, final_url, confidence, protected)
+    protected=True indikerer at vi traff innlogging (401/403).
+    """
+    headers: Dict[str, str] = {**BROWSER_HEADERS, "Accept": "application/pdf"}
+    if referer:
+        headers["Referer"] = referer
+        try:
+            parsed = requests.utils.urlparse(referer)
+            headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            pass
+    try:
+        response = requests.head(
+            url,
+            headers=headers,
+            allow_redirects=True,
+            timeout=_PDF_HEAD_TIMEOUT,
+        )
+    except RequestException:
+        return False, None, 0.0, False
+
+    status = response.status_code
+    if status in (401, 403):
+        return False, None, 0.0, True
+    if status >= 400:
+        return False, None, 0.0, False
+
+    content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    if content_type != "application/pdf":
+        return False, None, 0.0, False
+
+    final_url = str(response.url) if getattr(response, "url", None) else url
+    confidence = 0.8
+    if final_url.lower().endswith(".pdf"):
+        confidence = 1.0
+    return True, final_url, confidence, False
+
+
+def _build_salgsoppgave_links(
+    *,
+    finnkode: str,
+    finn_url: str,
+    fetch_debug: Optional[Dict[str, Any]],
+    pdf_url: Optional[str],
+    pdf_path: Optional[str],
+) -> Dict[str, Any]:
+    links: Dict[str, Any] = {"salgsoppgave_pdf": None, "confidence": 0.0}
+    seen: set[str] = set()
+    message: Optional[str] = None
+    protected = False
+
+    def _add(url: Optional[str], referer: Optional[str], base_confidence: float) -> None:
+        if not url or not isinstance(url, str):
+            return
+        candidate = url.strip()
+        if not candidate or candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append((candidate, referer, base_confidence))
+
+    candidates: list[tuple[str, Optional[str], float]] = []
+    dbg = fetch_debug or {}
+    _add(dbg.get("pdf_url"), dbg.get("finn_url") or finn_url, 0.95)
+    _add(dbg.get("presigned_url"), None, 0.8)
+    _add(pdf_url, None, 0.8)
+
+    for url, referer, base_conf in candidates:
+        ok, final_url, confidence, is_protected = _verify_pdf_head(url, referer=referer)
+        if is_protected:
+            protected = True
+            message = "Beskyttet – last ned lokalt."
+            continue
+        if not ok or not final_url:
+            continue
+        links["salgsoppgave_pdf"] = final_url
+        links["confidence"] = round(min(1.0, max(base_conf, confidence)), 3)
+        if message:
+            links["message"] = message
+        return links
+
+    if protected:
+        links["confidence"] = 0.0
+        links["salgsoppgave_pdf"] = None
+        links["message"] = message or "Beskyttet – last ned lokalt."
+        return links
+
+    if pdf_path:
+        stem = Path(pdf_path).stem or finnkode
+        base = os.getenv("PUBLIC_API_BASE_URL") or os.getenv("NEXT_PUBLIC_API_BASE_URL")
+        local_url = f"{base.rstrip('/')}/files/{stem}.pdf" if base else f"/files/{stem}.pdf"
+        links["salgsoppgave_pdf"] = local_url
+        links["confidence"] = 0.6
+        if message:
+            links["message"] = message
+        return links
+
+    if message:
+        links["message"] = message
+
+    return links
 
 
 def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
@@ -140,6 +253,15 @@ class ProspectAnalysisPipeline:
                 },
             )
 
+            links_payload = _build_salgsoppgave_links(
+                finnkode=finnkode,
+                finn_url=finn_url,
+                fetch_debug=fetch_debug,
+                pdf_url=pdf_url,
+                pdf_path=pdf_path,
+            )
+            self.job_service.store_artifact(job_id, "links", links_payload)
+
             self.job_service.mark_running(
                 job_id,
                 progress=55,
@@ -161,7 +283,9 @@ class ProspectAnalysisPipeline:
                 progress=70,
                 message="Kjører AI-analyse",
             )
-            ai_extract = analyze_prospectus(pdf_text or "") if pdf_text else {}
+            raw_ai_extract = analyze_prospectus(pdf_text or "") if pdf_text else {}
+            ai_extract = dict(raw_ai_extract) if isinstance(raw_ai_extract, dict) else {}
+            ai_extract["links"] = links_payload
             self.job_service.store_artifact(job_id, "ai_extract", ai_extract)
 
             tg2_items = [
@@ -204,7 +328,7 @@ class ProspectAnalysisPipeline:
             self.job_service.mark_done(
                 job_id,
                 pdf_path=pdf_path,
-                pdf_url=pdf_url,
+                pdf_url=links_payload.get("salgsoppgave_pdf") if isinstance(links_payload, dict) else pdf_url,
                 result={
                     "analysis": analysis_payload,
                     "listing": listing_info,
@@ -212,6 +336,7 @@ class ProspectAnalysisPipeline:
                     "rent_estimate": rent_payload,
                     "interest_estimate": interest_payload,
                     "pdf_text_excerpt": excerpt,
+                    "links": links_payload,
                 },
                 message="Analyse fullført",
             )

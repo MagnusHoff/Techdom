@@ -23,7 +23,11 @@ export function SiteHeader({
 
   useEffect(() => {
     const handleScroll = () => {
-      setScrolled(window.scrollY > 16);
+      setScrolled((previous) => {
+        const y = window.scrollY || window.pageYOffset;
+        const next = previous ? y > 6 : y > 32;
+        return next === previous ? previous : next;
+      });
     };
     handleScroll();
     window.addEventListener("scroll", handleScroll, { passive: true });
@@ -82,7 +86,7 @@ export function SiteHeader({
     <>
       <header className={headerClass}>
         <Link href="/" className="brand-pill">
-          Techdom.AI – eiendomsanalyse
+          Techdom.AI
         </Link>
         <div className="header-actions">
           {showAction ? (
