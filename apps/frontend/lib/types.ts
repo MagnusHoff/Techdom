@@ -94,3 +94,26 @@ export interface AnalyzeJobResponse {
   job_id: string;
   status: string;
 }
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  role: "user" | "plus" | "admin";
+  is_active: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
+export interface AuthErrorResponse {
+  detail?: string;
+  error?: string;
+}
+
+export interface UserListResponse {
+  total: number;
+  items: AuthUser[];
+}

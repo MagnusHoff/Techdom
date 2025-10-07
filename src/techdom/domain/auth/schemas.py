@@ -26,6 +26,15 @@ class UserLogin(UserBase):
     password: str = Field(min_length=1)
 
 
+class UserCollection(BaseModel):
+    total: int
+    items: list[UserRead]
+
+
+class UpdateUserRole(BaseModel):
+    role: UserRole
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

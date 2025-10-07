@@ -13,6 +13,7 @@ SQLAlchemy>=2.0,<3
 aiosqlite>=0.19,<1
 asyncpg>=0.29,<1
 passlib[bcrypt]>=1.7,<2
+bcrypt>=4.0,<4.1
 python-jose[cryptography]>=3.3,<4
 matplotlib>=3.8,<4
 tqdm>=4.66,<5

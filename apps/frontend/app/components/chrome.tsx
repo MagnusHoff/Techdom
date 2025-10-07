@@ -4,6 +4,9 @@ import Link from "next/link";
 import type { Route } from "next";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import { fetchCurrentUser, loginUser, logoutUser, registerUser } from "@/lib/api";
+import type { AuthUser } from "@/lib/types";
+
 interface SiteHeaderProps {
   showAction?: boolean;
   actionHref?: Route;
@@ -20,6 +23,10 @@ export function SiteHeader({
   const [authMode, setAuthMode] = useState<"login" | "forgot" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -46,6 +53,16 @@ export function SiteHeader({
 
   const headerClass = scrolled ? "site-header is-scrolled" : "site-header";
 
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((user) => {
+        setCurrentUser(user);
+      })
+      .catch(() => {
+        setCurrentUser(null);
+      });
+  }, []);
+
   const modalHeadline = useMemo(() => {
     switch (authMode) {
       case "forgot":
@@ -67,15 +84,58 @@ export function SiteHeader({
     return "Logg inn for å lagre analyser og synkronisere på tvers av enheter. Backend-koblingen kommer snart.";
   }, [authMode]);
 
-  const handleLoginSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleLoginSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    // TODO: Koble til faktisk autentisering når backend er klar.
+    setLoginError(null);
+    setLoginNotice(null);
+
+    if (authMode === "forgot") {
+      setLoginNotice("Tilbakestilling av passord er ikke tilgjengelig ennå.");
+      return;
+    }
+
+    setLoginLoading(true);
+    try {
+      if (authMode === "signup") {
+        await registerUser({ email, password });
+        setLoginNotice("Bruker opprettet. Logg inn for å fortsette.");
+        setAuthMode("login");
+        setPassword("");
+        return;
+      }
+
+      const result = await loginUser({ email, password });
+      setCurrentUser(result.user);
+      setLoginOpen(false);
+      setAuthMode("login");
+      setEmail("");
+      setPassword("");
+      setLoginNotice(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Ukjent feil under innlogging";
+      setLoginError(message);
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
   const closeModal = () => {
     setLoginOpen(false);
     setAuthMode("login");
     setPassword("");
+    setLoginError(null);
+    setLoginNotice(null);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } finally {
+      setCurrentUser(null);
+      setEmail("");
+      setPassword("");
+    }
   };
 
   return (
@@ -90,13 +150,24 @@ export function SiteHeader({
               {actionLabel}
             </Link>
           ) : null}
-          <button
-            type="button"
-            className="header-login"
-            onClick={() => setLoginOpen(true)}
-          >
-            Logg inn
-          </button>
+          {currentUser?.role === "admin" ? (
+            <Link href="/admin/users" className="header-action header-action--secondary">
+              Brukere
+            </Link>
+          ) : null}
+          {currentUser ? (
+            <button type="button" className="header-login" onClick={handleLogout}>
+              Logg ut
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="header-login"
+              onClick={() => setLoginOpen(true)}
+            >
+              Logg inn
+            </button>
+          )}
         </div>
       </header>
 
@@ -115,6 +186,8 @@ export function SiteHeader({
               </button>
             </div>
             <p className="login-modal-description">{modalDescription}</p>
+            {loginError ? <div className="error-banner">{loginError}</div> : null}
+            {loginNotice ? <p className="login-notice">{loginNotice}</p> : null}
             <form className="login-form" onSubmit={handleLoginSubmit}>
               <label className="sr-only" htmlFor="header-login-email">
                 E-post
@@ -142,13 +215,18 @@ export function SiteHeader({
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     className="login-input"
-                    required={authMode !== "forgot"}
-                    disabled={authMode === "forgot"}
+                    required
                   />
                 </>
               ) : null}
-              <button type="submit" className="login-submit">
-                {authMode === "signup" ? "Registrer" : authMode === "forgot" ? "Send lenke" : "Logg inn"}
+              <button type="submit" className="login-submit" disabled={loginLoading}>
+                {loginLoading
+                  ? "Jobber..."
+                  : authMode === "signup"
+                  ? "Registrer"
+                  : authMode === "forgot"
+                  ? "Send lenke"
+                  : "Logg inn"}
               </button>
               <button type="button" className="login-cancel" onClick={closeModal}>
                 Avbryt
