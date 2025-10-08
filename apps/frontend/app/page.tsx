@@ -1,19 +1,88 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "./components/chrome";
-import { fetchStats } from "@/lib/api";
+import { fetchCurrentUser, fetchStats, fetchUserStatus } from "@/lib/api";
 import { extractFinnkode } from "@/lib/listing";
+import type { AuthUser, UserStatusResponse } from "@/lib/types";
 
 const INITIAL_ANALYSED_COUNT = 48;
+const USER_UPDATED_EVENT = "techdom:user-updated";
+
+const NUMBER_FORMATTER = new Intl.NumberFormat("nb-NO", {
+  maximumFractionDigits: 0,
+});
+
+const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat("nb-NO", {
+  numeric: "auto",
+});
+
+function formatNumber(value: number): string {
+  try {
+    return NUMBER_FORMATTER.format(value);
+  } catch {
+    return value.toLocaleString("nb-NO");
+  }
+}
+
+function formatRelativeTime(timestamp: string | null): string {
+  if (!timestamp) {
+    return "Ingen kjøringer ennå";
+  }
+  const timeValue = Date.parse(timestamp);
+  if (Number.isNaN(timeValue)) {
+    return "Ukjent tidspunkt";
+  }
+
+  const now = Date.now();
+  const diffMs = timeValue - now;
+  const diffMinutes = Math.round(diffMs / (60 * 1000));
+
+  if (Math.abs(diffMinutes) < 1) {
+    return "Akkurat nå";
+  }
+
+  if (Math.abs(diffMinutes) < 60) {
+    return RELATIVE_TIME_FORMATTER.format(diffMinutes, "minute");
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (Math.abs(diffHours) < 24) {
+    return RELATIVE_TIME_FORMATTER.format(diffHours, "hour");
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  if (Math.abs(diffDays) < 14) {
+    return RELATIVE_TIME_FORMATTER.format(diffDays, "day");
+  }
+
+  const diffWeeks = Math.round(diffDays / 7);
+  if (Math.abs(diffWeeks) < 8) {
+    return RELATIVE_TIME_FORMATTER.format(diffWeeks, "week");
+  }
+
+  const diffMonths = Math.round(diffDays / 30);
+  if (Math.abs(diffMonths) < 18) {
+    return RELATIVE_TIME_FORMATTER.format(diffMonths, "month");
+  }
+
+  const diffYears = Math.round(diffDays / 365);
+  return RELATIVE_TIME_FORMATTER.format(diffYears, "year");
+}
 
 export default function LandingPage() {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [totalAnalyses, setTotalAnalyses] = useState<number>(INITIAL_ANALYSED_COUNT);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [userResolved, setUserResolved] = useState(false);
+  const [status, setStatus] = useState<UserStatusResponse | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +100,81 @@ export default function LandingPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((current) => {
+        if (cancelled) {
+          return;
+        }
+        setUser((previous) => (previous !== null ? previous : current));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUser((previous) => (previous !== null ? previous : null));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setUserResolved(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleUserUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<AuthUser | null>).detail ?? null;
+      setUser(detail);
+      setStatus(null);
+      setStatusError(null);
+      setStatusLoading(false);
+    };
+
+    window.addEventListener(USER_UPDATED_EVENT, handleUserUpdate);
+    return () => {
+      window.removeEventListener(USER_UPDATED_EVENT, handleUserUpdate);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setStatus(null);
+      setStatusError(null);
+      setStatusLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setStatusLoading(true);
+    fetchUserStatus()
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        setStatus(result);
+        setStatusError(null);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setStatus(null);
+        setStatusError("Kunne ikke hente status. Prøv igjen.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setStatusLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -50,6 +194,26 @@ export default function LandingPage() {
     const runToken = Date.now().toString(36);
     router.push(`/analysis?listing=${encoded}&run=${runToken}`);
   };
+
+  const formattedTotalAnalyses = useMemo(() => formatNumber(totalAnalyses), [totalAnalyses]);
+  const formattedUserTotal = useMemo(() => {
+    if (!status) {
+      return formatNumber(0);
+    }
+    return formatNumber(status.total_user_analyses);
+  }, [status]);
+
+  const formattedRecentCount = useMemo(() => {
+    if (!status) {
+      return formatNumber(0);
+    }
+    return formatNumber(status.total_last_7_days);
+  }, [status]);
+
+  const lastRunRelative = useMemo(() => formatRelativeTime(status?.last_run_at ?? null), [status?.last_run_at]);
+
+  const showSkeleton = !userResolved || (user !== null && statusLoading);
+  const showMinStatusCard = Boolean(user);
 
   return (
     <main className="page-gradient">
@@ -80,11 +244,60 @@ export default function LandingPage() {
           </form>
           {error ? <p className="error-text">{error}</p> : <div className="error-spacer" />}
 
-          <hr className="divider" />
+          <div className="landing-status-grid">
+            {showSkeleton ? (
+              <>
+                <div className="status-card status-card--skeleton" aria-hidden="true" />
+                <div className="status-card status-card--skeleton" aria-hidden="true" />
+              </>
+            ) : (
+              <>
+                <div className="status-card status-card--highlight">
+                  <span className="status-card__label">Eiendommer analysert</span>
+                  <strong className="status-card__value">{formattedTotalAnalyses}</strong>
+                </div>
+                {showMinStatusCard ? (
+                  <div className="status-card status-card--personal">
+                    <div className="status-card__header">
+                      <span className="status-card__title">Min status</span>
+                      <div className="status-card__metric">
+                        <span className="status-card__metric-label">Analyser totalt</span>
+                        <span className="status-card__value status-card__value--large">
+                          {formattedUserTotal}
+                        </span>
+                      </div>
+                    </div>
 
-          <div className="stat-block">
-            <span className="stat-label">Eiendommer analysert</span>
-            <strong className="stat-value">{totalAnalyses}</strong>
+                    {statusError ? (
+                      <p className="status-card__error" role="status">
+                        {statusError}
+                      </p>
+                    ) : status && status.total_user_analyses === 0 ? (
+                      <p className="status-card__empty">Ingen analyser ennå</p>
+                    ) : (
+                      <div className="status-card__badges">
+                        <span className="status-badge">
+                          <span className="status-badge__label">Siste 7 dager</span>
+                          <span className="status-badge__value">{formattedRecentCount}</span>
+                        </span>
+                        <span className="status-badge">
+                          <span className="status-badge__label">Sist kjørt</span>
+                          <span className="status-badge__value">
+                            {status?.last_run_at ? lastRunRelative : "Ingen kjøringer ennå"}
+                          </span>
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="status-card__footer">
+                      <Link className="status-card__cta" href="/mine-analyser">
+                        Gå til Lagrede analyser
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </section>
 

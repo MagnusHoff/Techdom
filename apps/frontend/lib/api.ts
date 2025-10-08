@@ -14,6 +14,9 @@ import type {
   UpdateUsernamePayload,
   EmailVerificationConfirmPayload,
   StoredAnalysesResponse,
+  AdminChangeUserPasswordPayload,
+  AdminUpdateUserPayload,
+  UserStatusResponse,
 } from "./types";
 
 function withApiPrefix(path: string): string {
@@ -196,6 +199,13 @@ export async function fetchStats(): Promise<StatsResponse> {
   return handleResponse<StatsResponse>(res);
 }
 
+export async function fetchUserStatus(): Promise<UserStatusResponse> {
+  const res = await apiFetch("/auth/me/status", {
+    cache: "no-store",
+  });
+  return handleResponse<UserStatusResponse>(res);
+}
+
 export async function startAnalysisJob(finnkode: string): Promise<AnalyzeJobResponse> {
   const res = await apiFetch("/analyze", {
     method: "POST",
@@ -278,4 +288,58 @@ export async function changeUserRole(
     cache: "no-store",
   });
   return handleResponse<AuthUser>(res);
+}
+
+export async function updateUserProfile(
+  userId: number,
+  payload: AdminUpdateUserPayload,
+): Promise<AuthUser> {
+  const res = await apiFetch(`/auth/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
+}
+
+export async function adminChangeUserPassword(
+  userId: number,
+  payload: AdminChangeUserPasswordPayload,
+): Promise<void> {
+  const res = await apiFetch(`/auth/users/${userId}/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_password: payload.newPassword }),
+    cache: "no-store",
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke oppdatere passordet");
+  }
+
+  await handleResponse<unknown>(res);
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  const res = await apiFetch(`/auth/users/${userId}`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke slette brukeren");
+  }
+
+  await handleResponse<unknown>(res);
 }

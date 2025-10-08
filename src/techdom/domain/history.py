@@ -1,8 +1,9 @@
 # core/history.py
 from __future__ import annotations
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json, uuid, tempfile, shutil
+from typing import NamedTuple
 
 from techdom.infrastructure import counters
 
@@ -11,6 +12,12 @@ _LAST_KNOWN_TOTAL: int | None = None
 
 HISTORY_PATH = Path("data/cache/analysis_history.jsonl")
 HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+class AnalysisSummary(NamedTuple):
+    total: int
+    last_7_days: int
+    last_run_at: datetime | None
 
 
 def _to_iso(dt: datetime) -> str:
@@ -113,3 +120,32 @@ def get_total_count() -> int:
     if _LAST_KNOWN_TOTAL is not None:
         return _LAST_KNOWN_TOTAL
     return len(_load_all())
+
+
+def _parse_timestamp(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def summarise(window_days: int = 7) -> AnalysisSummary:
+    """Returner summerte nøkkeltall for analyser i historikken."""
+    items = _load_all()
+    total = len(items)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    last_seen: datetime | None = None
+    recent = 0
+
+    for record in items:
+        ts = _parse_timestamp(record.get("ts"))
+        if ts is None:
+            continue
+        if last_seen is None or ts > last_seen:
+            last_seen = ts
+        if ts >= cutoff:
+            recent += 1
+
+    return AnalysisSummary(total=total, last_7_days=recent, last_run_at=last_seen)

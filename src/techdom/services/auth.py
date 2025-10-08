@@ -170,10 +170,12 @@ async def register_failed_login_attempt(
 
     cutoff = datetime.now(timezone.utc) - _login_attempt_window()
     await session.execute(
-        delete(LoginAttempt).where(
+        delete(LoginAttempt)
+        .where(
             LoginAttempt.email == normalized_email,
             LoginAttempt.attempted_at < cutoff,
         )
+        .execution_options(synchronize_session=False)
     )
     await session.commit()
 
@@ -434,6 +436,38 @@ async def change_password(
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def set_user_password(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    new_password: str,
+) -> User:
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    _validate_password(new_password)
+    user.hashed_password = hash_password(new_password)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def delete_user(
+    session: AsyncSession,
+    *,
+    user_id: int,
+) -> None:
+    user = await session.get(User, user_id)
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    await session.delete(user)
+    await session.commit()
 
 
 async def get_user_by_email(

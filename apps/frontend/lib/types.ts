@@ -108,6 +108,12 @@ export interface StatsResponse {
   total_analyses: number;
 }
 
+export interface UserStatusResponse {
+  total_user_analyses: number;
+  total_last_7_days: number;
+  last_run_at: string | null;
+}
+
 export interface AnalyzeJobResponse {
   job_id: string;
   status: string;
@@ -158,4 +164,12 @@ export interface ChangePasswordPayload {
 
 export interface EmailVerificationConfirmPayload {
   token: string;
+}
+
+export interface AdminUpdateUserPayload {
+  username: string;
+}
+
+export interface AdminChangeUserPasswordPayload {
+  newPassword: string;
 }

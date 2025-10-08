@@ -3,12 +3,19 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "@/app/components/chrome";
-import { changeUserRole, fetchCurrentUser, fetchUsers } from "@/lib/api";
+import {
+  adminChangeUserPassword,
+  changeUserRole,
+  deleteUser,
+  fetchCurrentUser,
+  fetchUsers,
+  updateUserProfile,
+} from "@/lib/api";
 import type { AuthUser } from "@/lib/types";
 
 const ROLE_LABELS: Record<AuthUser["role"], string> = {
   user: "Standard",
-  plus: "Pluss",
+  plus: "Pro",
   admin: "Admin",
 };
 
@@ -24,7 +31,11 @@ export default function UserAdminPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [pendingUserId, setPendingUserId] = useState<number | null>(null);
+  const [usernameDrafts, setUsernameDrafts] = useState<Record<number, string>>({});
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({});
+  const [pendingAction, setPendingAction] = useState<
+    { userId: number; type: "role" | "username" | "password" | "delete" } | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +79,13 @@ export default function UserAdminPage() {
           }
           setUsers(response.items);
           setTotal(response.total);
+          setUsernameDrafts(
+            response.items.reduce<Record<number, string>>((acc, item) => {
+              acc[item.id] = item.username?.trim() ?? "";
+              return acc;
+            }, {}),
+          );
+          setPasswordDrafts({});
         })
         .catch((error) => {
           if (!cancelled) {
@@ -90,11 +108,16 @@ export default function UserAdminPage() {
   }, [authChecked, isAdmin, search]);
 
   const handleRoleChange = async (userId: number, nextRole: AuthUser["role"]) => {
-    if (pendingUserId === userId && users.find((user) => user.id === userId)?.role === nextRole) {
+    const existing = users.find((user) => user.id === userId);
+    if (!existing || existing.role === nextRole) {
       return;
     }
 
-    setPendingUserId(userId);
+    if (pendingAction && pendingAction.userId === userId && pendingAction.type === "role") {
+      return;
+    }
+
+    setPendingAction({ userId, type: "role" });
     setUpdateError(null);
     setFeedback(null);
 
@@ -107,7 +130,121 @@ export default function UserAdminPage() {
       const message = error instanceof Error ? error.message : "Kunne ikke oppdatere bruker";
       setUpdateError(message);
     } finally {
-      setPendingUserId(null);
+      setPendingAction(null);
+    }
+  };
+
+  const handleUsernameSave = async (userId: number) => {
+    const existing = users.find((user) => user.id === userId);
+    if (!existing) {
+      return;
+    }
+
+    const draft = (usernameDrafts[userId] ?? "").trim();
+    if (draft === (existing.username ?? "")) {
+      setUpdateError(null);
+      setFeedback("Ingen endringer å lagre.");
+      return;
+    }
+
+    if (pendingAction && pendingAction.userId === userId && pendingAction.type === "username") {
+      return;
+    }
+
+    setPendingAction({ userId, type: "username" });
+    setUpdateError(null);
+    setFeedback(null);
+
+    try {
+      const updated = await updateUserProfile(userId, { username: draft });
+      setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
+      setUsernameDrafts((prev) => ({ ...prev, [userId]: updated.username?.trim() ?? "" }));
+      const displayName = updated.username?.trim() || updated.email;
+      setFeedback(`Brukernavn oppdatert for ${displayName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke oppdatere brukernavn";
+      setUpdateError(message);
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handlePasswordSave = async (userId: number) => {
+    const existing = users.find((user) => user.id === userId);
+    if (!existing) {
+      return;
+    }
+
+    const draft = (passwordDrafts[userId] ?? "").trim();
+    if (!draft) {
+      setFeedback(null);
+      setUpdateError("Oppgi et nytt passord.");
+      return;
+    }
+
+    if (pendingAction && pendingAction.userId === userId && pendingAction.type === "password") {
+      return;
+    }
+
+    setPendingAction({ userId, type: "password" });
+    setUpdateError(null);
+    setFeedback(null);
+
+    try {
+      await adminChangeUserPassword(userId, { newPassword: draft });
+      setPasswordDrafts((prev) => ({ ...prev, [userId]: "" }));
+      const displayName = existing.username?.trim() || existing.email;
+      setFeedback(`Passord oppdatert for ${displayName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke oppdatere passord";
+      setUpdateError(message);
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId: number) => {
+    const existing = users.find((user) => user.id === userId);
+    if (!existing) {
+      return;
+    }
+
+    if (pendingAction && pendingAction.userId === userId && pendingAction.type === "delete") {
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm("Er du sikker på at du vil slette denne brukeren?");
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setPendingAction({ userId, type: "delete" });
+    setUpdateError(null);
+    setFeedback(null);
+
+    try {
+      await deleteUser(userId);
+      setUsers((prev) => prev.filter((user) => user.id !== userId));
+      setTotal((prev) => Math.max(prev - 1, 0));
+      setUsernameDrafts((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      setPasswordDrafts((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      const displayName = existing.username?.trim() || existing.email;
+      setFeedback(`Slettet ${displayName}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke slette bruker";
+      setUpdateError(message);
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -125,7 +262,9 @@ export default function UserAdminPage() {
         <section className="admin-users">
           <div className="admin-users-header">
             <h1>Brukeradministrasjon</h1>
-            {authChecked && isAdmin ? <p>Administrer roller og søk blant brukere.</p> : null}
+            {authChecked && isAdmin ? (
+              <p>Administrer brukere: rediger rolle, navn, passord og søk i listen.</p>
+            ) : null}
           </div>
 
           {!authChecked ? (
@@ -181,33 +320,113 @@ export default function UserAdminPage() {
                       <th>E-post</th>
                       <th>Rolle</th>
                       <th>Status</th>
+                      <th>Passord</th>
+                      <th>Handlinger</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((user) => (
-                      <tr key={user.id}>
-                        <td>{user.id}</td>
-                        <td>{user.username ?? "—"}</td>
-                        <td>{user.email}</td>
-                        <td>
-                          <select
-                            value={user.role}
-                            onChange={(event) =>
-                              handleRoleChange(user.id, event.target.value as AuthUser["role"])
-                            }
-                            disabled={pendingUserId === user.id}
-                            className="admin-role-select"
-                          >
-                            {ROLE_OPTIONS.map((role) => (
-                              <option key={role} value={role}>
-                                {ROLE_LABELS[role]}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>{user.is_active ? "Aktiv" : "Deaktivert"}</td>
-                      </tr>
-                    ))}
+                    {users.map((user) => {
+                      const usernameValue = usernameDrafts[user.id] ?? "";
+                      const passwordValue = passwordDrafts[user.id] ?? "";
+                      const isPendingForUser = pendingAction?.userId === user.id;
+                      const pendingType = pendingAction?.type;
+                      const rolePending = isPendingForUser && pendingType === "role";
+                      const usernamePending = isPendingForUser && pendingType === "username";
+                      const passwordPending = isPendingForUser && pendingType === "password";
+                      const deletePending = isPendingForUser && pendingType === "delete";
+
+                      return (
+                        <tr key={user.id}>
+                          <td>{user.id}</td>
+                          <td>
+                            <div className="admin-users-field">
+                              <input
+                                type="text"
+                                value={usernameValue}
+                                onChange={(event) =>
+                                  setUsernameDrafts((prev) => ({
+                                    ...prev,
+                                    [user.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Brukernavn"
+                                disabled={deletePending}
+                                className="admin-users-input"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleUsernameSave(user.id)}
+                                disabled={
+                                  usernamePending ||
+                                  deletePending ||
+                                  usernameValue.trim().length === 0
+                                }
+                                className="admin-users-button"
+                              >
+                                Lagre
+                              </button>
+                            </div>
+                          </td>
+                          <td>{user.email}</td>
+                          <td>
+                            <select
+                              value={user.role}
+                              onChange={(event) =>
+                                handleRoleChange(user.id, event.target.value as AuthUser["role"])
+                              }
+                              disabled={rolePending || deletePending}
+                              className="admin-role-select"
+                            >
+                              {ROLE_OPTIONS.map((role) => (
+                                <option key={role} value={role}>
+                                  {ROLE_LABELS[role]}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>{user.is_active ? "Aktiv" : "Deaktivert"}</td>
+                          <td>
+                            <div className="admin-users-field">
+                              <input
+                                type="password"
+                                value={passwordValue}
+                                onChange={(event) =>
+                                  setPasswordDrafts((prev) => ({
+                                    ...prev,
+                                    [user.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Nytt passord"
+                                disabled={deletePending}
+                                className="admin-users-input"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handlePasswordSave(user.id)}
+                                disabled={
+                                  passwordPending ||
+                                  deletePending ||
+                                  passwordValue.trim().length === 0
+                                }
+                                className="admin-users-button"
+                              >
+                                Oppdater
+                              </button>
+                            </div>
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUser(user.id)}
+                              disabled={deletePending}
+                              className="admin-users-button admin-users-button--danger"
+                            >
+                              Slett
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : null}

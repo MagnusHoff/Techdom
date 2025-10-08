@@ -107,9 +107,11 @@ export function SiteHeader({
     fetchCurrentUser()
       .then((user) => {
         setCurrentUser(user);
+        emitUserUpdate(user);
       })
       .catch(() => {
         setCurrentUser(null);
+        emitUserUpdate(null);
       });
   }, []);
 
@@ -125,12 +127,12 @@ export function SiteHeader({
     };
   }, []);
 
-  const emitUserUpdate = (user: AuthUser | null) => {
+  function emitUserUpdate(user: AuthUser | null) {
     if (typeof window === "undefined") {
       return;
     }
     window.dispatchEvent(new CustomEvent<AuthUser | null>(USER_UPDATED_EVENT, { detail: user }));
-  };
+  }
 
   useEffect(() => {
     if (!currentUser) {
