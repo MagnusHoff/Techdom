@@ -3731,6 +3731,8 @@ main {
     padding: 2.5rem 1.1rem;
   }
 
+}
+
 .feedback-error {
   border-radius: 12px;
   border: 1px solid rgba(var(--color-red-strong-rgb), 0.35);
