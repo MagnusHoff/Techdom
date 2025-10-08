@@ -45,7 +45,7 @@ class FeedbackMailConfig:
         if not from_address:
             raise FeedbackConfigError("FEEDBACK_FROM_EMAIL mangler.")
 
-        to_address = os.getenv("FEEDBACK_TO_EMAIL", "").strip() or "support@techdom.ai"
+        to_address = "support@techdom.ai"
 
         username = os.getenv("SMTP_USERNAME") or os.getenv("SMTP_USER")
         password = os.getenv("SMTP_PASSWORD") or os.getenv("SMTP_PASS")

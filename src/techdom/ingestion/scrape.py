@@ -381,13 +381,20 @@ def _looks_like_key_info_container(node: Tag) -> bool:
 def _find_key_info_section(soup: Any) -> Optional[Tag]:
     if not hasattr(soup, "find_all"):
         return None
-    for heading in soup.find_all(["h2", "h3", "h4", "h5"]):
-        if not isinstance(heading, Tag):
-            continue
-        text = heading.get_text(" ", strip=True)
-        if not text:
-            continue
-        if "nøkkelinfo" in text.lower():
+    heading_keyword_groups = [
+        ("nøkkeltall",),
+        ("nøkkelinfo", "nøkkelinformasjon"),
+    ]
+    for keywords in heading_keyword_groups:
+        for heading in soup.find_all(["h2", "h3", "h4", "h5"]):
+            if not isinstance(heading, Tag):
+                continue
+            text = heading.get_text(" ", strip=True)
+            if not text:
+                continue
+            text_lower = text.lower()
+            if not any(keyword in text_lower for keyword in keywords):
+                continue
             current: Optional[Tag] = heading
             while isinstance(current, Tag):
                 if current.name == "section":
@@ -397,10 +404,14 @@ def _find_key_info_section(soup: Any) -> Optional[Tag]:
             return parent if isinstance(parent, Tag) else heading
 
     selectors = [
+        "[data-testid*='key-number']",
+        "[data-testid*='keynumbers']",
         "[data-testid*='key-info']",
         "[data-testid*='keyinfo']",
         "[data-testid*='key-fact']",
         "[data-testid*='keyfact']",
+        "[class*='key-number']",
+        "[class*='keynumbers']",
         "[class*='key-info']",
         "[class*='keyinfo']",
         "[class*='key-fact']",
@@ -1629,7 +1640,7 @@ FIELD_SPECS: Tuple[_FieldSpec, ...] = (
 )
 
 
-def scrape_finn_key_numbers(url: str) -> Dict[str, Any]:
+def _scrape_finn_key_numbers(url: str) -> Tuple[Dict[str, Any], List[Dict[str, object]]]:
     html_text = fetch_html(url)
     soup = BeautifulSoup(html_text, "html.parser")
 
@@ -1680,4 +1691,11 @@ def scrape_finn_key_numbers(url: str) -> Dict[str, Any]:
                 value = None
         results[spec.name] = value if value not in ("", []) else None
 
+    return results, raw_facts
+
+
+def scrape_finn_key_numbers(url: str, *, include_raw: bool = False) -> Dict[str, Any] | Tuple[Dict[str, Any], List[Dict[str, object]]]:
+    results, raw_facts = _scrape_finn_key_numbers(url)
+    if include_raw:
+        return results, raw_facts
     return results

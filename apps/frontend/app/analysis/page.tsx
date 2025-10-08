@@ -8,6 +8,7 @@ import {
   MouseEvent,
   PointerEvent as ReactPointerEvent,
   Suspense,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -412,6 +413,15 @@ type ListingKeyFact = {
   order?: number | null;
 };
 
+type FinnKeyNumbersResponse = {
+  finnkode?: string | null;
+  url?: string | null;
+  available?: boolean;
+  key_numbers?: Record<string, unknown> | null;
+  key_facts_raw?: KeyFactRaw[] | null;
+  keyFactsRaw?: KeyFactRaw[] | null;
+};
+
 const CURRENCY_FACT_KEYS = new Set([
   "total_price",
   "asking_price",
@@ -462,8 +472,6 @@ const KEY_FACT_LABEL_PRIORITY = [
   "Tomteareal",
 ] as const;
 
-const KEY_FACT_PRIORITY_BASE = 100;
-
 const KEY_FACT_PRIORITY_MAP: Map<string, number> = new Map(
   KEY_FACT_LABEL_PRIORITY.map((label, index) => [label.toLowerCase(), index]),
 );
@@ -484,11 +492,33 @@ function classifyEnergyLabelTone(value: string | null | undefined): EnergyLabelT
   if (!value) {
     return null;
   }
-  const match = String(value).toUpperCase().match(/[A-G]/);
-  if (!match) {
+
+  const rawText = String(value);
+  const normalised = rawText
+    .trim()
+    .toLowerCase()
+    .replace(/\u00f8/g, "o")
+    .replace(/\u00e6/g, "ae")
+    .replace(/\u00e5/g, "a");
+
+  if (normalised.includes("gronn")) {
+    return "good";
+  }
+  if (normalised.includes("gul")) {
+    return "mid";
+  }
+  if (normalised.includes("oransj")) {
+    return "warn";
+  }
+  if (normalised.includes("rod") || normalised.includes("roed") || normalised.includes("svart") || normalised.includes("sort")) {
+    return "bad";
+  }
+
+  const gradeMatch = rawText.toUpperCase().match(/[A-G]/);
+  if (!gradeMatch) {
     return null;
   }
-  const grade = match[0];
+  const grade = gradeMatch[0];
   switch (grade) {
     case "A":
     case "B":
@@ -670,6 +700,115 @@ function formatKeyFactValue(key: string, value: unknown): string {
     return trimmed;
   }
   return formatPlainLabel(value) ?? "—";
+}
+
+const KEY_NUMBER_CURRENCY_KEYS = new Set([
+  "prisantydning",
+  "totalpris",
+  "fellesgjeld",
+  "felleskostnader",
+  "omkostninger",
+  "kommunale avgifter",
+  "formuesverdi",
+]);
+
+const KEY_NUMBER_AREA_KEYS_NORMALISED = new Set(
+  ["primærrom (m²)", "bra (m²)", "tomt (m²)"].map((entry) => entry.toLowerCase()),
+);
+
+const KEY_NUMBER_INTEGER_KEYS = new Set(["soverom", "rom", "etasje"]);
+
+function formatKeyNumberLabel(rawKey: string): string {
+  const trimmed = rawKey.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed.toLowerCase() === "finn-kode") {
+    return "FINN-kode";
+  }
+  const first = trimmed.charAt(0);
+  if (!first) {
+    return trimmed;
+  }
+  if (first === first.toUpperCase()) {
+    return trimmed;
+  }
+  return `${first.toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function formatKeyNumberValue(rawKey: string, value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  const key = rawKey.trim().toLowerCase();
+  if (Array.isArray(value)) {
+    const formatted = value.map((entry) => formatPlainLabel(entry)).filter(Boolean) as string[];
+    return formatted.length ? formatted.join(", ") : null;
+  }
+  if (KEY_NUMBER_CURRENCY_KEYS.has(key)) {
+    return formatCurrencyLabel(value) ?? formatPlainLabel(value);
+  }
+  if (KEY_NUMBER_AREA_KEYS_NORMALISED.has(key)) {
+    return formatSquareMetres(value) ?? formatPlainLabel(value);
+  }
+  if (KEY_NUMBER_INTEGER_KEYS.has(key)) {
+    return formatIntegerLabel(value) ?? formatPlainLabel(value);
+  }
+  if (key === "energimerke") {
+    return formatEnergyLabel(value) ?? formatPlainLabel(value);
+  }
+  return formatPlainLabel(value);
+}
+
+function normaliseKeyFactsFromResponse(raw: unknown): KeyFactRaw[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const facts: KeyFactRaw[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+    const record = entry as Record<string, unknown>;
+    const label = typeof record.label === "string" ? record.label : null;
+    const value = typeof record.value === "string" ? record.value : null;
+    if (!label || !value) {
+      return;
+    }
+    const rawOrder = record.order;
+    let order = typeof rawOrder === "number" && Number.isFinite(rawOrder) ? rawOrder : index;
+    if (typeof rawOrder === "string") {
+      const numeric = Number.parseInt(rawOrder, 10);
+      if (Number.isFinite(numeric)) {
+        order = numeric;
+      }
+    }
+    facts.push({ label, value, order });
+  });
+  facts.sort((a, b) => {
+    if (a.order !== b.order) {
+      return a.order - b.order;
+    }
+    return 0;
+  });
+  return facts;
+}
+
+function keyNumbersToFacts(raw: unknown): KeyFactRaw[] {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  const facts: KeyFactRaw[] = [];
+  entries.forEach(([key, value], index) => {
+    const label = formatKeyNumberLabel(key);
+    const formattedValue = formatKeyNumberValue(key, value);
+    if (!label || !formattedValue) {
+      return;
+    }
+    facts.push({ label, value: formattedValue, order: index });
+  });
+  return facts;
 }
 
 function roundToStep(value: number, step: number): number {
@@ -1168,6 +1307,15 @@ function scoreFillColor(percent: number | null): string {
   return "#14532d"; // mørkegrønn
 }
 
+const KEY_FIGURE_TOOLTIPS: Record<string, string> = {
+  "Månedlig overskudd": "Hvor mye kontantstrøm som står igjen hver måned etter renter, avdrag og driftskostnader.",
+  "Leie for å gå i null": "Minimum husleie som dekker alle kostnader (break-even-nivået).",
+  "Årlig nettoinntekt": "Netto driftsinntekt (NOI) per år etter alle driftskostnader.",
+  "Årlig nedbetaling på lån": "Beløpet av lånet som betales ned i løpet av ett år.",
+  "Månedlig lånekostnader": "Summen du betaler på lånet hver måned, inkludert renter og avdrag.",
+  "Avkastning på egenkapital": "Forventet årlig avkastning på investert egenkapital uttrykt i prosent.",
+};
+
 function AnalysisPageContent() {
   const router = useRouter();
   const params = useSearchParams();
@@ -1200,17 +1348,73 @@ function AnalysisPageContent() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackSuccess, setFeedbackSuccess] = useState(false);
   const [feedbackErrorMessage, setFeedbackErrorMessage] = useState<string | null>(null);
+  const [listingKeyFacts, setListingKeyFacts] = useState<KeyFactRaw[]>([]);
+  const [listingKeyFactsSource, setListingKeyFactsSource] = useState<"job" | "finn" | null>(null);
+  const [listingKeyFactsLoading, setListingKeyFactsLoading] = useState(false);
+  const [listingKeyFactsError, setListingKeyFactsError] = useState<string | null>(null);
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
   const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
 
   const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
-  const listingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
+  const derivedListingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
     if (!listingDetails) {
       setDetailsOpen(false);
     }
   }, [listingDetails]);
+
+  useEffect(() => {
+    setListingKeyFacts([]);
+    setListingKeyFactsSource(null);
+    setListingKeyFactsLoading(false);
+    setListingKeyFactsError(null);
+  }, [listingUrl]);
+
+  useEffect(() => {
+    if (listingKeyFactsSource === "finn") {
+      return;
+    }
+    if (derivedListingKeyFacts.length) {
+      setListingKeyFacts(derivedListingKeyFacts);
+      setListingKeyFactsSource("job");
+      setListingKeyFactsError(null);
+    } else if (listingKeyFactsSource !== null) {
+      setListingKeyFacts([]);
+      setListingKeyFactsSource(null);
+    } else {
+      setListingKeyFacts([]);
+    }
+  }, [derivedListingKeyFacts, listingKeyFactsSource]);
+
+  const fetchListingKeyFacts = useCallback(async () => {
+    if (!listingUrl) {
+      return;
+    }
+    setListingKeyFactsLoading(true);
+    setListingKeyFactsError(null);
+    try {
+      const response = await fetch("/api/finn-key-numbers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: listingUrl }),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = (await response.json()) as FinnKeyNumbersResponse;
+      const rawFacts = normaliseKeyFactsFromResponse(data.keyFactsRaw ?? data.key_facts_raw);
+      const fallbackFacts = rawFacts.length ? rawFacts : keyNumbersToFacts(data.key_numbers ?? null);
+      setListingKeyFacts(fallbackFacts);
+      setListingKeyFactsSource("finn");
+      setListingKeyFactsError(null);
+    } catch (error) {
+      setListingKeyFactsError("Kunne ikke hente nøkkeltall fra FINN.");
+    } finally {
+      setListingKeyFactsLoading(false);
+    }
+  }, [listingUrl]);
 
   useEffect(() => {
     if (runToken) {
@@ -1239,6 +1443,29 @@ function AnalysisPageContent() {
   const handleFeedbackClose = () => {
     setFeedbackOpen(false);
   };
+
+  const handleShowDetails = useCallback(() => {
+    setDetailsOpen(true);
+    if (!listingUrl) {
+      setListingKeyFacts([]);
+      setListingKeyFactsSource(null);
+      setListingKeyFactsError("Legg inn FINN-annonsen for å hente nøkkeltall.");
+      return;
+    }
+    if (listingKeyFactsLoading) {
+      return;
+    }
+    if (listingKeyFactsSource !== "finn" || listingKeyFacts.length === 0 || listingKeyFactsError) {
+      void fetchListingKeyFacts();
+    }
+  }, [
+    listingUrl,
+    listingKeyFactsLoading,
+    listingKeyFactsSource,
+    listingKeyFacts.length,
+    listingKeyFactsError,
+    fetchListingKeyFacts,
+  ]);
 
   const decisionUi: DecisionUi | null = result?.decision_ui ?? null;
 
@@ -1286,9 +1513,12 @@ function AnalysisPageContent() {
     return null;
   }, [jobStatus]);
   const effectiveLinks = prospectusLinks ?? jobLinkInfo;
-  const tg2DisplaySource = useMemo(() => sanitizeProspectusItems(tg2Items), [tg2Items]);
-  const tg3DisplayItems = useMemo(() => sanitizeProspectusItems(tg3Items), [tg3Items]);
-  const watchoutDisplayItems = useMemo(() => sanitizeProspectusItems(watchoutItems), [watchoutItems]);
+  const tg2DisplaySource = useMemo(() => sanitizeProspectusItems(tg2Items, 5), [tg2Items]);
+  const tg3DisplayItems = useMemo(() => sanitizeProspectusItems(tg3Items, 5), [tg3Items]);
+  const watchoutDisplayItems = useMemo(
+    () => sanitizeProspectusItems(watchoutItems),
+    [watchoutItems],
+  );
   const tg2DisplayItems = useMemo(() => {
     if (watchoutDisplayItems.length === 0) {
       return tg2DisplaySource;
@@ -1302,7 +1532,7 @@ function AnalysisPageContent() {
       seen.add(item);
       unique.push(item);
     }
-    return unique;
+    return unique.slice(0, 5);
   }, [tg2DisplaySource, watchoutDisplayItems]);
   const tgDataAvailable = tg2Items.length > 0 || tg3Items.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
@@ -1910,6 +2140,8 @@ function AnalysisPageContent() {
         open={detailsOpen}
         details={listingDetails}
         keyFacts={listingKeyFacts}
+        loading={listingKeyFactsLoading}
+        error={listingKeyFactsError}
         onClose={() => setDetailsOpen(false)}
         title={previewTitle}
         address={previewAddress}
@@ -1960,7 +2192,7 @@ function AnalysisPageContent() {
               pdfUrl={resourcePdfUrl}
               listingUrl={resourceListingUrl}
               linkInfo={effectiveLinks}
-              onShowDetails={() => setDetailsOpen(true)}
+              onShowDetails={handleShowDetails}
             />
           </div>
           {jobFailed && !jobCompleted ? (
@@ -2111,7 +2343,6 @@ function AnalysisPageContent() {
                   {statusSentence ? <p className="status-sentence">{statusSentence}</p> : null}
                 </div>
               </div>
-              {decisionUi?.dom_notat ? <p className="status-note">{decisionUi.dom_notat}</p> : null}
             </div>
 
             <div className="analysis-score-spacer" aria-hidden="true" />
@@ -2122,9 +2353,28 @@ function AnalysisPageContent() {
                   const navn = typeof item.navn === "string" ? item.navn : "";
                   const verdi = typeof item.verdi === "string" ? item.verdi : String(item.verdi ?? "");
                   const farge = typeof item.farge === "string" ? item.farge : undefined;
+                  const description = navn ? KEY_FIGURE_TOOLTIPS[navn] : undefined;
+                  const tooltipId = description ? `key-tooltip-${index}` : undefined;
                   return (
                     <div className="key-card" key={`${navn}-${index}`}>
-                      <p className="key-name">{navn}</p>
+                      <div className="key-name">
+                        <span className="key-name-text">{navn}</span>
+                        {description ? (
+                          <div className="key-tooltip">
+                            <button
+                              type="button"
+                              className="key-info"
+                              aria-label={`Forklaring for ${navn}`}
+                              aria-describedby={tooltipId}
+                            >
+                              ?
+                            </button>
+                            <div className="key-tooltip-bubble" role="tooltip" id={tooltipId}>
+                              {description}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
                       <p className={keyColorClass(farge)}>{verdi}</p>
                     </div>
                   );
@@ -2161,7 +2411,6 @@ function AnalysisPageContent() {
                   items={tg3DisplayItems}
                   empty="Ingen TG3-punkter funnet ennå."
                 />
-                <ProspectusLinkCard linkInfo={effectiveLinks} />
               </div>
             </div>
           </div>
@@ -2388,12 +2637,23 @@ interface ListingDetailsModalProps {
   open: boolean;
   details: ListingDetailsDTO | null;
   keyFacts?: KeyFactRaw[];
+  loading?: boolean;
+  error?: string | null;
   onClose: () => void;
   title: string | null;
   address: string | null;
 }
 
-function ListingDetailsModal({ open, details, keyFacts, onClose, title, address }: ListingDetailsModalProps) {
+function ListingDetailsModal({
+  open,
+  details,
+  keyFacts,
+  loading = false,
+  error = null,
+  onClose,
+  title,
+  address,
+}: ListingDetailsModalProps) {
   useEffect(() => {
     if (!open) {
       return;
@@ -2413,7 +2673,7 @@ function ListingDetailsModal({ open, details, keyFacts, onClose, title, address 
   }, [open, onClose]);
 
   const facts = useMemo<KeyFactRaw[]>(() => {
-    const source = keyFacts && keyFacts.length ? keyFacts : extractKeyFactsRaw(details);
+    const source = Array.isArray(keyFacts) ? keyFacts : extractKeyFactsRaw(details);
     if (!source || !source.length) {
       return [];
     }
@@ -2436,12 +2696,14 @@ function ListingDetailsModal({ open, details, keyFacts, onClose, title, address 
     if (!facts.length) {
       return facts;
     }
-    const decorated = facts.map((fact, index) => {
+    const decorated: Array<{ fact: KeyFactRaw; index: number; priority: number }> = [];
+    facts.forEach((fact, index) => {
       const labelKey = normaliseFactLabel(fact.label);
-      const priority = labelKey !== null && KEY_FACT_PRIORITY_MAP.has(labelKey)
-        ? KEY_FACT_PRIORITY_MAP.get(labelKey) ?? index
-        : KEY_FACT_PRIORITY_BASE + index;
-      return { fact, index, priority };
+      if (labelKey === null || !KEY_FACT_PRIORITY_MAP.has(labelKey)) {
+        return;
+      }
+      const priority = KEY_FACT_PRIORITY_MAP.get(labelKey) ?? index;
+      decorated.push({ fact, index, priority });
     });
     decorated.sort((a, b) => {
       if (a.priority !== b.priority) {
@@ -2452,6 +2714,22 @@ function ListingDetailsModal({ open, details, keyFacts, onClose, title, address 
     return decorated.map((entry) => entry.fact);
   }, [facts]);
 
+  const overlayPointerDownRef = useRef(false);
+
+  const handleOverlayPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    overlayPointerDownRef.current = event.target === event.currentTarget;
+  }, []);
+
+  const handleOverlayClick = useCallback(
+    (event: MouseEvent<HTMLDivElement>) => {
+      if (event.target === event.currentTarget && overlayPointerDownRef.current) {
+        onClose();
+      }
+      overlayPointerDownRef.current = false;
+    },
+    [onClose],
+  );
+
   if (!open) {
     return null;
   }
@@ -2460,8 +2738,15 @@ function ListingDetailsModal({ open, details, keyFacts, onClose, title, address 
   const subtitle = address || title;
 
   return (
-    <div className="listing-details-overlay" role="dialog" aria-modal="true" aria-labelledby="listing-details-title">
-      <div className="listing-details-modal">
+    <div
+      className="listing-details-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="listing-details-title"
+      onPointerDown={handleOverlayPointerDown}
+      onClick={handleOverlayClick}
+    >
+      <div className="listing-details-modal" onClick={(event) => event.stopPropagation()}>
         <button type="button" className="listing-details-close" aria-label="Lukk detaljer" onClick={onClose}>
           ×
         </button>
@@ -2470,28 +2755,36 @@ function ListingDetailsModal({ open, details, keyFacts, onClose, title, address 
         </h2>
         {subtitle ? <p className="listing-details-subtitle">{subtitle}</p> : null}
         {displayFacts.length ? (
-          <div className="listing-details-grid">
-            {displayFacts.map((fact, index) => {
-              const key = `${fact.order ?? index}-${index}-${fact.label}`;
-              const labelText = fact.label;
-              const valueText = fact.value;
-              const isEnergyLabel = ENERGY_LABEL_REGEX.test(labelText);
-              const energyTone = isEnergyLabel ? classifyEnergyLabelTone(valueText) : null;
-              const valueClasses = ["listing-details-item-value"];
-              if (isEnergyLabel) {
-                valueClasses.push("listing-details-energy");
-                if (energyTone) {
-                  valueClasses.push(`listing-details-energy-${energyTone}`);
+          <>
+            <div className="listing-details-grid">
+              {displayFacts.map((fact, index) => {
+                const key = `${fact.order ?? index}-${index}-${fact.label}`;
+                const labelText = fact.label;
+                const valueText = fact.value;
+                const isEnergyLabel = ENERGY_LABEL_REGEX.test(labelText);
+                const energyTone = isEnergyLabel ? classifyEnergyLabelTone(valueText) : null;
+                const valueClasses = ["listing-details-item-value"];
+                if (isEnergyLabel) {
+                  valueClasses.push("listing-details-energy");
+                  if (energyTone) {
+                    valueClasses.push(`listing-details-energy-${energyTone}`);
+                  }
                 }
-              }
-              return (
-                <div key={key} className="listing-details-item">
-                  <span className="listing-details-item-label">{labelText}</span>
-                  <span className={valueClasses.join(" ")}>{valueText}</span>
-                </div>
-              );
-            })}
-          </div>
+                return (
+                  <div key={key} className="listing-details-item">
+                    <span className="listing-details-item-label">{labelText}</span>
+                    <span className={valueClasses.join(" ")}>{valueText}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {loading ? <p className="listing-details-empty">Oppdaterer nøkkeltall ...</p> : null}
+            {!loading && error ? <p className="listing-details-empty">{error}</p> : null}
+          </>
+        ) : loading ? (
+          <p className="listing-details-empty">Laster nøkkeltall ...</p>
+        ) : error ? (
+          <p className="listing-details-empty">{error}</p>
         ) : (
           <p className="listing-details-empty">Nøkkeltall er ikke tilgjengelig for denne annonsen ennå.</p>
         )}
@@ -2863,50 +3156,13 @@ function ProspectusCard({ title, items, empty, badge, className }: ProspectusCar
       </div>
       {hasItems ? (
         <ul>
-          {items.slice(0, 6).map((item, index) => (
+          {items.slice(0, 5).map((item, index) => (
             <li key={`${item}-${index}`}>{item}</li>
           ))}
         </ul>
       ) : (
         <p className="placeholder">{empty}</p>
       )}
-    </div>
-  );
-}
-
-interface ProspectusLinkCardProps {
-  linkInfo: ProspectusLinks | null;
-}
-
-function ProspectusLinkCard({ linkInfo }: ProspectusLinkCardProps) {
-  const href = typeof linkInfo?.salgsoppgave_pdf === "string" && linkInfo.salgsoppgave_pdf.trim()
-    ? linkInfo.salgsoppgave_pdf.trim()
-    : null;
-  const confidenceText =
-    typeof linkInfo?.confidence === "number" && Number.isFinite(linkInfo.confidence)
-      ? `Konfidens ${Math.round(linkInfo.confidence * 100)}%`
-      : null;
-  const anchorTitle = linkInfo?.message ?? confidenceText ?? undefined;
-  const disabledTitle = linkInfo?.message ?? "Ikke funnet";
-  const fallbackMessage = !href ? linkInfo?.message ?? "Ikke funnet" : null;
-  return (
-    <div className="prospectus-card prospectus-salgsoppgave-card">
-      <div className="prospectus-card-header">
-        <h3>Salgsoppgave</h3>
-      </div>
-      <div className="prospectus-actions">
-        {href ? (
-          <a className="prospectus-action primary" href={href} target="_blank" rel="noopener noreferrer" title={anchorTitle}>
-            Salgsoppgave (PDF)
-          </a>
-        ) : (
-          <button type="button" className="prospectus-action primary" disabled title={disabledTitle}>
-            Salgsoppgave (PDF)
-          </button>
-        )}
-        {href && confidenceText ? <span className="prospectus-confidence">{confidenceText}</span> : null}
-      </div>
-      {fallbackMessage ? <p className="prospectus-empty-note">{fallbackMessage}</p> : null}
     </div>
   );
 }
@@ -3010,6 +3266,7 @@ const PROSPECTUS_ISSUE_TERMS = [
   "ikke godkjent",
   "fukt",
   "fuktskade",
+  "fuktmerke",
   "lekk",
   "rate",
   "raate",
@@ -3120,7 +3377,7 @@ function sanitizeProspectusEntry(value: string): string {
   return result;
 }
 
-function sanitizeProspectusItems(items: readonly string[]): string[] {
+function sanitizeProspectusItems(items: readonly string[], limit = 8): string[] {
   const seen = new Set<string>();
   const cleaned: string[] = [];
   for (const item of items) {
@@ -3134,7 +3391,7 @@ function sanitizeProspectusItems(items: readonly string[]): string[] {
     }
     seen.add(key);
     cleaned.push(sanitized);
-    if (cleaned.length >= 10) {
+    if (cleaned.length >= limit) {
       break;
     }
   }

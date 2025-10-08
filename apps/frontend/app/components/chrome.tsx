@@ -545,6 +545,10 @@ export function SiteFooter() {
           Instagram: techdom.ai
         </a>
         <span className="footer-separator">·</span>
+        <a href="https://www.tiktok.com/@techdom.ai" target="_blank" rel="noreferrer">
+          TikTok: techdom.ai
+        </a>
+        <span className="footer-separator">·</span>
         <a href="mailto:support@techdom.ai">Mail: support@techdom.ai</a>
       </div>
       <p>

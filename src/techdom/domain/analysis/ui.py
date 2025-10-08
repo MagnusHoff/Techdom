@@ -58,8 +58,6 @@ def build_decision_result(
     )
 
     dom_notat: Optional[str] = None
-    if summary.tg_cap_used:
-        dom_notat = "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå."
 
     risiko_entries: List[str] = []
     for item in tg3_list:

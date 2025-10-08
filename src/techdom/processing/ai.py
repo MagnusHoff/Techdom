@@ -216,6 +216,7 @@ _PROSPECTUS_ISSUE_TERMS: Sequence[str] = (
     "ikke godkjent",
     "fukt",
     "fuktskade",
+    "fuktmerke",
     "lekk",
     "rate",
     "raate",
@@ -293,6 +294,98 @@ def _normalise_prospectus_text(value: str) -> str:
     return text
 
 
+def _shorten_issue_text(value: str, max_words: int = 24) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+
+    component: str | None = None
+    reason_text = text
+
+    split_match = re.search(r"[:–—-]", text)
+    if split_match:
+        idx = split_match.start()
+        component = text[:idx].strip(" .,:;–—-")
+        reason_text = text[idx + 1 :].strip()
+
+    reason_text = re.sub(r"\s+", " ", reason_text)
+    reason_text = reason_text.strip()
+    if not reason_text:
+        reason_text = text.strip()
+
+    raw_sentences = [
+        segment.strip(" .,:;–—-")
+        for segment in re.split(r"[.!?]+", reason_text)
+        if segment.strip(" .,:;–—-")
+    ]
+    if raw_sentences:
+        reason_text = raw_sentences[0]
+        if len(reason_text.split()) < 12 and len(raw_sentences) > 1:
+            reason_text = f"{reason_text}, {raw_sentences[1]}"
+
+    tokens = [
+        token.strip(".,;:–—-")
+        for token in reason_text.split()
+        if token.strip(".,;:–—-")
+    ]
+    if tokens:
+        truncated = tokens[:max_words]
+        reason_clean = " ".join(truncated).strip()
+    else:
+        reason_clean = ""
+
+    if component:
+        component = component.strip()
+        if component:
+            component = component[0].upper() + component[1:]
+        if reason_clean:
+            if reason_clean[0].isalpha():
+                reason_clean = reason_clean[0].upper() + reason_clean[1:]
+            combined = f"{component}: {reason_clean}"
+        else:
+            combined = component
+    else:
+        combined = reason_clean
+
+    combined = combined.strip(" .,:;–—-")
+    if not combined:
+        return ""
+
+    if combined[0].isalpha():
+        combined = combined[0].upper() + combined[1:]
+    if not combined.endswith("."):
+        combined = f"{combined}."
+    return combined
+
+
+def _format_issue_points(items: Iterable[str], limit: int = 8, *, max_words: int = 24) -> List[str]:
+    seen: set[str] = set()
+    formatted: List[str] = []
+    for raw in items:
+        text = _normalise_prospectus_text(str(raw))
+        if not text:
+            continue
+        sentence = _shorten_issue_text(text, max_words=max_words)
+        if not sentence:
+            continue
+        key = _simplify_text(sentence)
+        if key in seen:
+            continue
+        seen.add(key)
+        formatted.append(sentence[:200])
+        if len(formatted) >= limit:
+            break
+    return formatted
+
+
+def _coerce_issue_iterable(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if item is not None]
+    return [str(value)]
+
+
 def _looks_specific_issue(text: str) -> bool:
     if not text:
         return False
@@ -304,15 +397,17 @@ def _looks_specific_issue(text: str) -> bool:
     def _contains(term: str) -> bool:
         if " " in term:
             return term in normalised
-        return term in tokens
+        if term in tokens:
+            return True
+        return any(token.startswith(term) or term.startswith(token) for token in tokens)
 
     has_component = any(_contains(term) for term in _PROSPECTUS_COMPONENT_TERMS)
     has_issue = any(_contains(term) for term in _PROSPECTUS_ISSUE_TERMS)
     if _contains("ikke godkjent"):
         has_issue = True
-    if has_component and (has_issue or len(text.split()) >= 3):
+    if has_component and has_issue:
         return True
-    if has_issue and has_component:
+    if has_issue and len(tokens) >= 4:
         return True
     return False
 
@@ -433,10 +528,10 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
             # defensiv normalisering
             out: Dict[str, Any] = {
                 "summary_md": str(obj.get("summary_md") or ""),
-                "tg3": [str(x) for x in (obj.get("tg3") or [])],
-                "tg2": [str(x) for x in (obj.get("tg2") or [])],
-                "upgrades": [str(x) for x in (obj.get("upgrades") or [])],
-                "watchouts": [str(x) for x in (obj.get("watchouts") or [])],
+                "tg3": _format_issue_points(_coerce_issue_iterable(obj.get("tg3")), limit=5),
+                "tg2": _format_issue_points(_coerce_issue_iterable(obj.get("tg2")), limit=5),
+                "upgrades": _format_issue_points(_coerce_issue_iterable(obj.get("upgrades")), limit=8),
+                "watchouts": _format_issue_points(_coerce_issue_iterable(obj.get("watchouts")), limit=8),
             }
             out["questions"] = _generate_follow_up_questions(
                 out["tg3"], out["watchouts"], out["tg2"], out["upgrades"]
@@ -458,15 +553,21 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
     ]
     upgrades = _dedupe_preserve_order(upgrades_candidates, 8)
     watchouts = _extract_watchout_issues(lines, exclude=[*tg2, *tg3])
-    questions = _generate_follow_up_questions(tg3, watchouts, tg2, upgrades)
+    formatted_tg3 = _format_issue_points(tg3, limit=5)
+    formatted_tg2 = _format_issue_points(tg2, limit=5)
+    formatted_watchouts = _format_issue_points(watchouts, limit=8)
+    formatted_upgrades = _format_issue_points(upgrades, limit=8)
+    questions = _generate_follow_up_questions(
+        formatted_tg3, formatted_watchouts, formatted_tg2, formatted_upgrades
+    )
     return {
         "summary_md": (
             "Funn basert på enkel tekstskanning (begrenset uten AI-nøkkel). "
             "Se TG-punkter og risikopunkter under."
         ),
-        "tg3": tg3[:10],
-        "tg2": tg2[:10],
-        "upgrades": upgrades[:8],
-        "watchouts": watchouts[:8],
+        "tg3": formatted_tg3,
+        "tg2": formatted_tg2,
+        "upgrades": formatted_upgrades,
+        "watchouts": formatted_watchouts,
         "questions": questions,
     }

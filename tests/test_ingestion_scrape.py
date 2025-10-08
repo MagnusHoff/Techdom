@@ -111,3 +111,34 @@ def test_extract_key_facts_raw_handles_key_info_items() -> None:
     assert facts[1]["value"] == "3 250 kr/mnd"
     assert facts[2]["label"] == "Soverom"
     assert facts[2]["value"] == "2"
+
+
+def test_extract_key_facts_raw_prefers_nokkeltall_section() -> None:
+    html = """
+    <html>
+      <body>
+        <section>
+          <h2>Nøkkelinfo</h2>
+          <div data-testid="key-info-item">
+            <span data-testid="key-info-item-label">Boligtype</span>
+            <span data-testid="key-info-item-value">Leilighet</span>
+          </div>
+        </section>
+        <section data-testid="key-number-list">
+          <h2>Nøkkeltall</h2>
+          <dl>
+            <dt>Prisantydning</dt>
+            <dd>4 100 000 kr</dd>
+          </dl>
+          <dl>
+            <dt>Felleskostnader</dt>
+            <dd>3 250 kr/mnd</dd>
+          </dl>
+        </section>
+      </body>
+    </html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    facts = _extract_key_facts_raw(soup)
+    labels = [fact["label"] for fact in facts]
+    assert labels == ["Prisantydning", "Felleskostnader"]

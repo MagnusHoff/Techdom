@@ -274,10 +274,7 @@ class DecisionResultTests(unittest.TestCase):
         self.assertEqual(result.tr_score_0_100, summary.tr_score)
         self.assertEqual(result.score_0_100, summary.total_score)
         self.assertEqual(result.dom, summary.verdict)
-        self.assertEqual(
-            result.dom_notat,
-            "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå.",
-        )
+        self.assertIsNone(result.dom_notat)
 
     def test_positive_cashflow_high_roe_adds_positive_bullets(self) -> None:
         metrics = CalculatedMetrics(
@@ -323,10 +320,7 @@ class DecisionResultTests(unittest.TestCase):
         self.assertEqual(result.tr_score_0_100, summary.tr_score)
         self.assertEqual(result.score_0_100, summary.total_score)
         self.assertEqual(result.dom, summary.verdict)
-        self.assertEqual(
-            result.dom_notat,
-            "Dom basert på økonomi. Teknisk risiko ikke vurdert ennå.",
-        )
+        self.assertIsNone(result.dom_notat)
         self.assertEqual(result.risiko, [])
 
     def test_includes_tg_findings_and_uses_risk_score(self) -> None:

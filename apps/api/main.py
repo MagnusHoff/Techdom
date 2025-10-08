@@ -253,7 +253,12 @@ def finn_key_numbers(payload: FinnKeyNumbersReq):
         url = _build_finn_url(raw_finnkode)
 
     try:
-        key_numbers = scrape_finn_key_numbers(url)
+        response = scrape_finn_key_numbers(url, include_raw=True)
+        if isinstance(response, tuple):
+            key_numbers, raw_facts = response
+        else:  # pragma: no cover - fallback for unexpected return type
+            key_numbers = response
+            raw_facts = []
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else None
         detail = f"Kunne ikke hente nøkkeltall fra FINN (HTTP {code})." if code else "Kunne ikke hente nøkkeltall fra FINN."
@@ -268,6 +273,8 @@ def finn_key_numbers(payload: FinnKeyNumbersReq):
         "url": url,
         "available": available,
         "key_numbers": key_numbers,
+        "key_facts_raw": raw_facts,
+        "keyFactsRaw": raw_facts,
     }
 
 
