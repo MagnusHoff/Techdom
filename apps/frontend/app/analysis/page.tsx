@@ -2716,8 +2716,12 @@ function ListingPreviewCard({
     if (!hasListing || !listingUrl) {
       return null;
     }
+    const normalizedListingUrl = listingUrl?.trim();
+    if (!normalizedListingUrl) {
+      return null;
+    }
     try {
-      const url = new URL(listingUrl);
+      const url = new URL(normalizedListingUrl);
       const pathname = decodeURIComponent(url.pathname.replace(/\/+$/, ""));
       const segments = pathname.split("/").filter(Boolean);
       if (segments.length > 0 && !segments[segments.length - 1].includes(".")) {
@@ -2725,7 +2729,7 @@ function ListingPreviewCard({
       }
       return url.hostname;
     } catch {
-      return listingUrl.replace(/^https?:\/\//i, "");
+      return normalizedListingUrl.replace(/^https?:\/\//i, "");
     }
   })();
   const srStatus = (() => {

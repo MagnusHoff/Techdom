@@ -111,9 +111,11 @@ export function SiteHeader({
     fetchCurrentUser()
       .then((user) => {
         setCurrentUser(user);
+        emitUserUpdate(user);
       })
       .catch(() => {
         setCurrentUser(null);
+        emitUserUpdate(null);
       });
   }, []);
 

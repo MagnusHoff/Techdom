@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from techdom.domain import history
 from techdom.domain.auth import schemas
 from techdom.domain.auth.models import User, UserRole
 from techdom.infrastructure.db import get_session
@@ -198,6 +199,24 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
         ) from exc
+
+
+@router.get(
+    "/me/status",
+    response_model=schemas.UserStatus,
+    summary="Hent status for analyser til innlogget bruker",
+)
+async def read_my_status(
+    current_user: User = Depends(auth_service.get_current_active_user),
+) -> schemas.UserStatus:
+    summary = history.summarise(window_days=7)
+    return schemas.UserStatus(
+        total_user_analyses=summary.total,
+        total_last_7_days=summary.last_7_days,
+        last_run_at=summary.last_run_at,
+    )
+
+
 @router.get(
     "/admin/ping",
     response_model=schemas.UserRead,
@@ -257,6 +276,88 @@ async def update_user_role(
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
     return schemas.UserRead.model_validate(user)
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=schemas.UserRead,
+    summary="Oppdater brukerdetaljer (kun admin)",
+)
+async def admin_update_user(
+    user_id: int,
+    payload: schemas.AdminUpdateUser,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_username(
+            session, user_id=user_id, username=payload.username
+        )
+    except DuplicateUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Brukernavn er allerede i bruk",
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+    except InvalidUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return schemas.UserRead.model_validate(user)
+
+
+@router.post(
+    "/users/{user_id}/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Oppdater passord for bruker (kun admin)",
+)
+async def admin_update_user_password(
+    user_id: int,
+    payload: schemas.AdminChangeUserPassword,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> None:
+    try:
+        await auth_service.set_user_password(
+            session, user_id=user_id, new_password=payload.new_password
+        )
+    except InvalidPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Slett bruker (kun admin)",
+)
+async def admin_delete_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_admin: User = Depends(auth_service.get_current_active_admin),
+) -> None:
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Du kan ikke slette din egen administratorkonto.",
+        )
+
+    try:
+        await auth_service.delete_user(session, user_id=user_id)
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
 
 
 @router.post(
