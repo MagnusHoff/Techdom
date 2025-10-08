@@ -2713,7 +2713,7 @@ function ListingPreviewCard({
     if (trimmedTitle) {
       return trimmedTitle;
     }
-    if (!hasListing) {
+    if (!hasListing || !listingUrl) {
       return null;
     }
     try {
