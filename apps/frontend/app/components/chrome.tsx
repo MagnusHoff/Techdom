@@ -428,14 +428,7 @@ export function SiteHeader({
               {userMenuOpen ? (
                 <div className="header-user-dropdown" id="header-user-dropdown">
                   <Link href="/profile" className="header-user-item" onClick={() => setUserMenuOpen(false)}>
-                    Min profil
-                  </Link>
-                  <Link
-                    href="/mine-analyser"
-                    className="header-user-item"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    Mine analyser
+                    Mine sider
                   </Link>
                   <button
                     type="button"

@@ -8,6 +8,7 @@ import {
   MouseEvent,
   PointerEvent as ReactPointerEvent,
   Suspense,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -18,7 +19,7 @@ import {
 } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
+import { getJobStatus, incrementUserAnalyses, runAnalysis, startAnalysisJob } from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -29,6 +30,8 @@ import type {
   ProspectusExtract,
   ProspectusLinks,
 } from "@/lib/types";
+
+const USER_UPDATED_EVENT = "techdom:user-updated";
 
 const DEFAULT_FORM: AnalysisPayload = {
   price: "",
@@ -1204,6 +1207,21 @@ function AnalysisPageContent() {
   const jobAppliedRef = useRef<string | null>(null);
   const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
 
+  const registerAnalysisCompletion = useCallback(() => {
+    void incrementUserAnalyses()
+      .then((updatedUser) => {
+        if (typeof window === "undefined") {
+          return;
+        }
+        window.dispatchEvent(
+          new CustomEvent(USER_UPDATED_EVENT, { detail: updatedUser }),
+        );
+      })
+      .catch(() => {
+        /* ignore missing auth */
+      });
+  }, [incrementUserAnalyses]);
+
   const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
   const listingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
@@ -1508,6 +1526,7 @@ function AnalysisPageContent() {
     try {
       const analysis = await runAnalysis(payload);
       setResult(analysis);
+      registerAnalysisCompletion();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Klarte ikke å hente analyse.");
     } finally {
@@ -1842,6 +1861,7 @@ function AnalysisPageContent() {
       }
       setPreviewLoading(false);
       jobAppliedRef.current = jobId;
+      registerAnalysisCompletion();
     }
 
     if (statusKey === "failed" && jobAppliedRef.current !== `${jobId}:failed`) {
@@ -1902,7 +1922,7 @@ function AnalysisPageContent() {
       setPreviewLoading(false);
       jobAppliedRef.current = `${jobId}:failed`;
     }
-  }, [jobStatus, jobId, listingDetails]);
+  }, [jobStatus, jobId, listingDetails, registerAnalysisCompletion]);
 
   return (
     <>

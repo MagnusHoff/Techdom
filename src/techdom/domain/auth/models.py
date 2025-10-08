@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from techdom.infrastructure.db import Base
@@ -24,6 +24,8 @@ class User(Base):
     username_canonical: Mapped[str | None] = mapped_column(
         String(150), unique=True, nullable=True, index=True
     )
+    avatar_emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    avatar_color: Mapped[str | None] = mapped_column(String(16), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(1024), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="user_role"), default=UserRole.USER, nullable=False
@@ -39,6 +41,7 @@ class User(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    total_analyses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"User(id={self.id!r}, email={self.email!r}, role={self.role!r})"

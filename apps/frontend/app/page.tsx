@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "./components/chrome";
+import UserEmojiAvatar from "./components/user-avatar";
 import { fetchCurrentUser, fetchStats, fetchUserStatus } from "@/lib/api";
 import { extractFinnkode } from "@/lib/listing";
-import { userBadgeLabel, userDisplayName, userInitials } from "@/lib/user";
+import { resolveUserLevel, userDisplayName, userInitials } from "@/lib/user";
 import type { AuthUser, UserStatusResponse } from "@/lib/types";
 
 const INITIAL_ANALYSED_COUNT = 48;
@@ -25,6 +26,24 @@ function formatNumber(value: number): string {
   }
 }
 
+function hexWithAlpha(hexColor: string, alpha: number): string {
+  const clampedAlpha = Number.isFinite(alpha) ? Math.min(Math.max(alpha, 0), 1) : 0;
+  const normalised = hexColor.trim().replace(/^#/, "");
+  const expanded = normalised.length === 3
+    ? normalised.split("").map((char) => `${char}${char}`).join("")
+    : normalised;
+  if (expanded.length !== 6) {
+    return hexColor;
+  }
+  const r = Number.parseInt(expanded.slice(0, 2), 16);
+  const g = Number.parseInt(expanded.slice(2, 4), 16);
+  const b = Number.parseInt(expanded.slice(4, 6), 16);
+  if ([r, g, b].some((component) => Number.isNaN(component))) {
+    return hexColor;
+  }
+  return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
+}
+
 
 export default function LandingPage() {
   const router = useRouter();
@@ -36,6 +55,8 @@ export default function LandingPage() {
   const [status, setStatus] = useState<UserStatusResponse | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const userId = user?.id ?? null;
+  const userAnalyses = user?.total_analyses ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +74,13 @@ export default function LandingPage() {
       cancelled = true;
     };
   }, []);
+
+  const emitUserUpdate = (nextUser: AuthUser | null) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.dispatchEvent(new CustomEvent<AuthUser | null>(USER_UPDATED_EVENT, { detail: nextUser }));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +110,22 @@ export default function LandingPage() {
     const handleUserUpdate = (event: Event) => {
       const detail = (event as CustomEvent<AuthUser | null>).detail ?? null;
       setUser(detail);
-      setStatus(null);
+      setStatus((previous) => {
+        if (!detail) {
+          return null;
+        }
+        if (!previous) {
+          return {
+            total_user_analyses: detail.total_analyses,
+            total_last_7_days: 0,
+            last_run_at: null,
+          };
+        }
+        if (previous.total_user_analyses === detail.total_analyses) {
+          return previous;
+        }
+        return { ...previous, total_user_analyses: detail.total_analyses };
+      });
       setStatusError(null);
       setStatusLoading(false);
     };
@@ -94,7 +137,7 @@ export default function LandingPage() {
   }, []);
 
   useEffect(() => {
-    if (!user) {
+    if (userId === null) {
       setStatus(null);
       setStatusError(null);
       setStatusLoading(false);
@@ -108,6 +151,15 @@ export default function LandingPage() {
         if (cancelled) {
           return;
         }
+        setUser((previous) => {
+          if (!previous) {
+            return previous;
+          }
+          if (previous.total_analyses === result.total_user_analyses) {
+            return previous;
+          }
+          return { ...previous, total_analyses: result.total_user_analyses };
+        });
         setStatus(result);
         setStatusError(null);
       })
@@ -127,7 +179,7 @@ export default function LandingPage() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [userId, userAnalyses]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -162,6 +214,8 @@ export default function LandingPage() {
     }
     return formatNumber(status.total_last_7_days);
   }, [status]);
+
+  const analysesForBadge = user?.total_analyses ?? status?.total_user_analyses ?? 0;
 
   const showSkeleton = !userResolved || (user !== null && statusLoading);
   const showMinStatusCard = Boolean(user);
@@ -218,7 +272,7 @@ export default function LandingPage() {
               <>
                 <MinStatusCard
                   user={user}
-                  totalAnalyses={status?.total_user_analyses ?? 0}
+                  totalAnalyses={analysesForBadge}
                   statusError={statusError}
                 />
                 <div className="status-card-stack">
@@ -271,7 +325,18 @@ interface MinStatusCardProps {
 function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps) {
   const initials = userInitials(user);
   const name = userDisplayName(user);
-  const badge = userBadgeLabel(totalAnalyses);
+  const level = resolveUserLevel(totalAnalyses);
+  const badgeStyle = useMemo(() => {
+    const baseColor = level.color || "#9CA3AF";
+    return {
+      color: baseColor,
+      backgroundColor: hexWithAlpha(baseColor, 0.18),
+      borderColor: hexWithAlpha(baseColor, 0.35),
+      boxShadow: `0 0 0 1px ${hexWithAlpha(baseColor, 0.22)} inset`,
+    } as const;
+  }, [level.color]);
+  const analysisLabel = level.analyses === 1 ? "analyse" : "analyser";
+  const badgeAriaLabel = `${level.label} – ${level.analyses} ${analysisLabel}`;
 
   return (
     <article className="status-card status-card--personal" aria-live="polite">
@@ -279,15 +344,30 @@ function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps)
 
       <div className="status-card__personal-content">
         <div className="status-card__avatar-group">
-          <div className="status-card__avatar" aria-hidden="true">
-            <span>{initials}</span>
-          </div>
+          <UserEmojiAvatar
+            user={user}
+            initials={initials}
+            avatarEmoji={user.avatar_emoji ?? null}
+            avatarColor={user.avatar_color ?? null}
+            className="status-card__avatar"
+            label="Velg emoji for avatar"
+            onUserUpdate={(updated) => {
+              setUser(updated);
+              emitUserUpdate(updated);
+            }}
+          />
         </div>
 
         <div className="status-card__personal-details">
           <p className="status-card__name">{name}</p>
-          <span className="status-card__badge" aria-label={`Badge: ${badge}`}>
-            {badge}
+          <span
+            className="status-card__badge"
+            aria-label={badgeAriaLabel}
+            title={`${level.analyses} ${analysisLabel}`}
+            style={badgeStyle}
+            data-user-level={level.level}
+          >
+            {level.label}
           </span>
         </div>
       </div>
@@ -302,9 +382,9 @@ function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps)
         <Link className="status-card__action" href="/mine-analyser">
           Mine analyser
         </Link>
-        <Link className="status-card__action" href="/mine-venner">
+        <button className="status-card__action status-card__action--disabled" type="button" disabled>
           Mine venner
-        </Link>
+        </button>
       </div>
     </article>
   );
