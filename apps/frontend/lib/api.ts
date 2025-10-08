@@ -86,6 +86,11 @@ export interface UpdateUserRolePayload {
   role: AuthUser["role"];
 }
 
+export interface UpdateUserAvatarPayload {
+  avatarEmoji: string | null;
+  avatarColor: string | null;
+}
+
 export async function requestPasswordReset(
   payload: PasswordResetRequestPayload,
 ): Promise<void> {
@@ -195,6 +200,19 @@ export async function updateUsername(payload: UpdateUsernamePayload): Promise<Au
   return handleResponse<AuthUser>(res);
 }
 
+export async function updateUserAvatar(payload: UpdateUserAvatarPayload): Promise<AuthUser> {
+  const res = await apiFetch("/auth/me/avatar", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      avatar_emoji: payload.avatarEmoji,
+      avatar_color: payload.avatarColor,
+    }),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
+}
+
 export async function changePassword(payload: ChangePasswordPayload): Promise<void> {
   const res = await apiFetch("/auth/me/password", {
     method: "POST",
@@ -215,6 +233,17 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
   }
 
   await handleResponse<unknown>(res);
+}
+
+export async function incrementUserAnalyses(increment = 1): Promise<AuthUser> {
+  const safeIncrement = Number.isFinite(increment) ? Math.max(1, Math.floor(increment)) : 1;
+  const res = await apiFetch("/auth/me/analyses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ increment: safeIncrement }),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
 }
 export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisResponse> {
   const res = await apiFetch("/analysis", {

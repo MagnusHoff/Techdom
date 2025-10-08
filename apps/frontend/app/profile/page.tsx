@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
+import UserEmojiAvatar from "../components/user-avatar";
 import { changePassword, fetchCurrentUser, logoutUser, updateUsername } from "@/lib/api";
 import { userDisplayName, userInitials } from "@/lib/user";
 import { Lock, LogOut, User } from "lucide-react";
@@ -94,6 +95,11 @@ export default function ProfilePage() {
     );
   };
 
+  const applyUserUpdate = (nextUser: AuthUser) => {
+    setUser(nextUser);
+    emitUserUpdate(nextUser);
+  };
+
   const handleUsernameSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setUsernameError(null);
@@ -116,10 +122,9 @@ export default function ProfilePage() {
     setUsernameLoading(true);
     try {
       const updated = await updateUsername({ username: trimmed });
-      setUser(updated);
+      applyUserUpdate(updated);
       setUsernameValue(updated.username?.trim() ?? "");
       setUsernameMessage("Brukernavnet er oppdatert.");
-      emitUserUpdate(updated);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Kunne ikke oppdatere brukernavnet akkurat nå.";
@@ -189,9 +194,15 @@ export default function ProfilePage() {
         return (
           <div className="profile-card">
             <div className="profile-main">
-              <div className="profile-avatar" aria-hidden="true">
-                {initials}
-              </div>
+              <UserEmojiAvatar
+                user={user}
+                initials={initials}
+                avatarEmoji={user?.avatar_emoji ?? null}
+                avatarColor={user?.avatar_color ?? null}
+                className="profile-avatar"
+                label="Velg emoji for avatar"
+                onUserUpdate={applyUserUpdate}
+              />
               <div className="profile-details">
                 <div className="profile-row">
                   <span className="profile-label">Navn</span>
@@ -200,18 +211,6 @@ export default function ProfilePage() {
                 <div className="profile-row">
                   <span className="profile-label">E-post</span>
                   <p className="profile-value">{user?.email}</p>
-                </div>
-                <div className="profile-row">
-                  <span className="profile-label">E-post bekreftet</span>
-                  <p
-                    className={
-                      user?.is_email_verified
-                        ? "profile-value profile-value--success"
-                        : "profile-value profile-value--warning"
-                    }
-                  >
-                    {user?.is_email_verified ? "Ja" : "Nei"}
-                  </p>
                 </div>
                 <div className="profile-row">
                   <span className="profile-label">Rolle</span>
@@ -376,7 +375,7 @@ export default function ProfilePage() {
         <section className="profile-page">
           <header className="profile-header">
             <div className="profile-breadcrumb" aria-label="Brødsmule">
-              <span>Konto</span>
+              <span>Mine sider</span>
               <span className="profile-breadcrumb-separator">/</span>
               <span>Min profil</span>
             </div>
@@ -402,6 +401,7 @@ export default function ProfilePage() {
                 <div className="profile-sidebar-card">
                   {SECTIONS.map((section) => {
                     const isActive = activeSection === section.id;
+                    const isDisabled = section.comingSoon;
                     const className = [
                       "profile-sidebar-button",
                       isActive ? "is-active" : "",
@@ -415,7 +415,12 @@ export default function ProfilePage() {
                         key={section.id}
                         type="button"
                         className={className}
-                        onClick={() => setActiveSection(section.id)}
+                        onClick={() => {
+                          if (!isDisabled) {
+                            setActiveSection(section.id);
+                          }
+                        }}
+                        disabled={isDisabled}
                         aria-current={isActive ? "page" : undefined}
                       >
                         <span>{section.label}</span>

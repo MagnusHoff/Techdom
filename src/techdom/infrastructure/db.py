@@ -113,6 +113,21 @@ def _ensure_users_schema(sync_conn) -> None:
                 "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;"
             )
         )
+        columns.add("is_email_verified")
+
+    if "avatar_emoji" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN avatar_emoji VARCHAR(16);"))
+        columns.add("avatar_emoji")
+
+    if "avatar_color" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN avatar_color VARCHAR(16);"))
+        columns.add("avatar_color")
+
+    if "total_analyses" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN total_analyses INTEGER NOT NULL DEFAULT 0;")
+        )
+        columns.add("total_analyses")
 
 
 async def ensure_auth_schema() -> None:

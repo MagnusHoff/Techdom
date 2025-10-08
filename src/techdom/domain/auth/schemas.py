@@ -6,6 +6,7 @@ import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from techdom.domain.auth.models import UserRole
+from techdom.domain.auth.constants import normalise_avatar_emoji, normalise_avatar_color
 
 
 class UserBase(BaseModel):
@@ -43,11 +44,14 @@ class UserCreate(UserBase):
 class UserRead(UserBase):
     id: int
     username: str | None = None
+    avatar_emoji: str | None = None
+    avatar_color: str | None = None
     role: UserRole
     is_active: bool
     is_email_verified: bool
     created_at: datetime
     updated_at: datetime
+    total_analyses: int = 0
 
     class Config:
         from_attributes = True
@@ -79,6 +83,27 @@ class UpdateUsername(BaseModel):
                 "Brukernavn må være 3-20 tegn og kan kun inneholde bokstaver, tall, punktum og understrek."
             )
         return stripped
+
+
+class UpdateAvatar(BaseModel):
+    avatar_emoji: str | None = None
+    avatar_color: str | None = None
+
+    @field_validator("avatar_emoji")
+    @classmethod
+    def validate_avatar(cls, value: str | None) -> str | None:
+        normalised = normalise_avatar_emoji(value)
+        if value is None or normalised is not None:
+            return normalised
+        raise ValueError("Ugyldig emoji-valg. Velg en av de tilgjengelige alternativene.")
+
+    @field_validator("avatar_color")
+    @classmethod
+    def validate_avatar_color(cls, value: str | None) -> str | None:
+        normalised = normalise_avatar_color(value)
+        if value is None or normalised is not None:
+            return normalised
+        raise ValueError("Ugyldig bakgrunnsfarge.")
 
 
 class ChangePassword(BaseModel):
@@ -173,3 +198,7 @@ class EmailVerificationConfirm(BaseModel):
 
 class EmailVerificationResend(BaseModel):
     email: EmailStr
+
+
+class IncrementAnalyses(BaseModel):
+    increment: int = Field(default=1, ge=1, le=1000)

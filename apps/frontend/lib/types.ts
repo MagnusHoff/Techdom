@@ -145,11 +145,14 @@ export interface AuthUser {
   id: number;
   email: string;
   username?: string | null;
+  avatar_emoji?: string | null;
+  avatar_color?: string | null;
   role: "user" | "plus" | "admin";
   is_active: boolean;
   is_email_verified: boolean;
   created_at: string;
   updated_at: string;
+  total_analyses: number;
 }
 
 export interface AuthResponse {

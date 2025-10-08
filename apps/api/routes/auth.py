@@ -15,13 +15,16 @@ from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
 from techdom.services.auth import (
     DuplicateUsernameError,
+    EmailVerificationRateLimitedError,
     ExpiredEmailVerificationTokenError,
+    InvalidAnalysisIncrementError,
+    InvalidAvatarEmojiError,
+    InvalidAvatarColorError,
     InvalidCurrentPasswordError,
     InvalidEmailVerificationTokenError,
     InvalidPasswordError,
     InvalidUsernameError,
     UserNotFoundError,
-    EmailVerificationRateLimitedError,
 )
 from techdom.infrastructure.email import (
     send_email_verification_email,
@@ -31,6 +34,25 @@ from techdom.infrastructure.email import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
+
+
+def _serialize_user(
+    user: User,
+    *,
+    total_analyses: int | None = None,
+) -> schemas.UserRead:
+    raw_total = total_analyses if total_analyses is not None else getattr(user, "total_analyses", 0)
+    try:
+        safe_total = max(int(raw_total or 0), 0)
+    except (TypeError, ValueError):
+        safe_total = 0
+
+    try:
+        user.total_analyses = safe_total  # type: ignore[assignment]
+    except AttributeError:
+        setattr(user, "total_analyses", safe_total)
+
+    return schemas.UserRead.model_validate(user)
 
 
 @router.post(
@@ -73,7 +95,7 @@ async def register_user(
                 email_address,
                 token,
             )
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user, total_analyses=0)
 
 
 @router.post("/login", response_model=schemas.AuthResponse, summary="Authenticate a user")
@@ -128,16 +150,15 @@ async def login(
     fallback_role = UserRole.USER.value
     role_value = str(raw_role or fallback_role)
     access_token = create_access_token(data={"sub": user.email, "role": role_value})
-    return schemas.AuthResponse(
-        access_token=access_token, user=schemas.UserRead.model_validate(user)
-    )
+    user_read = _serialize_user(user)
+    return schemas.AuthResponse(access_token=access_token, user=user_read)
 
 
 @router.get("/me", response_model=schemas.UserRead, summary="Get current user")
 async def read_me(
     current_user: User = Depends(auth_service.get_current_active_user),
 ) -> schemas.UserRead:
-    return schemas.UserRead.model_validate(current_user)
+    return _serialize_user(current_user)
 
 
 @router.patch(
@@ -168,7 +189,36 @@ async def update_username(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user)
+
+
+@router.patch(
+    "/me/avatar",
+    response_model=schemas.UserRead,
+    summary="Oppdater avatar for innlogget bruker",
+)
+async def update_avatar(
+    payload: schemas.UpdateAvatar,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_avatar_preferences(
+            session,
+            user_id=current_user.id,
+            avatar_emoji=payload.avatar_emoji,
+            avatar_color=payload.avatar_color,
+        )
+    except InvalidAvatarEmojiError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except InvalidAvatarColorError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+
+    return _serialize_user(user)
 
 
 @router.post(
@@ -214,10 +264,34 @@ async def read_my_status(
 ) -> schemas.UserStatus:
     summary = history.summarise(window_days=7)
     return schemas.UserStatus(
-        total_user_analyses=summary.total,
+        total_user_analyses=current_user.total_analyses,
         total_last_7_days=summary.last_7_days,
         last_run_at=summary.last_run_at,
     )
+
+
+@router.post(
+    "/me/analyses",
+    response_model=schemas.UserRead,
+    summary="Registrer fullført analyse for innlogget bruker",
+)
+async def increment_my_analyses(
+    payload: schemas.IncrementAnalyses,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.increment_user_analyses(
+            session,
+            user_id=current_user.id,
+            increment=payload.increment,
+        )
+    except InvalidAnalysisIncrementError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _serialize_user(user)
 
 
 @router.get(
@@ -228,7 +302,7 @@ async def read_my_status(
 async def admin_ping(
     current_admin: User = Depends(auth_service.get_current_active_admin),
 ) -> schemas.UserRead:
-    return schemas.UserRead.model_validate(current_admin)
+    return _serialize_user(current_admin)
 
 
 @router.get(
@@ -257,7 +331,7 @@ async def list_users(
     users, total = await auth_service.list_users(
         session, search=search, limit=limit, offset=offset
     )
-    items = [schemas.UserRead.model_validate(user) for user in users]
+    items = [_serialize_user(user) for user in users]
     return schemas.UserCollection(total=total, items=items)
 
 
@@ -278,7 +352,7 @@ async def update_user_role(
         )
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user)
 
 
 @router.patch(
@@ -310,7 +384,7 @@ async def admin_update_user(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user)
 
 
 @router.post(
