@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from urllib.parse import parse_qs, urlparse
+
+import base64
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,10 +39,21 @@ from techdom.domain.analysis_service import (
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
 from techdom.infrastructure.db import ensure_auth_schema, init_models
+from techdom.ingestion.fetch import extract_pdf_text_from_bytes
 from techdom.processing.ai import analyze_prospectus
+from techdom.processing.tg_extract import (
+    ExtractionError as TGExtractionError,
+    coerce_tg_strings,
+    extract_tg_from_pdf_bytes,
+    format_tg_entries,
+    merge_tg_lists,
+    summarize_tg_entries,
+    summarize_tg_strings,
+)
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
+LOGGER = logging.getLogger(__name__)
 
 
 @app.on_event("startup")
@@ -94,6 +108,16 @@ class ProspectusManualResp(BaseModel):
     upgrades: List[str]
     watchouts: List[str]
     questions: List[str]
+    tg3_details: List[Dict[str, str]] = Field(default_factory=list)
+    tg2_details: List[Dict[str, str]] = Field(default_factory=list)
+    tg_markdown: Optional[str] = None
+    tg_missing_components: List[str] = Field(default_factory=list)
+
+
+class ProspectusManualUploadReq(BaseModel):
+    filename: Optional[str] = None
+    mime: Optional[str] = None
+    data: str
 
 
 class AnalysisReq(BaseModel):
@@ -205,6 +229,30 @@ def prospectus_manual(payload: ProspectusManualReq) -> ProspectusManualResp:
             "Kunne ikke analysere salgsoppgaven.",
         ) from exc
 
+    return _build_prospectus_manual_response(result)
+
+
+
+
+def _coerce_detail_list(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, Iterable):
+        return []
+    details: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        label = str(item.get("label") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        source = str(item.get("source") or "").strip()
+        if not label or not detail:
+            continue
+        payload: Dict[str, str] = {"label": label, "detail": detail}
+        if source:
+            payload["source"] = source
+        details.append(payload)
+    return details
+
+def _build_prospectus_manual_response(result: Dict[str, Any]) -> ProspectusManualResp:
     if not isinstance(result, dict):
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -217,6 +265,15 @@ def prospectus_manual(payload: ProspectusManualReq) -> ProspectusManualResp:
     upgrades = [str(item) for item in (result.get("upgrades") or [])]
     watchouts = [str(item) for item in (result.get("watchouts") or [])]
     questions = [str(item) for item in (result.get("questions") or [])]
+    tg2_details = _coerce_detail_list(result.get("tg2_details"))
+    tg3_details = _coerce_detail_list(result.get("tg3_details"))
+    tg_markdown = str(result.get("tg_markdown") or "").strip() or None
+    missing_components = coerce_tg_strings(result.get("tg_missing_components"))
+
+    if not tg2_details and tg2:
+        tg2_details = summarize_tg_strings(tg2, level=2)
+    if not tg3_details and tg3:
+        tg3_details = summarize_tg_strings(tg3, level=3)
 
     return ProspectusManualResp(
         summary_md=summary,
@@ -225,7 +282,164 @@ def prospectus_manual(payload: ProspectusManualReq) -> ProspectusManualResp:
         upgrades=upgrades,
         watchouts=watchouts,
         questions=questions,
+        tg3_details=tg3_details,
+        tg2_details=tg2_details,
+        tg_markdown=tg_markdown,
+        tg_missing_components=missing_components,
     )
+
+
+def _decode_pdf_base64(payload: ProspectusManualUploadReq) -> bytes:
+    raw = payload.data.strip()
+    if "," in raw and raw.lower().strip().startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        return base64.b64decode(raw, validate=True)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kunne ikke lese den opplastede filen.") from exc
+
+
+def _looks_like_pdf(payload: ProspectusManualUploadReq, data: bytes) -> bool:
+    if payload.mime and "pdf" in payload.mime.lower():
+        return True
+    filename = (payload.filename or "").lower()
+    if filename.endswith(".pdf"):
+        return True
+    return data[:4] == b"%PDF"
+
+
+@app.post("/prospectus/manual/upload", response_model=ProspectusManualResp)
+def prospectus_manual_upload(payload: ProspectusManualUploadReq) -> ProspectusManualResp:
+    pdf_bytes = _decode_pdf_base64(payload)
+    if not pdf_bytes:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Filen er tom.",
+        )
+    if not _looks_like_pdf(payload, pdf_bytes):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Filen må være en PDF.",
+        )
+    try:
+        text = extract_pdf_text_from_bytes(pdf_bytes)
+    except Exception as exc:  # pragma: no cover - defensive catch
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke lese PDF-filen.",
+        ) from exc
+
+    if not text.strip():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Fant ingen lesbar tekst i PDF-filen.",
+        )
+
+    tg_extract_result: Optional[Dict[str, Any]] = None
+    tg_extract_json: Optional[Dict[str, Any]] = None
+    tg2_from_extract: List[str] = []
+    tg3_from_extract: List[str] = []
+    tg2_detail_entries: List[Dict[str, str]] = []
+    tg3_detail_entries: List[Dict[str, str]] = []
+    tg_markdown: Optional[str] = None
+
+    try:
+        tg_extract_result = extract_tg_from_pdf_bytes(pdf_bytes)
+    except TGExtractionError as exc:
+        LOGGER.info("TG-ekstraksjon feilet for opplastet PDF: %s", exc)
+    except Exception:  # pragma: no cover - defensive logging
+        LOGGER.exception("Uventet feil ved TG-ekstraksjon for opplastet PDF")
+    else:
+        if isinstance(tg_extract_result, dict):
+            candidate_json = tg_extract_result.get("json")
+            if isinstance(candidate_json, dict):
+                tg_extract_json = candidate_json
+                tg2_data = candidate_json.get("TG2") or []
+                tg3_data = candidate_json.get("TG3") or []
+                if isinstance(tg2_data, Iterable):
+                    tg2_detail_entries = summarize_tg_entries(
+                        tg2_data,
+                        level=2,
+                        include_source=True,
+                        limit=8,
+                    )
+                    tg2_from_extract = format_tg_entries(
+                        tg2_data,
+                        level=2,
+                        include_component=True,
+                        include_source=True,
+                        limit=8,
+                    )
+                if isinstance(tg3_data, Iterable):
+                    tg3_detail_entries = summarize_tg_entries(
+                        tg3_data,
+                        level=3,
+                        include_source=True,
+                        limit=6,
+                    )
+                    tg3_from_extract = format_tg_entries(
+                        tg3_data,
+                        level=3,
+                        include_component=True,
+                        include_source=True,
+                        limit=6,
+                    )
+            markdown_candidate = tg_extract_result.get("markdown")
+            if isinstance(markdown_candidate, str) and markdown_candidate.strip():
+                tg_markdown = markdown_candidate.strip()
+
+    try:
+        result = analyze_prospectus(text)
+    except Exception as exc:  # pragma: no cover - defensive catch
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke analysere salgsoppgaven.",
+        ) from exc
+
+    result_dict: Dict[str, Any] = dict(result) if isinstance(result, dict) else {}
+
+    if tg_extract_json is not None:
+        existing_tg2 = coerce_tg_strings(result_dict.get("tg2"))
+        existing_tg3 = coerce_tg_strings(result_dict.get("tg3"))
+        if tg2_from_extract:
+            result_dict["tg2"] = merge_tg_lists(tg2_from_extract, existing_tg2, limit=8)
+        elif existing_tg2:
+            result_dict["tg2"] = existing_tg2
+        if tg3_from_extract:
+            result_dict["tg3"] = merge_tg_lists(tg3_from_extract, existing_tg3, limit=6)
+        elif existing_tg3:
+            result_dict["tg3"] = existing_tg3
+
+        if tg2_detail_entries:
+            result_dict["tg2_details"] = tg2_detail_entries
+        elif existing_tg2:
+            result_dict["tg2_details"] = summarize_tg_strings(existing_tg2, level=2)
+
+        if tg3_detail_entries:
+            result_dict["tg3_details"] = tg3_detail_entries
+        elif existing_tg3:
+            result_dict["tg3_details"] = summarize_tg_strings(existing_tg3, level=3)
+
+        result_dict["tg_extract"] = tg_extract_json
+        missing_candidates = tg_extract_json.get("missing")
+        missing_list = coerce_tg_strings(missing_candidates)
+        if missing_list:
+            result_dict["tg_missing_components"] = missing_list
+
+    if tg_markdown and not result_dict.get("tg_markdown"):
+        result_dict["tg_markdown"] = tg_markdown
+
+    if "tg2_details" not in result_dict:
+        fallback_tg2 = coerce_tg_strings(result_dict.get("tg2"))
+        if fallback_tg2:
+            result_dict["tg2_details"] = summarize_tg_strings(fallback_tg2, level=2)
+
+    if "tg3_details" not in result_dict:
+        fallback_tg3 = coerce_tg_strings(result_dict.get("tg3"))
+        if fallback_tg3:
+            result_dict["tg3_details"] = summarize_tg_strings(fallback_tg3, level=3)
+
+    return _build_prospectus_manual_response(result_dict)
 
 
 @app.post("/analysis", response_model=AnalysisResp)

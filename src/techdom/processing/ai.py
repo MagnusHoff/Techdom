@@ -358,22 +358,34 @@ def _shorten_issue_text(value: str, max_words: int = 24) -> str:
     return combined
 
 
-def _format_issue_points(items: Iterable[str], limit: int = 8, *, max_words: int = 24) -> List[str]:
+def _format_issue_points(
+    items: Iterable[str],
+    limit: int | None = 8,
+    *,
+    max_words: int = 24,
+    preserve_original: bool = False,
+) -> List[str]:
     seen: set[str] = set()
     formatted: List[str] = []
     for raw in items:
-        text = _normalise_prospectus_text(str(raw))
-        if not text:
+        raw_text = str(raw).strip()
+        if not raw_text:
             continue
-        sentence = _shorten_issue_text(text, max_words=max_words)
+        normalised = _normalise_prospectus_text(raw_text)
+        if not normalised:
+            continue
+        if preserve_original:
+            sentence = " ".join(raw_text.split())
+        else:
+            sentence = _shorten_issue_text(normalised, max_words=max_words)
         if not sentence:
             continue
-        key = _simplify_text(sentence)
+        key = _simplify_text(normalised)
         if key in seen:
             continue
         seen.add(key)
-        formatted.append(sentence[:200])
-        if len(formatted) >= limit:
+        formatted.append(sentence if preserve_original else sentence[:200])
+        if limit is not None and len(formatted) >= limit:
             break
     return formatted
 
@@ -429,7 +441,12 @@ def _dedupe_preserve_order(items: Iterable[str], limit: int) -> List[str]:
     return result
 
 
-def _gather_issue_block(lines: Sequence[str], start: int) -> str:
+def _gather_issue_block(
+    lines: Sequence[str],
+    start: int,
+    *,
+    normalise: bool = True,
+) -> str:
     block_parts: List[str] = [lines[start]]
     for offset in range(1, 4):
         idx = start + offset
@@ -442,21 +459,53 @@ def _gather_issue_block(lines: Sequence[str], start: int) -> str:
         if len(" ".join(block_parts)) > 300:
             break
     raw = " ".join(block_parts)
-    return _normalise_prospectus_text(raw)
+    if normalise:
+        return _normalise_prospectus_text(raw)
+    return " ".join(raw.split())
 
 
 def _extract_tagged_issues(lines: Sequence[str], tag_regex: re.Pattern[str]) -> List[str]:
     collected: List[str] = []
+    seen: set[str] = set()
     for index, line in enumerate(lines):
         if not tag_regex.search(line):
             continue
-        snippet = _gather_issue_block(lines, index)
-        if not snippet:
+        raw_snippet = _gather_issue_block(lines, index, normalise=False)
+        if not raw_snippet:
             continue
-        if not _looks_specific_issue(snippet):
+        simplified = _normalise_prospectus_text(raw_snippet)
+        if not simplified:
             continue
-        collected.append(snippet)
-    return _dedupe_preserve_order(collected, 10)
+        if not _looks_specific_issue(simplified):
+            continue
+        key = _simplify_text(simplified)
+        if key in seen:
+            continue
+        seen.add(key)
+        collected.append(raw_snippet)
+    return collected
+
+
+def _prepare_tg_lists(
+    lines: Sequence[str],
+) -> tuple[List[str], List[str], List[str], List[str]]:
+    tg3_regex = re.compile(r"\bTG\s*3\b", re.I)
+    tg2_regex = re.compile(r"\bTG\s*2\b", re.I)
+    tg3_raw = _extract_tagged_issues(lines, tg3_regex)
+    tg2_raw = _extract_tagged_issues(lines, tg2_regex)
+    tg3_preserved = _format_issue_points(
+        tg3_raw,
+        limit=None,
+        preserve_original=True,
+    )
+    tg2_preserved = _format_issue_points(
+        tg2_raw,
+        limit=None,
+        preserve_original=True,
+    )
+    tg3_sanitized = _format_issue_points(tg3_raw, limit=None)
+    tg2_sanitized = _format_issue_points(tg2_raw, limit=None)
+    return tg3_preserved, tg3_sanitized, tg2_preserved, tg2_sanitized
 
 
 def _extract_watchout_issues(lines: Sequence[str], exclude: Sequence[str]) -> List[str]:
@@ -501,6 +550,16 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
             "questions": [],
         }
 
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    (
+        tg3_preserved,
+        tg3_sanitized,
+        tg2_preserved,
+        tg2_sanitized,
+    ) = _prepare_tg_lists(lines)
+
+    result: Dict[str, Any] | None = None
+
     key = _get_key()
     if key:
         try:
@@ -526,48 +585,54 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
             if not isinstance(obj, dict):
                 obj = {}
             # defensiv normalisering
-            out: Dict[str, Any] = {
+            result = {
                 "summary_md": str(obj.get("summary_md") or ""),
                 "tg3": _format_issue_points(_coerce_issue_iterable(obj.get("tg3")), limit=5),
                 "tg2": _format_issue_points(_coerce_issue_iterable(obj.get("tg2")), limit=5),
                 "upgrades": _format_issue_points(_coerce_issue_iterable(obj.get("upgrades")), limit=8),
                 "watchouts": _format_issue_points(_coerce_issue_iterable(obj.get("watchouts")), limit=8),
             }
-            out["questions"] = _generate_follow_up_questions(
-                out["tg3"], out["watchouts"], out["tg2"], out["upgrades"]
-            )
-            return out
         except Exception:
             # faller til regex-basert
             pass
 
-    # --- Fallback uten OpenAI: enkel regex-plukk ---
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    tg3 = _extract_tagged_issues(lines, re.compile(r"\bTG\s*3\b", re.I))
-    tg2 = _extract_tagged_issues(lines, re.compile(r"\bTG\s*2\b", re.I))
+    if result is None:
+        upgrades_candidates = [
+            _normalise_prospectus_text(line)
+            for line in lines
+            if re.search(r"(oppgrad|rehab|utbedr|pusse)", line, re.I)
+        ]
+        upgrades = _dedupe_preserve_order(upgrades_candidates, 8)
+        watchouts = _extract_watchout_issues(lines, exclude=[*tg2_sanitized, *tg3_sanitized])
+        formatted_watchouts = _format_issue_points(watchouts, limit=8)
+        formatted_upgrades = _format_issue_points(upgrades, limit=8)
+        questions = _generate_follow_up_questions(
+            tg3_sanitized,
+            formatted_watchouts,
+            tg2_sanitized,
+            formatted_upgrades,
+        )
+        result = {
+            "summary_md": (
+                "Funn basert på enkel tekstskanning (begrenset uten AI-nøkkel). "
+                "Se TG-punkter og risikopunkter under."
+            ),
+            "tg3": tg3_preserved,
+            "tg2": tg2_preserved,
+            "upgrades": formatted_upgrades,
+            "watchouts": formatted_watchouts,
+            "questions": questions,
+        }
+    if tg3_preserved:
+        result["tg3"] = tg3_preserved
+    if tg2_preserved:
+        result["tg2"] = tg2_preserved
 
-    upgrades_candidates = [
-        _normalise_prospectus_text(line)
-        for line in lines
-        if re.search(r"(oppgrad|rehab|utbedr|pusse)", line, re.I)
-    ]
-    upgrades = _dedupe_preserve_order(upgrades_candidates, 8)
-    watchouts = _extract_watchout_issues(lines, exclude=[*tg2, *tg3])
-    formatted_tg3 = _format_issue_points(tg3, limit=5)
-    formatted_tg2 = _format_issue_points(tg2, limit=5)
-    formatted_watchouts = _format_issue_points(watchouts, limit=8)
-    formatted_upgrades = _format_issue_points(upgrades, limit=8)
-    questions = _generate_follow_up_questions(
-        formatted_tg3, formatted_watchouts, formatted_tg2, formatted_upgrades
+    result["questions"] = _generate_follow_up_questions(
+        tg3_sanitized,
+        result.get("watchouts") or [],
+        tg2_sanitized,
+        result.get("upgrades") or [],
     )
-    return {
-        "summary_md": (
-            "Funn basert på enkel tekstskanning (begrenset uten AI-nøkkel). "
-            "Se TG-punkter og risikopunkter under."
-        ),
-        "tg3": formatted_tg3,
-        "tg2": formatted_tg2,
-        "upgrades": formatted_upgrades,
-        "watchouts": formatted_watchouts,
-        "questions": questions,
-    }
+
+    return result

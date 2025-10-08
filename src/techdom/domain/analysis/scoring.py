@@ -183,7 +183,7 @@ def farge_for_cashflow(value_kr_mnd: float) -> str:
     if value_kr_mnd < -2000:
         return "red"
     if value_kr_mnd <= 0:
-        return "orange"
+        return "yellow"
     return "green"
 
 
@@ -193,7 +193,7 @@ def farge_for_roe(value_pct: float) -> str:
     if value_pct < 5:
         return "red"
     if value_pct < 10:
-        return "orange"
+        return "yellow"
     return "green"
 
 
@@ -206,7 +206,7 @@ def farge_for_break_even_gap(faktisk_leie: float, break_even_leie: float) -> str
     if gap > terskel:
         return "red"
     if gap >= -terskel:
-        return "orange"
+        return "yellow"
     return "green"
 
 

@@ -27,10 +27,10 @@ def test_analyze_prospectus_formats_component_and_reason() -> None:
     result = analyze_prospectus(text)
 
     assert result["tg3"] == [
-        "Bad: Store fuktskader i membran og sluk må utbedres umiddelbart."
+        "TG 3 Bad: Store fuktskader i membran og sluk, må utbedres umiddelbart."
     ]
     assert result["tg2"] == [
-        "Tak: Taktekking med mose og oppsprukne takstein behov for utskifting snart."
+        "TG2 Tak: Taktekking med mose og oppsprukne takstein, behov for utskifting snart."
     ]
 
 
@@ -58,13 +58,11 @@ def test_analyze_prospectus_caps_tg_lists_to_eight_items() -> None:
     result = analyze_prospectus(text)
 
     tg2_items = result["tg2"]
-    assert len(tg2_items) == 5
-    for item in tg2_items:
-        words = item.split()
-        assert 8 <= len(words) <= 24
-        assert ":" in item
+    assert len(tg2_items) == len(components)
+    for item, component in zip(tg2_items, components):
+        assert item.startswith("TG2")
+        assert component in item
         assert item.endswith(".")
-        assert item.count(".") == 1
 
 
 def test_analyze_prospectus_skips_non_issue_text() -> None:
@@ -76,4 +74,4 @@ def test_analyze_prospectus_skips_non_issue_text() -> None:
 
     tg2_items = result["tg2"]
     assert len(tg2_items) == 1
-    assert tg2_items[0].startswith("Bad: Fuktmerker registrert")
+    assert tg2_items[0] == "TG2 Bad: Fuktmerker registrert rundt sluk og i hjørner."

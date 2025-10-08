@@ -9,6 +9,13 @@ export interface ScoreGauge {
   farge?: string;
 }
 
+export interface ProspectusDetail {
+  label: string;
+  detail: string;
+  source?: string | null;
+  level?: number | null;
+}
+
 export interface ProspectusExtract {
   summary_md?: string;
   tg3?: string[];
@@ -17,6 +24,10 @@ export interface ProspectusExtract {
   watchouts?: string[];
   questions?: string[];
   links?: ProspectusLinks;
+  tg3_details?: ProspectusDetail[];
+  tg2_details?: ProspectusDetail[];
+  tg_markdown?: string;
+  tg_missing_components?: string[];
 }
 
 export interface ProspectusLinks {

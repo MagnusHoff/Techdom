@@ -4,7 +4,7 @@ import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
 from requests import RequestException
@@ -21,13 +21,22 @@ from techdom.domain.analysis_service import (
 from techdom.processing.ai import analyze_prospectus
 from techdom.processing.rates import get_interest_estimate
 from techdom.processing.rent.logic import get_rent_by_csv
+from techdom.processing.tg_extract import (
+    ExtractionError as TGExtractionError,
+    coerce_tg_strings,
+    extract_tg_from_pdf_bytes,
+    format_tg_entries,
+    merge_tg_lists,
+    summarize_tg_entries,
+    summarize_tg_strings,
+)
 from techdom.ingestion.fetch import (
     extract_pdf_text_from_bytes,
     fetch_prospectus_from_finn,
     save_pdf_locally,
 )
 from techdom.ingestion.http_headers import BROWSER_HEADERS
-from techdom.ingestion.scrape import scrape_finn
+from techdom.ingestion.scrape import scrape_finn, scrape_finn_key_numbers
 from techdom.services.prospect_jobs import ProspectJob, ProspectJobService
 
 
@@ -151,6 +160,92 @@ def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
     return value  # type: ignore[return-value]
 
 
+def _is_missing_amount(value: Any) -> bool:
+    """
+    Return True if the incoming value is effectively missing (None or empty string).
+    Numeric zero is treated as a legitimate value.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() == ""
+    return False
+
+
+def _enrich_listing_with_key_numbers(
+    *,
+    finnkode: str,
+    finn_url: str,
+    listing: Dict[str, Any],
+    need_price: bool,
+    need_hoa: bool,
+) -> Optional[Dict[str, Any]]:
+    if not (need_price or need_hoa):
+        return None
+
+    try:
+        key_numbers_response = scrape_finn_key_numbers(finn_url, include_raw=True)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        LOGGER.debug("Kunne ikke hente nøkkeltall fra FINN for %s: %s", finnkode, exc)
+        return None
+
+    if isinstance(key_numbers_response, tuple):
+        key_numbers, raw_facts = key_numbers_response
+    else:  # pragma: no cover - legacy compatibility
+        key_numbers = key_numbers_response
+        raw_facts = []
+
+    key_numbers = key_numbers if isinstance(key_numbers, dict) else {}
+    raw_facts = raw_facts if isinstance(raw_facts, list) else []
+
+    applied: Dict[str, bool] = {}
+
+    if need_price:
+        candidate_price = (
+            key_numbers.get("totalpris")
+            or key_numbers.get("prisantydning")
+            or key_numbers.get("total_price")
+        )
+        price_int = as_int(candidate_price, 0)
+        if price_int > 0:
+            listing["total_price"] = price_int
+            listing.setdefault("totalpris", price_int)
+            listing.setdefault("prisantydning", price_int)
+            applied["price"] = True
+
+    if need_hoa:
+        candidate_hoa = (
+            key_numbers.get("felleskostnader")
+            or key_numbers.get("felleskost")
+            or key_numbers.get("felleskostnad")
+        )
+        if candidate_hoa is not None and candidate_hoa != "":
+            hoa_int = as_int(candidate_hoa, 0)
+            listing["hoa_month"] = hoa_int
+            listing.setdefault("felleskostnader", hoa_int)
+            applied["hoa"] = True
+
+    if raw_facts:
+        listing.setdefault("keyFactsRaw", raw_facts)
+        listing.setdefault("key_facts_raw", raw_facts)
+
+    payload: Dict[str, Any] = {}
+    if key_numbers:
+        payload["values"] = key_numbers
+    if raw_facts:
+        payload["raw_facts"] = raw_facts
+    if applied:
+        payload["applied"] = applied
+        LOGGER.info(
+            "Brukte FINN-nøkkeltall for %s (pris:%s, felleskost:%s)",
+            finnkode,
+            "ja" if applied.get("price") else "nei",
+            "ja" if applied.get("hoa") else "nei",
+        )
+
+    return payload if payload else None
+
+
 class ProspectAnalysisPipeline:
     """End-to-end pipeline for processing a FINN listing prospect."""
 
@@ -170,10 +265,39 @@ class ProspectAnalysisPipeline:
                 message="Henter annonse-data fra FINN",
             )
             listing_info = scrape_finn(finn_url) or {}
-            self.job_service.store_artifact(job_id, "listing", listing_info)
 
-            price = as_int(listing_info.get("total_price"), 0)
-            hoa = as_int(listing_info.get("hoa_month"), 0)
+            price_missing = _is_missing_amount(listing_info.get("total_price")) and _is_missing_amount(
+                listing_info.get("totalpris")
+            )
+            hoa_missing = _is_missing_amount(listing_info.get("hoa_month")) and _is_missing_amount(
+                listing_info.get("felleskostnader")
+            )
+
+            finn_key_numbers_payload = _enrich_listing_with_key_numbers(
+                finnkode=finnkode,
+                finn_url=finn_url,
+                listing=listing_info,
+                need_price=price_missing,
+                need_hoa=hoa_missing,
+            )
+
+            self.job_service.store_artifact(job_id, "listing", listing_info)
+            if finn_key_numbers_payload:
+                self.job_service.store_artifact(job_id, "finn_key_numbers", finn_key_numbers_payload)
+
+            price = as_int(
+                listing_info.get("total_price")
+                or listing_info.get("totalpris")
+                or listing_info.get("prisantydning"),
+                0,
+            )
+            hoa = as_int(
+                listing_info.get("hoa_month")
+                or listing_info.get("felleskostnader")
+                or listing_info.get("felleskost")
+                or listing_info.get("felleskostnad"),
+                0,
+            )
             suggested_equity = default_equity(price) if price else 0
 
             area = as_opt_float(listing_info.get("area_m2"))
@@ -229,62 +353,205 @@ class ProspectAnalysisPipeline:
                 progress=40,
                 message="Henter salgsoppgave",
             )
-            pdf_bytes, pdf_url, fetch_debug = fetch_prospectus_from_finn(finn_url)
+            fetch_debug: Optional[Dict[str, Any]]
+            try:
+                pdf_bytes, pdf_url, fetch_debug = fetch_prospectus_from_finn(finn_url)
+            except Exception as fetch_exc:  # pragma: no cover - defensive fallback
+                LOGGER.warning(
+                    "Fetch av salgsoppgave feilet for %s – fortsetter uten PDF: %s",
+                    finnkode,
+                    fetch_exc,
+                )
+                pdf_bytes = None
+                pdf_url = None
+                fetch_debug = {
+                    "step": "exception",
+                    "error": f"{type(fetch_exc).__name__}: {fetch_exc}",
+                }
             if fetch_debug:
                 self.job_service.attach_debug(job_id, {"fetch": fetch_debug})
 
-            if not pdf_bytes:
-                self.job_service.mark_failed(job_id, "Fant ikke prospekt PDF")
-                return
+            pdf_path: Optional[str] = None
+            pdf_text: Optional[str] = None
+            ai_extract: Dict[str, Any] = {}
+            excerpt = ""
+            links_payload: Dict[str, Any]
+            completion_message = "Analyse fullført"
+            tg_extract_payload: Optional[Dict[str, Any]] = None
+            tg_markdown: Optional[str] = None
+            tg2_from_extract: List[str] = []
+            tg3_from_extract: List[str] = []
+            tg2_detail_entries: List[Dict[str, str]] = []
+            tg3_detail_entries: List[Dict[str, str]] = []
 
-            try:
-                pdf_path = save_pdf_locally(finnkode, pdf_bytes)
-            except Exception:
-                LOGGER.exception("Klarte ikke å lagre prospekt lokalt for %s", finnkode)
-                pdf_path = None
+            if pdf_bytes:
+                try:
+                    pdf_path = save_pdf_locally(finnkode, pdf_bytes)
+                except Exception:
+                    LOGGER.exception("Klarte ikke å lagre prospekt lokalt for %s", finnkode)
+                    pdf_path = None
 
-            self.job_service.store_artifact(
-                job_id,
-                "pdf_meta",
-                {
-                    "path": pdf_path,
-                    "url": pdf_url,
-                    "bytes": len(pdf_bytes),
-                },
-            )
+                self.job_service.store_artifact(
+                    job_id,
+                    "pdf_meta",
+                    {
+                        "path": pdf_path,
+                        "url": pdf_url,
+                        "bytes": len(pdf_bytes),
+                    },
+                )
 
-            links_payload = _build_salgsoppgave_links(
-                finnkode=finnkode,
-                finn_url=finn_url,
-                fetch_debug=fetch_debug,
-                pdf_url=pdf_url,
-                pdf_path=pdf_path,
-            )
-            self.job_service.store_artifact(job_id, "links", links_payload)
+                links_payload = _build_salgsoppgave_links(
+                    finnkode=finnkode,
+                    finn_url=finn_url,
+                    fetch_debug=fetch_debug,
+                    pdf_url=pdf_url,
+                    pdf_path=pdf_path,
+                )
+                self.job_service.store_artifact(job_id, "links", links_payload)
 
-            self.job_service.mark_running(
-                job_id,
-                progress=55,
-                message="Parser salgsoppgave",
-            )
-            pdf_text = extract_pdf_text_from_bytes(pdf_bytes)
-            excerpt = (pdf_text or "")[:2000]
-            self.job_service.store_artifact(
-                job_id,
-                "pdf_text_excerpt",
-                {
-                    "length": len(pdf_text or ""),
-                    "excerpt": excerpt,
-                },
-            )
+                self.job_service.mark_running(
+                    job_id,
+                    progress=55,
+                    message="Parser salgsoppgave",
+                )
+                pdf_text = extract_pdf_text_from_bytes(pdf_bytes)
+                excerpt = (pdf_text or "")[:2000]
+                self.job_service.store_artifact(
+                    job_id,
+                    "pdf_text_excerpt",
+                    {
+                        "length": len(pdf_text or ""),
+                        "excerpt": excerpt,
+                    },
+                )
 
-            self.job_service.mark_running(
-                job_id,
-                progress=70,
-                message="Kjører AI-analyse",
-            )
-            raw_ai_extract = analyze_prospectus(pdf_text or "") if pdf_text else {}
-            ai_extract = dict(raw_ai_extract) if isinstance(raw_ai_extract, dict) else {}
+                self.job_service.mark_running(
+                    job_id,
+                    progress=70,
+                    message="Kjører AI-analyse",
+                )
+                raw_ai_extract = analyze_prospectus(pdf_text or "") if pdf_text else {}
+                ai_extract = dict(raw_ai_extract) if isinstance(raw_ai_extract, dict) else {}
+
+                try:
+                    tg_result = extract_tg_from_pdf_bytes(pdf_bytes)
+                except TGExtractionError as exc:
+                    LOGGER.info("TG-ekstraksjon feilet for %s: %s", finnkode, exc)
+                except Exception:
+                    LOGGER.exception("Uventet feil ved TG-ekstraksjon for %s", finnkode)
+                else:
+                    if isinstance(tg_result, dict):
+                        candidate_json = tg_result.get("json")
+                        if isinstance(candidate_json, dict):
+                            tg_extract_payload = candidate_json
+                            tg2_data = candidate_json.get("TG2") or []
+                            tg3_data = candidate_json.get("TG3") or []
+                            if isinstance(tg2_data, Iterable):
+                                tg2_detail_entries = summarize_tg_entries(
+                                    tg2_data,
+                                    level=2,
+                                    include_source=True,
+                                    limit=8,
+                                )
+                                tg2_from_extract = format_tg_entries(
+                                    tg2_data,
+                                    level=2,
+                                    include_component=True,
+                                    include_source=True,
+                                    limit=8,
+                                )
+                            if isinstance(tg3_data, Iterable):
+                                tg3_detail_entries = summarize_tg_entries(
+                                    tg3_data,
+                                    level=3,
+                                    include_source=True,
+                                    limit=6,
+                                )
+                                tg3_from_extract = format_tg_entries(
+                                    tg3_data,
+                                    level=3,
+                                    include_component=True,
+                                    include_source=True,
+                                    limit=6,
+                                )
+                        markdown_candidate = tg_result.get("markdown")
+                        if isinstance(markdown_candidate, str) and markdown_candidate.strip():
+                            tg_markdown = markdown_candidate.strip()
+            else:
+                completion_message = "Analyse fullført (uten salgsoppgave)"
+                self.job_service.store_artifact(
+                    job_id,
+                    "pdf_meta",
+                    {
+                        "path": None,
+                        "url": pdf_url,
+                        "bytes": 0,
+                    },
+                )
+                links_payload = _build_salgsoppgave_links(
+                    finnkode=finnkode,
+                    finn_url=finn_url,
+                    fetch_debug=fetch_debug,
+                    pdf_url=pdf_url,
+                    pdf_path=None,
+                )
+                self.job_service.store_artifact(job_id, "links", links_payload)
+                self.job_service.mark_running(
+                    job_id,
+                    progress=55,
+                    message="Fant ikke salgsoppgave – bruker annonse-data",
+                )
+                self.job_service.store_artifact(
+                    job_id,
+                    "pdf_text_excerpt",
+                    {
+                        "length": 0,
+                        "excerpt": "",
+                    },
+                )
+
+            if isinstance(ai_extract, dict):
+                existing_tg2 = coerce_tg_strings(ai_extract.get("tg2"))
+                existing_tg3 = coerce_tg_strings(ai_extract.get("tg3"))
+                if tg2_from_extract:
+                    ai_extract["tg2"] = merge_tg_lists(tg2_from_extract, existing_tg2, limit=8)
+                elif existing_tg2:
+                    ai_extract["tg2"] = existing_tg2
+                if tg3_from_extract:
+                    ai_extract["tg3"] = merge_tg_lists(tg3_from_extract, existing_tg3, limit=6)
+                elif existing_tg3:
+                    ai_extract["tg3"] = existing_tg3
+
+                if tg2_detail_entries:
+                    ai_extract["tg2_details"] = tg2_detail_entries
+                elif existing_tg2:
+                    ai_extract["tg2_details"] = summarize_tg_strings(existing_tg2, level=2)
+
+                if tg3_detail_entries:
+                    ai_extract["tg3_details"] = tg3_detail_entries
+                elif existing_tg3:
+                    ai_extract["tg3_details"] = summarize_tg_strings(existing_tg3, level=3)
+
+                if tg_extract_payload is not None:
+                    ai_extract["tg_extract"] = tg_extract_payload
+                    missing_candidates = tg_extract_payload.get("missing")
+                    missing_list = coerce_tg_strings(missing_candidates)
+                    if missing_list:
+                        ai_extract["tg_missing_components"] = missing_list
+                if tg_markdown and not ai_extract.get("tg_markdown"):
+                    ai_extract["tg_markdown"] = tg_markdown
+
+            if tg_extract_payload is not None:
+                self.job_service.store_artifact(
+                    job_id,
+                    "tg_extract",
+                    {
+                        "json": tg_extract_payload,
+                        "markdown": tg_markdown,
+                    },
+                )
+
             ai_extract["links"] = links_payload
             self.job_service.store_artifact(job_id, "ai_extract", ai_extract)
 
@@ -337,8 +604,9 @@ class ProspectAnalysisPipeline:
                     "interest_estimate": interest_payload,
                     "pdf_text_excerpt": excerpt,
                     "links": links_payload,
+                    "finn_key_numbers": finn_key_numbers_payload,
                 },
-                message="Analyse fullført",
+                message=completion_message,
             )
         except Exception as exc:  # pragma: no cover - defensive catch-all
             LOGGER.exception("Prospect pipeline failed for job %s", job.id)

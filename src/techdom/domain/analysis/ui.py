@@ -190,7 +190,7 @@ def map_decision_to_ui(decision: DecisionResult) -> dict[str, Any]:
 def _dom_til_farge(dom: DecisionVerdict) -> str:
     mapping = {
         DecisionVerdict.DAARLIG: "red",
-        DecisionVerdict.SVAK: "orange",
+        DecisionVerdict.SVAK: "yellow",
         DecisionVerdict.OK: "yellow",
         DecisionVerdict.BRA: "green",
     }

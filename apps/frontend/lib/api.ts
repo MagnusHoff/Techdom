@@ -196,6 +196,30 @@ export async function analyzeProspectusText(payload: ManualProspectusPayload): P
   return handleResponse<ProspectusExtract>(res);
 }
 
+export async function analyzeProspectusPdf(file: File): Promise<ProspectusExtract> {
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  const chunkSize = 8192;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  let base64: string;
+  if (typeof window === "undefined") {
+    base64 = Buffer.from(bytes).toString("base64");
+  } else {
+    base64 = btoa(binary);
+  }
+
+  const res = await apiFetch("/prospectus/manual/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, mime: file.type, data: base64 }),
+  });
+  return handleResponse<ProspectusExtract>(res);
+}
+
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
   const res = await apiFetch(`/status/${jobId}`, {
     cache: "no-store",

@@ -66,7 +66,8 @@ class DecisionResult(BaseModel):
     dom_notat: Optional[str] = None
 
 
-DecisionResult.model_rebuild()
+if hasattr(DecisionResult, "model_rebuild"):
+    DecisionResult.model_rebuild()
 
 
 def build_calculated_metrics(input_contract: InputContract) -> CalculatedMetrics:

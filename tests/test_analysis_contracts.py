@@ -60,14 +60,14 @@ class BuildCalculatedMetricsTests(unittest.TestCase):
 class FargekoderTests(unittest.TestCase):
     def test_cashflow_thresholds(self) -> None:
         self.assertEqual(farge_for_cashflow(-2001), "red")
-        self.assertEqual(farge_for_cashflow(-2000), "orange")
-        self.assertEqual(farge_for_cashflow(0), "orange")
+        self.assertEqual(farge_for_cashflow(-2000), "yellow")
+        self.assertEqual(farge_for_cashflow(0), "yellow")
         self.assertEqual(farge_for_cashflow(1), "green")
 
     def test_roe_thresholds(self) -> None:
         self.assertEqual(farge_for_roe(4.99), "red")
-        self.assertEqual(farge_for_roe(5.0), "orange")
-        self.assertEqual(farge_for_roe(9.99), "orange")
+        self.assertEqual(farge_for_roe(5.0), "yellow")
+        self.assertEqual(farge_for_roe(9.99), "yellow")
         self.assertEqual(farge_for_roe(10.0), "green")
 
     def test_break_even_gap_thresholds(self) -> None:
@@ -80,11 +80,11 @@ class FargekoderTests(unittest.TestCase):
         )
         self.assertEqual(
             farge_for_break_even_gap(faktisk_leie, faktisk_leie + terskel),
-            "orange",
+            "yellow",
         )
         self.assertEqual(
             farge_for_break_even_gap(faktisk_leie, faktisk_leie - terskel),
-            "orange",
+            "yellow",
         )
         self.assertEqual(
             farge_for_break_even_gap(faktisk_leie, faktisk_leie - terskel - 1),
@@ -268,7 +268,7 @@ class DecisionResultTests(unittest.TestCase):
         self.assertLessEqual(len(result.tiltak), 4)
         self.assertEqual(result.positivt, [])
         self.assertEqual(result.risiko, [])
-        self.assertEqual(result.nokkel_tall[0].farge, "orange")
+        self.assertEqual(result.nokkel_tall[0].farge, "yellow")
         self.assertTrue(result.nokkel_tall[0].verdi.endswith(" kr/mnd"))
         self.assertEqual(result.econ_score_0_100, summary.econ_score)
         self.assertEqual(result.tr_score_0_100, summary.tr_score)
@@ -439,7 +439,7 @@ class DecisionResultMapperTests(unittest.TestCase):
             "score_0_100": 55,
         })
         data_svak = map_decision_to_ui(decision_svak)
-        self.assertEqual(data_svak["scorelinjal"]["farge"], "orange")
+        self.assertEqual(data_svak["scorelinjal"]["farge"], "yellow")
 
         decision_good = decision.model_copy(update={
             "dom": DecisionVerdict.BRA,

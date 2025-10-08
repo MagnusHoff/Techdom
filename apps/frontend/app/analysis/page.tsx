@@ -22,7 +22,7 @@ import {
 } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { analyzeProspectusPdf, getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
+import { analyzeProspectusPdf, analyzeProspectusText, getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -32,6 +32,7 @@ import type {
   ListingDetailsDTO,
   ProspectusExtract,
   ProspectusLinks,
+  ProspectusDetail,
 } from "@/lib/types";
 
 const DEFAULT_FORM: AnalysisPayload = {
@@ -177,7 +178,9 @@ function matchesFloorplanKeyword(value: string): boolean {
   return FLOORPLAN_DYNAMIC_REGEX.test(normalised.replace(/[^a-z0-9\s]/g, " "));
 }
 
-function isLikelyFloorplanUrl(value: string, index?: number, total?: number): boolean {
+type ImageDimensions = { width: number; height: number };
+
+function isLikelyFloorplanUrl(value: string, index?: number, total?: number, dimensions?: ImageDimensions): boolean {
   const candidate = normaliseImageUrlForContain(value) ?? value;
   if (!candidate) {
     return false;
@@ -202,36 +205,69 @@ function isLikelyFloorplanUrl(value: string, index?: number, total?: number): bo
   if (normalizedSegments.some((segment) => matchesFloorplanKeyword(segment))) {
     return true;
   }
-  if (normalizedSegments.some((segment) => FLOORPLAN_DYNAMIC_REGEX.test(segment))) {
-    return true;
-  }
-
   const filenameSegment = segments[segments.length - 1];
   const filenameLower = filenameSegment.toLowerCase();
+  const isJpeg = /\.(?:jpe?g)$/i.test(filenameLower);
+  const hasDynamicSegment = normalizedSegments.some((segment) => FLOORPLAN_DYNAMIC_REGEX.test(segment));
+  const dimensionRatio =
+    dimensions && dimensions.width > 0 && dimensions.height > 0
+      ? Math.max(dimensions.width, dimensions.height) / Math.min(dimensions.width, dimensions.height)
+      : null;
+  if (hasDynamicSegment) {
+    if (!isJpeg) {
+      return true;
+    }
+    if (dimensionRatio !== null && dimensionRatio >= 1.34) {
+      return true;
+    }
+  }
+
   if (/\.(?:svg|pdf)$/i.test(filenameLower)) {
     return true;
   }
   const baseName = filenameLower.replace(/\.(?:jpe?g|png|webp|avif|gif)$/i, "");
   const baseNormalised = normaliseFloorplanCandidate(baseName);
-  if (matchesFloorplanKeyword(baseNormalised) || FLOORPLAN_DYNAMIC_REGEX.test(baseNormalised)) {
+  const baseHasDynamic = FLOORPLAN_DYNAMIC_REGEX.test(baseNormalised);
+  if (matchesFloorplanKeyword(baseNormalised)) {
+    return true;
+  }
+  if (baseHasDynamic) {
+    if (!isJpeg) {
+      return true;
+    }
+    if (dimensionRatio !== null && dimensionRatio >= 1.34) {
+      return true;
+    }
+  }
+
+  if (!isJpeg && dimensionRatio !== null && dimensionRatio >= 1.52) {
     return true;
   }
 
   const parentSegment = segments.length > 1 ? segments[segments.length - 2] : null;
   if (parentSegment) {
     const parentNormalised = normaliseFloorplanCandidate(parentSegment);
-    if (matchesFloorplanKeyword(parentNormalised) || FLOORPLAN_DYNAMIC_REGEX.test(parentNormalised)) {
+    const parentHasDynamic = FLOORPLAN_DYNAMIC_REGEX.test(parentNormalised);
+    if (matchesFloorplanKeyword(parentNormalised)) {
       return true;
+    }
+    if (parentHasDynamic) {
+      if (!isJpeg) {
+        return true;
+      }
+      if (dimensionRatio !== null && dimensionRatio >= 1.34) {
+        return true;
+      }
     }
   }
 
-  if (
-    typeof index === "number" &&
-    typeof total === "number" &&
-    total > 0 &&
-    index >= total - Math.min(3, Math.max(1, Math.round(total * 0.25)))
-  ) {
-    if (/\.(?:png|webp)$/i.test(filenameLower)) {
+  if (!isJpeg && /\.(?:png|webp)$/i.test(filenameLower)) {
+    if (
+      typeof index === "number" &&
+      typeof total === "number" &&
+      total > 0 &&
+      index >= total - Math.min(3, Math.max(1, Math.round(total * 0.25)))
+    ) {
       return true;
     }
   }
@@ -1348,6 +1384,27 @@ function normaliseListingUrl(value: string): string {
   return /^https?:\/\//i.test(value) ? value : `https://${value}`;
 }
 
+function normaliseExternalUrl(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^\/\//.test(trimmed)) {
+    return `https:${trimmed}`;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const looksLikeDomain = /^[\w.-]+\.[a-z]{2,}/i.test(trimmed);
+  if (looksLikeDomain && (!/\.pdf$/i.test(trimmed) || trimmed.includes("/"))) {
+    return `https://${trimmed}`;
+  }
+  return trimmed;
+}
+
 function colorClass(farge?: string): string {
   switch ((farge ?? "").toLowerCase()) {
     case "red":
@@ -1423,6 +1480,10 @@ function AnalysisPageContent() {
   const [manualProspectusLoading, setManualProspectusLoading] = useState(false);
   const [manualProspectusError, setManualProspectusError] = useState<string | null>(null);
   const [manualProspectusSuccess, setManualProspectusSuccess] = useState(false);
+  const [manualProspectusText, setManualProspectusText] = useState("");
+  const [manualProspectusTextLoading, setManualProspectusTextLoading] = useState(false);
+  const [manualProspectusTextError, setManualProspectusTextError] = useState<string | null>(null);
+  const [manualProspectusTextSuccess, setManualProspectusTextSuccess] = useState(false);
   const [manualProspectusShouldRefresh, setManualProspectusShouldRefresh] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewContainHints, setPreviewContainHints] = useState<Set<string>>(() => new Set());
@@ -1589,6 +1650,8 @@ function AnalysisPageContent() {
   const statusSentence = decisionUi?.status?.setning ?? "";
   const tg2Items = useMemo(() => prospectus?.tg2 ?? [], [prospectus]);
   const tg3Items = useMemo(() => prospectus?.tg3 ?? [], [prospectus]);
+  const tg2Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg2_details), [prospectus]);
+  const tg3Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg3_details), [prospectus]);
   const watchoutItems = useMemo(() => prospectus?.watchouts ?? [], [prospectus]);
   const prospectusLinks = useMemo(() => prospectus?.links ?? null, [prospectus]);
   const jobLinkInfo = useMemo(() => {
@@ -1609,11 +1672,11 @@ function AnalysisPageContent() {
     return null;
   }, [jobStatus]);
   const effectiveLinks = prospectusLinks ?? jobLinkInfo;
-  const tg2DisplaySource = useMemo(
+  const tg2FallbackItems = useMemo(
     () => sanitizeProspectusItems(tg2Items, { preserveLabels: true }),
     [tg2Items],
   );
-  const tg3DisplayItems = useMemo(
+  const tg3FallbackItems = useMemo(
     () => sanitizeProspectusItems(tg3Items, { preserveLabels: true }),
     [tg3Items],
   );
@@ -1621,25 +1684,20 @@ function AnalysisPageContent() {
     () => sanitizeProspectusItems(watchoutItems),
     [watchoutItems],
   );
-  const tg2DisplayItems = useMemo(() => {
-    if (watchoutDisplayItems.length === 0) {
-      return tg2DisplaySource;
-    }
-    const unique: string[] = [];
-    const seen = new Set<string>();
-    for (const item of [...tg2DisplaySource, ...watchoutDisplayItems]) {
-      if (!item || seen.has(item)) {
-        continue;
-      }
-      seen.add(item);
-      unique.push(item);
-    }
-    return unique.slice(0, 5);
-  }, [tg2DisplaySource, watchoutDisplayItems]);
-  const tgDataAvailable = tg2Items.length > 0 || tg3Items.length > 0;
+  const tg2DisplayItems = useMemo(
+    () => buildProspectusDisplayItems(tg2Details, tg2FallbackItems, watchoutDisplayItems, 5),
+    [tg2Details, tg2FallbackItems, watchoutDisplayItems],
+  );
+  const tg3DisplayItems = useMemo(
+    () => buildProspectusDisplayItems(tg3Details, tg3FallbackItems, [], 5),
+    [tg3Details, tg3FallbackItems],
+  );
+  const tgDataAvailable =
+    tg2Items.length > 0 || tg3Items.length > 0 || tg2Details.length > 0 || tg3Details.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+  const manualProspectusHasSuccess = manualProspectusSuccess || manualProspectusTextSuccess;
   const manualProspectusShowResults =
-    manualProspectusSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+    manualProspectusHasSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
   const missingProspectus = useMemo(() => {
     if (effectiveLinks?.salgsoppgave_pdf) {
       return false;
@@ -1805,11 +1863,12 @@ function AnalysisPageContent() {
   const submitLabel = analyzing ? "Oppdaterer..." : "Oppdater";
   const autoManualActive = Boolean(jobFailed && statusKey === "failed" && jobId && autoManualJobId === jobId);
   const resourcePdfUrl = useMemo(() => {
-    const candidate = effectiveLinks?.salgsoppgave_pdf;
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate.trim();
+    const candidate = normaliseExternalUrl(effectiveLinks?.salgsoppgave_pdf);
+    if (candidate) {
+      return candidate;
     }
-    return stringOrNull(jobStatus?.pdf_url);
+    const fallback = normaliseExternalUrl(jobStatus?.pdf_url);
+    return fallback ?? null;
   }, [effectiveLinks, jobStatus]);
   const resourceListingUrl = useMemo(() => {
     const candidate = stringOrNull(listingUrl);
@@ -1927,6 +1986,52 @@ function AnalysisPageContent() {
     setManualProspectusFile(null);
     setManualProspectusError(null);
     setManualProspectusSuccess(false);
+  }, []);
+
+  const handleManualProspectusTextChange = useCallback(
+    (next: string) => {
+      setManualProspectusText(next);
+      if (manualProspectusTextError) {
+        setManualProspectusTextError(null);
+      }
+      if (manualProspectusTextSuccess) {
+        setManualProspectusTextSuccess(false);
+      }
+    },
+    [manualProspectusTextError, manualProspectusTextSuccess],
+  );
+
+  const handleManualProspectusTextAnalyze = useCallback(async () => {
+    const trimmed = manualProspectusText.trim();
+    if (!trimmed) {
+      setManualProspectusTextError("Lim inn salgsoppgaven først.");
+      setManualProspectusTextSuccess(false);
+      return;
+    }
+    setManualProspectusTextLoading(true);
+    setManualProspectusTextError(null);
+    setManualProspectusTextSuccess(false);
+    try {
+      const response = await analyzeProspectusText({ text: trimmed });
+      setProspectus((prev) => ({
+        ...response,
+        links: prev?.links,
+      }));
+      setManualProspectusTextSuccess(true);
+      setManualProspectusShouldRefresh(true);
+    } catch (err) {
+      setManualProspectusTextError(
+        err instanceof Error ? err.message : "Kunne ikke analysere teksten.",
+      );
+    } finally {
+      setManualProspectusTextLoading(false);
+    }
+  }, [manualProspectusText]);
+
+  const handleManualProspectusTextClear = useCallback(() => {
+    setManualProspectusText("");
+    setManualProspectusTextError(null);
+    setManualProspectusTextSuccess(false);
   }, []);
 
   useEffect(() => {
@@ -2048,6 +2153,10 @@ function AnalysisPageContent() {
     setManualProspectusFile(null);
     setManualProspectusError(null);
     setManualProspectusSuccess(false);
+    setManualProspectusText("");
+    setManualProspectusTextError(null);
+    setManualProspectusTextSuccess(false);
+    setManualProspectusTextLoading(false);
     setManualProspectusShouldRefresh(false);
     setManualProspectusLoading(false);
     setPreviewImages([]);
@@ -2662,6 +2771,15 @@ function AnalysisPageContent() {
                       error={manualProspectusError}
                       success={manualProspectusSuccess}
                     />
+                    <ManualProspectusTextCard
+                      text={manualProspectusText}
+                      onTextChange={handleManualProspectusTextChange}
+                      onAnalyze={handleManualProspectusTextAnalyze}
+                      onClear={handleManualProspectusTextClear}
+                      loading={manualProspectusTextLoading}
+                      error={manualProspectusTextError}
+                      success={manualProspectusTextSuccess}
+                    />
                     {manualProspectusShowResults ? (
                       <>
                         <ProspectusCard
@@ -2827,7 +2945,17 @@ interface ResourceLinkGroupProps {
 function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: ResourceLinkGroupProps) {
   const [discoveredPdfUrl, setDiscoveredPdfUrl] = useState<string | null>(null);
   const [discoveringPdf, setDiscoveringPdf] = useState(false);
-  const primaryPdfUrl = linkInfo?.salgsoppgave_pdf ?? pdfUrl;
+  const primaryPdfUrl = normaliseExternalUrl(linkInfo?.salgsoppgave_pdf) ?? normaliseExternalUrl(pdfUrl);
+  const linkProtected = useMemo(() => {
+    const message = linkInfo?.message?.toLowerCase() ?? "";
+    if (message.includes("beskyttet")) {
+      return true;
+    }
+    if (typeof linkInfo?.confidence === "number" && linkInfo.confidence <= 0) {
+      return true;
+    }
+    return false;
+  }, [linkInfo]);
 
   useEffect(() => {
     if (primaryPdfUrl) {
@@ -2835,7 +2963,7 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
       setDiscoveringPdf(false);
       return;
     }
-    if (!listingUrl) {
+    if (!listingUrl || linkProtected) {
       setDiscoveredPdfUrl(null);
       setDiscoveringPdf(false);
       return;
@@ -2863,7 +2991,7 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
         if (cancelled) {
           return;
         }
-        setDiscoveredPdfUrl(nextUrl);
+        setDiscoveredPdfUrl(normaliseExternalUrl(nextUrl));
       })
       .catch(() => {
         if (!cancelled) {
@@ -2879,13 +3007,14 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
       cancelled = true;
       controller.abort();
     };
-  }, [listingUrl, primaryPdfUrl]);
+  }, [listingUrl, primaryPdfUrl, linkProtected]);
 
   const fallbackProspectLink = buildFinnProspectLink(listingUrl);
-  const salgsoppgaveHref = primaryPdfUrl ?? discoveredPdfUrl ?? fallbackProspectLink;
+  const effectiveDiscoveredUrl = linkProtected ? null : discoveredPdfUrl;
+  const salgsoppgaveHref = primaryPdfUrl ?? effectiveDiscoveredUrl ?? fallbackProspectLink;
   const salgsoppgaveState = primaryPdfUrl
     ? "primary"
-    : discoveredPdfUrl
+    : effectiveDiscoveredUrl
       ? "discovered"
       : fallbackProspectLink
         ? "fallback"
@@ -3313,18 +3442,22 @@ function ListingPreviewCard({
       if (!naturalWidth || !naturalHeight) {
         return;
       }
-      const ratio = naturalWidth / naturalHeight;
 
-      const resolvedSrc =
-        normaliseImageUrlForContain(target.currentSrc || target.src) ??
-        normalisedCurrentImage ??
-        target.currentSrc ??
-        target.src;
+      const rawSrc = target.currentSrc || target.src;
+      const resolvedSrc = normaliseImageUrlForContain(rawSrc) ?? normalisedCurrentImage ?? rawSrc;
       if (!resolvedSrc) {
         return;
       }
+
+      const heuristicallyFloorplan = resolvedSrc
+        ? isLikelyFloorplanUrl(resolvedSrc, safeIndex, imageCount, {
+            width: naturalWidth,
+            height: naturalHeight,
+          })
+        : false;
+
       setDimensionContainHints((prev) => {
-        const shouldContain = ratio <= 1.1;
+        const shouldContain = heuristicallyFloorplan;
         const hasEntry = prev.has(resolvedSrc);
         if (shouldContain && !hasEntry) {
           const next = new Set(prev);
@@ -3339,7 +3472,7 @@ function ListingPreviewCard({
         return prev;
       });
     },
-    [normalisedCurrentImage],
+    [normalisedCurrentImage, imageCount, safeIndex],
   );
 
   const normalisedContainHints = useMemo(() => {
@@ -3735,9 +3868,84 @@ function ManualProspectusCard({
   );
 }
 
+interface ManualProspectusTextCardProps {
+  text: string;
+  onTextChange: (value: string) => void;
+  onAnalyze: () => void;
+  onClear: () => void;
+  loading: boolean;
+  error: string | null;
+  success: boolean;
+}
+
+function ManualProspectusTextCard({
+  text,
+  onTextChange,
+  onAnalyze,
+  onClear,
+  loading,
+  error,
+  success,
+}: ManualProspectusTextCardProps) {
+  const textareaId = useId();
+  const trimmedLength = text.trim().length;
+  const analyzeDisabled = loading || trimmedLength === 0;
+
+  return (
+    <div className="prospectus-card prospectus-card-span manual-prospectus-card manual-prospectus-text-card">
+      <div className="prospectus-card-header">
+        <h3>Lim inn salgsoppgaven</h3>
+        <span className="prospectus-badge info">Manuell</span>
+      </div>
+      <p className="manual-prospectus-intro">
+        Kopier sentrale deler fra salgsoppgaven (for eksempel TG-listen) og lim inn teksten her.
+      </p>
+      <label className="manual-prospectus-label" htmlFor={textareaId}>
+        Tekstinnhold
+      </label>
+      <textarea
+        id={textareaId}
+        className="manual-prospectus-textarea"
+        value={text}
+        onChange={(event) => onTextChange(event.target.value)}
+        placeholder="Lim inn utdrag fra salgsoppgaven …"
+        rows={9}
+        disabled={loading}
+      />
+      <div className="manual-prospectus-text-meta">
+        <span>{trimmedLength.toLocaleString("nb-NO")} tegn</span>
+      </div>
+      <div className="prospectus-actions manual-prospectus-actions">
+        <button
+          type="button"
+          className="prospectus-action primary"
+          onClick={onAnalyze}
+          disabled={analyzeDisabled}
+        >
+          {loading ? "Analyserer…" : "Analyser tekst"}
+        </button>
+        <button
+          type="button"
+          className="prospectus-action secondary"
+          onClick={onClear}
+          disabled={loading || text.length === 0}
+        >
+          Tøm feltet
+        </button>
+      </div>
+      {error ? <p className="manual-prospectus-feedback error">{error}</p> : null}
+      {!error && success ? (
+        <p className="manual-prospectus-feedback success">TG-punktene er oppdatert.</p>
+      ) : null}
+    </div>
+  );
+}
+
+type ProspectusDisplayItem = { label: string; detail: string };
+
 interface ProspectusCardProps {
   title: string;
-  items: string[];
+  items: ProspectusDisplayItem[];
   empty: string;
   badge?: { label: string; tone: "danger" | "warn" | "info" };
   className?: string;
@@ -3761,9 +3969,22 @@ function ProspectusCard({ title, items, empty, badge, className, tooltip }: Pros
         {badge ? <span className={`prospectus-badge ${badge.tone}`}>{badge.label}</span> : null}
       </div>
       {hasItems ? (
-        <ul>
+        <ul className="prospectus-card-list">
           {items.slice(0, 5).map((item, index) => (
-            <li key={`${item}-${index}`}>{item}</li>
+            <li key={`${reactId}-${index}`}>
+              <span
+                className="prospectus-card-list-item"
+                data-tooltip={item.detail}
+                title={item.detail}
+                aria-label={item.detail}
+                tabIndex={0}
+              >
+                <span className="prospectus-card-list-label">{item.label}</span>
+                <span className="prospectus-card-list-arrow" aria-hidden="true">
+                  &rarr;
+                </span>
+              </span>
+            </li>
           ))}
         </ul>
       ) : (
@@ -3917,6 +4138,180 @@ const PROSPECTUS_ISSUE_TERMS = [
   "tett",
 ];
 
+const PROSPECTUS_LABEL_STOPWORDS = new Set<string>([
+  "og",
+  "samt",
+  "men",
+  "eller",
+  "dersom",
+  "hvis",
+  "når",
+  "naar",
+  "derfor",
+  "dermed",
+  "så",
+  "sa",
+  "der",
+  "her",
+  "det",
+  "den",
+  "dette",
+  "disse",
+  "som",
+  "kan",
+  "skal",
+  "må",
+  "maa",
+  "bør",
+  "bor",
+  "er",
+  "ble",
+  "blir",
+  "blitt",
+  "har",
+  "hadde",
+  "får",
+  "fikk",
+  "være",
+  "vaere",
+  "vært",
+  "innen",
+  "etter",
+  "før",
+  "forst",
+  "først",
+  "mer",
+  "mindre",
+  "enn",
+  "eventuelt",
+  "evt",
+  "inkl",
+  "inkludert",
+  "ca",
+  "cirka",
+  "omtrent",
+  "pkt",
+  "punkt",
+  "div",
+  "diverse",
+  "annet",
+  "mm",
+  "etc",
+  "osv",
+  "osb",
+  "ulike",
+  "flere",
+  "slik",
+  "slike",
+  "typ",
+  "type",
+  "vedr",
+  "generelt",
+  "gjelder",
+  "gjeldene",
+]);
+
+const PROSPECTUS_LABEL_CONNECTORS = new Set<string>(["med", "uten", "på", "pa", "i", "ved", "mot"]);
+
+const PROSPECTUS_LABEL_REPLACEMENTS: Record<string, string> = {
+  taktekking: "tak",
+  taktekkingen: "tak",
+  taktekkings: "tak",
+  taket: "tak",
+  takkonstruksjon: "tak",
+  takkonstruksjonen: "tak",
+  takflate: "tak",
+  takflater: "tak",
+  takrenne: "takrenne",
+  takrenner: "takrenner",
+  taknedløp: "nedløp",
+  nedlop: "nedløp",
+  nedlopet: "nedløp",
+  vindu: "vinduer",
+  vinduer: "vinduer",
+  vinduskarm: "vinduskarm",
+  vinduskarmen: "vinduskarm",
+  vinduskarmer: "vinduskarm",
+  badet: "bad",
+  bad: "bad",
+  baderom: "bad",
+  baderommet: "bad",
+  vaskerommet: "vaskerom",
+  kjokken: "kjøkken",
+  kjokkenet: "kjøkken",
+  kjokkeninnredning: "kjøkken",
+  kjokkeninnredningen: "kjøkken",
+  kjeller: "kjeller",
+  kjelleren: "kjeller",
+  grunnmur: "grunnmur",
+  grunnmuren: "grunnmur",
+  drenering: "drenering",
+  drenerer: "drenering",
+  drener: "drenering",
+  ror: "rør",
+  rorene: "rør",
+  rorledning: "rør",
+  rorledninger: "rør",
+  avlop: "avløp",
+  avlopet: "avløp",
+  avloppsror: "avløp",
+  avloppsrorene: "avløp",
+  elanlegg: "elanlegg",
+  elektrisk: "elektrisk",
+  elektriske: "elektrisk",
+  elektro: "elektro",
+  sikringsskap: "sikringsskap",
+  sikringsskapet: "sikringsskap",
+  varmeanlegg: "varme",
+  varmepumpe: "varmepumpe",
+  varmepumper: "varmepumpe",
+  varmekabler: "varmekabler",
+  varmtvannsbereder: "bereder",
+  varmtvannsberederen: "bereder",
+  varmvannsbereder: "bereder",
+  varmvannsberederen: "bereder",
+  fuktighet: "fukt",
+  fuktskader: "fuktskade",
+  fuktmerker: "fuktmerke",
+  lekkasjer: "lekkasje",
+  lekk: "lekkasje",
+  skade: "skader",
+  skadet: "skader",
+  skades: "skader",
+  mangler: "mangler",
+  mangel: "mangler",
+  losore: "løsøre",
+  losoere: "løsøre",
+  inventar: "inventar",
+  sluk: "sluk",
+  sluket: "sluk",
+  membran: "membran",
+  terrasse: "terrasse",
+  terrassen: "terrasse",
+  balkong: "balkong",
+  balkongen: "balkong",
+  veranda: "veranda",
+  fasaden: "fasade",
+  vegg: "vegg",
+  vegger: "vegger",
+  yttervegger: "yttervegg",
+  innervegger: "innervegg",
+  kjokkenvifte: "ventilator",
+  kjokkenventilator: "ventilator",
+  pipe: "pipe",
+  piper: "pipe",
+  skorstein: "pipe",
+  skorsteinen: "pipe",
+  ovn: "ovn",
+  panelovn: "ovn",
+  panelovner: "ovn",
+  kjellervegg: "kjellervegg",
+  kjellervegger: "kjellervegg",
+  dreneringssystem: "drenering",
+  hev: "heving",
+  synk: "setning",
+};
+
 function simplifyProspectusValue(value: string): string {
   return value
     .toLowerCase()
@@ -4024,12 +4419,268 @@ function sanitizeProspectusItems(
   return cleaned;
 }
 
+function normaliseProspectusDetails(value: unknown): ProspectusDetail[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const details: ProspectusDetail[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const label = typeof record.label === "string" ? record.label.trim() : "";
+    const detail = typeof record.detail === "string" ? record.detail.trim() : "";
+    if (!label || !detail) {
+      continue;
+    }
+    const source = typeof record.source === "string" ? record.source.trim() : undefined;
+    const level = typeof record.level === "number" ? record.level : undefined;
+    details.push({ label, detail, source, level });
+  }
+  return details;
+}
+
+function buildProspectusDisplayItems(
+  detailItems: readonly ProspectusDetail[],
+  fallbackStrings: readonly string[],
+  extraStrings: readonly string[] = [],
+  limit = 5,
+): ProspectusDisplayItem[] {
+  const items: ProspectusDisplayItem[] = [];
+  const seen = new Set<string>();
+
+  const pushItem = (label: string, detail: string) => {
+    const cleanLabel = label.trim();
+    const cleanDetail = normaliseProspectusDetailText(detail);
+    if (!cleanLabel || !cleanDetail) {
+      return;
+    }
+    const key = `${cleanLabel.toLowerCase()}__${cleanDetail.toLowerCase()}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    items.push({ label: cleanLabel, detail: cleanDetail });
+  };
+
+  for (const entry of detailItems) {
+    const label = deriveProspectusLabel(entry.label, entry.detail);
+    pushItem(label, entry.detail);
+    if (typeof limit === "number" && limit > 0 && items.length >= limit) {
+      return items;
+    }
+  }
+
+  for (const value of fallbackStrings) {
+    const detail = normaliseProspectusDetailText(value);
+    if (!detail) {
+      continue;
+    }
+    const label = deriveProspectusLabel(value, detail);
+    pushItem(label, detail);
+    if (typeof limit === "number" && limit > 0 && items.length >= limit) {
+      return items.slice(0, limit);
+    }
+  }
+
+  for (const value of extraStrings) {
+    const detail = normaliseProspectusDetailText(value);
+    if (!detail) {
+      continue;
+    }
+    const label = deriveProspectusLabel(detail);
+    pushItem(label, detail);
+    if (typeof limit === "number" && limit > 0 && items.length >= limit) {
+      return items.slice(0, limit);
+    }
+  }
+
+  return typeof limit === "number" && limit > 0 ? items.slice(0, limit) : items;
+}
+
+function deriveProspectusLabel(primary?: string, secondary?: string): string {
+  const detailWords = extractProspectusLabelWords(secondary);
+  if (detailWords.length >= 2) {
+    return formatProspectusLabel(detailWords.slice(0, 3));
+  }
+  const primaryWords = extractProspectusLabelWords(primary);
+  const combined = [...detailWords, ...primaryWords].filter((word, index, array) => array.indexOf(word) === index);
+  if (combined.length > 0) {
+    return formatProspectusLabel(combined.slice(0, 3));
+  }
+  const fallbackSource = [primary, secondary]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(" ");
+  const fallbackWords = extractProspectusLabelWords(fallbackSource);
+  if (fallbackWords.length > 0) {
+    return formatProspectusLabel(fallbackWords.slice(0, 3));
+  }
+  return "TG";
+}
+
+function extractProspectusLabelWords(value?: string): string[] {
+  if (!value) {
+    return [];
+  }
+  const normalized = normaliseProspectusDetailText(value);
+  if (!normalized) {
+    return [];
+  }
+  const segments = normalized
+    .split(/(?:\r?\n|[.;!,?]|,| - | – | — |:)/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  for (const segment of segments) {
+    const words = tokenizeProspectusLabelSegment(segment);
+    if (words.length > 0) {
+      return words;
+    }
+  }
+  return tokenizeProspectusLabelSegment(normalized);
+}
+
+function tokenizeProspectusLabelSegment(segment: string): string[] {
+  const sanitized = segment
+    .replace(/[(){}\[\]]/g, " ")
+    .replace(/[-/]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!sanitized) {
+    return [];
+  }
+  const rawTokens = sanitized
+    .normalize("NFKD")
+    .toLowerCase()
+    .split(/\s+/)
+    .map((token) => token.replace(/[^0-9a-zæøåäöüéè]/g, ""))
+    .filter(Boolean);
+  if (rawTokens.length === 0) {
+    return [];
+  }
+  const keywords: string[] = [];
+  const connectors: string[] = [];
+  for (const rawToken of rawTokens) {
+    if (/^tg\d?$/.test(rawToken) || rawToken === "tilstandsgrad") {
+      continue;
+    }
+    const replacement = PROSPECTUS_LABEL_REPLACEMENTS[rawToken] ?? rawToken;
+    if (!replacement) {
+      continue;
+    }
+    if (PROSPECTUS_LABEL_STOPWORDS.has(replacement)) {
+      continue;
+    }
+    if (PROSPECTUS_LABEL_CONNECTORS.has(replacement)) {
+      if (!connectors.includes(replacement)) {
+        connectors.push(replacement);
+      }
+      continue;
+    }
+    if (!keywords.includes(replacement)) {
+      keywords.push(replacement);
+    }
+  }
+  const orderedKeywords = [
+    ...keywords.filter((token) => !/^\d/.test(token)),
+    ...keywords.filter((token) => /^\d/.test(token)),
+  ];
+  if (orderedKeywords.length < 2) {
+    for (const rawToken of rawTokens) {
+      const replacement = PROSPECTUS_LABEL_REPLACEMENTS[rawToken] ?? rawToken;
+      if (!replacement) {
+        continue;
+      }
+      if (
+        PROSPECTUS_LABEL_STOPWORDS.has(replacement) ||
+        orderedKeywords.includes(replacement) ||
+        /^tg\d?$/.test(replacement)
+      ) {
+        continue;
+      }
+      if (PROSPECTUS_LABEL_CONNECTORS.has(replacement)) {
+        if (!connectors.includes(replacement)) {
+          connectors.push(replacement);
+        }
+        continue;
+      }
+      orderedKeywords.push(replacement);
+      if (orderedKeywords.length >= 2) {
+        break;
+      }
+    }
+  }
+  if (orderedKeywords.length === 0) {
+    return [];
+  }
+  return composeProspectusLabelWords(orderedKeywords, connectors);
+}
+
+function composeProspectusLabelWords(keywords: string[], connectors: string[]): string[] {
+  if (keywords.length === 0) {
+    return [];
+  }
+  const words: string[] = [];
+  const keywordQueue = [...keywords];
+  const connectorQueue = [...connectors];
+  words.push(keywordQueue.shift()!);
+  if (keywordQueue.length > 0) {
+    if (connectorQueue.length > 0) {
+      words.push(connectorQueue.shift()!);
+    }
+    words.push(keywordQueue.shift()!);
+  }
+  if (words.length < 3 && keywordQueue.length > 0) {
+    words.push(keywordQueue.shift()!);
+  }
+  return words.slice(0, 3);
+}
+
+function formatProspectusLabel(words: string[]): string {
+  if (words.length === 0) {
+    return "TG";
+  }
+  const [first, ...rest] = words;
+  const formatted = [capitaliseProspectusLabelWord(first)];
+  for (const word of rest) {
+    formatted.push(formatProspectusLabelTailWord(word));
+  }
+  return formatted.join(" ");
+}
+
+function capitaliseProspectusLabelWord(word: string): string {
+  if (!word) {
+    return word;
+  }
+  if (/^\d/.test(word)) {
+    return word;
+  }
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function formatProspectusLabelTailWord(word: string): string {
+  if (!word) {
+    return word;
+  }
+  if (/^\d/.test(word)) {
+    return word;
+  }
+  return word.toLowerCase();
+}
+
+function normaliseProspectusDetailText(value: string | undefined): string {
+  if (!value) {
+    return "";
+  }
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function normaliseProspectusLinks(value: unknown): ProspectusLinks | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const record = value as Record<string, unknown>;
-  const hrefCandidate = (() => {
+  const rawHref = (() => {
     const possibleKeys = ["salgsoppgave_pdf", "salgsoppgavePdf", "pdf", "url"];
     for (const key of possibleKeys) {
       const raw = record[key];
@@ -4039,6 +4690,7 @@ function normaliseProspectusLinks(value: unknown): ProspectusLinks | null {
     }
     return null;
   })();
+  const hrefCandidate = normaliseExternalUrl(rawHref);
   const confidenceCandidate = record.confidence ?? record.score ?? record.confidence_score;
   let confidence: number | null = null;
   if (typeof confidenceCandidate === "number" && Number.isFinite(confidenceCandidate)) {
@@ -4070,6 +4722,8 @@ function normaliseProspectusExtract(value: unknown): ProspectusExtract | null {
   const record = value as Record<string, unknown>;
   const tg3 = toStringArray(record.tg3);
   const tg2 = toStringArray(record.tg2);
+  const tg3Details = normaliseProspectusDetails(record.tg3_details ?? record.TG3_details);
+  const tg2Details = normaliseProspectusDetails(record.tg2_details ?? record.TG2_details);
   const upgrades = toStringArray(record.upgrades);
   const watchouts = toStringArray(record.watchouts);
   const questions = toStringArray(record.questions);
@@ -4077,6 +4731,8 @@ function normaliseProspectusExtract(value: unknown): ProspectusExtract | null {
     normaliseProspectusLinks(record.links) ??
     normaliseProspectusLinks(record.Links) ??
     null;
+  const tgMarkdown = typeof record.tg_markdown === "string" ? record.tg_markdown : undefined;
+  const missingComponents = toStringArray(record.tg_missing_components ?? record.missing_components);
   const extract: ProspectusExtract = {
     summary_md: typeof record.summary_md === "string" ? record.summary_md : undefined,
     tg3,
@@ -4085,11 +4741,17 @@ function normaliseProspectusExtract(value: unknown): ProspectusExtract | null {
     watchouts,
     questions,
     links: links ?? undefined,
+    tg3_details: tg3Details.length > 0 ? tg3Details : undefined,
+    tg2_details: tg2Details.length > 0 ? tg2Details : undefined,
+    tg_markdown: tgMarkdown,
+    tg_missing_components: missingComponents.length > 0 ? missingComponents : undefined,
   };
   if (
     !extract.summary_md &&
     tg3.length === 0 &&
     tg2.length === 0 &&
+    tg3Details.length === 0 &&
+    tg2Details.length === 0 &&
     upgrades.length === 0 &&
     watchouts.length === 0 &&
     questions.length === 0 &&

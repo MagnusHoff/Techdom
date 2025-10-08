@@ -539,10 +539,13 @@ main {
   height: 100%;
   display: block;
   object-fit: cover;
+  object-position: center;
+  box-sizing: border-box;
 }
 
 .listing-image-contain {
   object-fit: contain;
+  padding: clamp(0.6rem, 1.8vw, 1.3rem);
   background: rgba(15, 23, 42, 0.92);
 }
 
@@ -667,6 +670,25 @@ main {
   flex-direction: column;
   gap: 0.45rem;
   font-size: 0.9rem;
+}
+
+.form-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.form-field-label-text {
+  line-height: 1.25;
+}
+
+.form-field-tooltip {
+  display: inline-flex;
+}
+
+.form-field-tooltip .key-tooltip-bubble {
+  width: 220px;
+  max-width: 280px;
 }
 
 .form-field input {
@@ -866,6 +888,10 @@ main {
   gap: 1rem;
 }
 
+.manual-prospectus-text-card {
+  gap: 1rem;
+}
+
 .manual-prospectus-intro {
   margin: 0;
   color: rgba(226, 232, 240, 0.78);
@@ -879,31 +905,108 @@ main {
   color: rgba(226, 232, 240, 0.9);
 }
 
+.manual-prospectus-upload {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  color: rgba(226, 232, 240, 0.92);
+  padding: clamp(1rem, 3vh, 1.5rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  position: relative;
+}
+
+.manual-prospectus-upload-input {
+  display: none;
+}
+
+.manual-prospectus-upload-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.manual-prospectus-upload-title {
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.manual-prospectus-upload-file {
+  font-size: 0.98rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.manual-prospectus-upload-helper {
+  font-size: 0.86rem;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.manual-prospectus-upload--drag {
+  border-color: rgba(59, 130, 246, 0.7);
+  background: rgba(30, 41, 59, 0.78);
+  transform: scale(1.01);
+}
+
+.manual-prospectus-upload--disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.manual-prospectus-upload--disabled .manual-prospectus-upload-content {
+  color: rgba(148, 163, 184, 0.6);
+}
+
 .manual-prospectus-textarea {
   width: 100%;
-  min-height: clamp(180px, 40vh, 280px);
+  min-height: 180px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(15, 23, 42, 0.6);
-  color: rgba(226, 232, 240, 0.94);
-  padding: 0.85rem 1rem;
-  font: inherit;
-  line-height: 1.55;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  color: rgba(226, 232, 240, 0.92);
+  padding: 0.95rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
   resize: vertical;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .manual-prospectus-textarea::placeholder {
-  color: rgba(148, 163, 184, 0.7);
+  color: rgba(226, 232, 240, 0.58);
 }
 
 .manual-prospectus-textarea:focus {
-  outline: 2px solid rgba(59, 130, 246, 0.75);
-  outline-offset: 2px;
+  outline: none;
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(15, 23, 42, 0.7);
 }
 
 .manual-prospectus-textarea:disabled {
-  opacity: 0.65;
+  opacity: 0.6;
   cursor: not-allowed;
+}
+
+.manual-prospectus-text-meta {
+  font-size: 0.82rem;
+  color: rgba(226, 232, 240, 0.64);
+}
+
+.manual-prospectus-file-info,
+.manual-prospectus-file-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+.manual-prospectus-file-info {
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.9);
 }
 
 .manual-prospectus-actions {
@@ -923,31 +1026,8 @@ main {
   color: rgba(34, 197, 94, 0.95);
 }
 
-.manual-prospectus-results {
-  display: grid;
-  gap: 0.9rem;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-}
-
-.manual-prospectus-result {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.manual-prospectus-result-title {
-  margin: 0;
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: rgba(248, 250, 252, 0.9);
-}
-
-.manual-prospectus-result ul {
-  margin: 0;
-  padding-left: 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+.manual-prospectus-result-card {
+  height: 100%;
 }
 
 .prospectus-card-header {
@@ -962,12 +1042,108 @@ main {
   font-size: 1rem;
 }
 
+.prospectus-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.prospectus-card-tooltip {
+  display: inline-flex;
+}
+
+.prospectus-card-tooltip .key-tooltip-bubble {
+  width: 240px;
+  max-width: 300px;
+}
+
 .prospectus-card ul {
   margin: 0;
   padding-left: 1.1rem;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+}
+
+.prospectus-card-list-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: help;
+  max-width: 100%;
+  color: rgba(226, 232, 240, 0.92);
+  line-height: 1.3;
+}
+
+.prospectus-card-list-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.prospectus-card-list-arrow {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  color: rgba(226, 232, 240, 0.6);
+  transition: transform 0.16s ease, color 0.16s ease;
+}
+
+.prospectus-card-list-item:hover .prospectus-card-list-arrow,
+.prospectus-card-list-item:focus-visible .prospectus-card-list-arrow {
+  transform: translateX(2px);
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.prospectus-card-list-item:focus-visible {
+  outline: 2px solid rgba(94, 234, 212, 0.55);
+  outline-offset: 3px;
+}
+
+.prospectus-card-list-item::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  min-width: 220px;
+  max-width: min(320px, 80vw);
+  background: rgba(15, 23, 42, 0.96);
+  color: rgba(226, 232, 240, 0.98);
+  padding: 0.65rem 0.8rem;
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.38);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  white-space: normal;
+  z-index: 6;
+  text-align: left;
+  font-size: 0.84rem;
+}
+
+.prospectus-card-list-item::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 1.2rem;
+  width: 10px;
+  height: 10px;
+  background: rgba(15, 23, 42, 0.96);
+  transform: translateY(6px) rotate(45deg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 5;
+}
+
+.prospectus-card-list-item:hover::after,
+.prospectus-card-list-item:hover::before,
+.prospectus-card-list-item:focus-visible::after,
+.prospectus-card-list-item:focus-visible::before {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .prospectus-card-span {
@@ -1251,10 +1427,9 @@ main {
   color: var(--color-red-strong);
 }
 
-.score-chip.orange,
 .score-chip.yellow {
-  background: rgba(250, 204, 21, 0.22);
-  color: #fef08a;
+  background: rgba(254, 228, 64, 0.22);
+  color: #fef9c3;
 }
 
 .score-chip.green {
@@ -1393,9 +1568,8 @@ main {
   color: var(--color-red-strong);
 }
 
-.key-value.orange,
 .key-value.yellow {
-  color: #facc15;
+  color: #fee440;
 }
 
 .key-value.green {
