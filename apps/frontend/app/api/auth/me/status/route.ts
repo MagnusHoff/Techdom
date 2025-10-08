@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+import { resolveApiBase } from "../../../_lib/api-base";
 
 export async function GET() {
-  if (!API_BASE) {
+  const apiBase = resolveApiBase();
+  if (!apiBase) {
     return NextResponse.json(
       { error: "NEXT_PUBLIC_API_BASE_URL mangler" },
       { status: 500 },
@@ -15,14 +16,22 @@ export async function GET() {
   if (!token) {
     return NextResponse.json({ error: "Ikke autentisert" }, { status: 401 });
   }
-
-  const upstream = await fetch(`${API_BASE}/auth/me/status`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    cache: "no-store",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${apiBase}/auth/me/status`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.error("auth/me/status proxy failed", error);
+    return NextResponse.json(
+      { error: "Kunne ikke kontakte API-et for status" },
+      { status: 502 },
+    );
+  }
 
   const payloadText = await upstream.text();
   let payload: unknown = null;
