@@ -4,6 +4,8 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  ChangeEvent,
+  DragEvent,
   FormEvent,
   MouseEvent,
   PointerEvent as ReactPointerEvent,
@@ -16,10 +18,11 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
+import { analyzeProspectusPdf, getJobStatus, runAnalysis, startAnalysisJob } from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -41,6 +44,23 @@ const DEFAULT_FORM: AnalysisPayload = {
   maint_pct: "6.0",
   vacancy_pct: "0",
   other_costs: "0",
+};
+
+const FORM_FIELD_TOOLTIPS: Record<string, string> = {
+  Kjøpesum: "Totalpris for eiendommen, inkludert omkostninger du betaler ved kjøp.",
+  Egenkapital: "Beløpet du finansierer selv før banklånet tas opp.",
+  "Rente % p.a.": "Årlig nominell rente på boliglånet, oppgitt i prosent.",
+  "Lånetid (år)": "Antall år du planlegger å bruke på å nedbetale lånet.",
+  "Leie (mnd)": "Forventet månedlig husleie som leietakerne betaler.",
+  "Felleskost (mnd)": "Månedlige felleskostnader til borettslag eller sameie.",
+  "Vedlikehold % av leie": "Andel av husleien du setter av til vedlikehold hver måned.",
+  "Andre kost (mnd)": "Andre faste månedlige kostnader knyttet til eiendommen.",
+  "Ledighet %": "Forventet del av året boligen står tom uten leietaker.",
+};
+
+const PROSPECTUS_CARD_TOOLTIPS: Record<string, string> = {
+  "⚠️ TG2": "Tilstandsgrad 2: merkbare avvik som bør følges opp eller utbedres på sikt.",
+  "🛑 TG3": "Tilstandsgrad 3: alvorlige avvik som krever rask utbedring eller nærmere undersøkelser.",
 };
 
 const JOB_POLL_INTERVAL = 2_500;
@@ -130,6 +150,9 @@ const FEEDBACK_OPTIONS: Array<{ id: FeedbackCategory; shortcut: string; label: s
   { id: "other", shortcut: "C", label: "Annet", description: "Andre tanker eller spørsmål" },
 ];
 
+const FLOORPLAN_DYNAMIC_REGEX =
+  /\b(?:[1-9](?:\s|\.|_)?(?:etg|etasje)|hovedplan|underetasje|kjellerplan|loftsplan|mesaninplan)\b/;
+
 function normaliseFloorplanCandidate(value: string): string {
   return value
     .trim()
@@ -148,7 +171,72 @@ function matchesFloorplanKeyword(value: string): boolean {
   if (!normalised) {
     return false;
   }
-  return FLOORPLAN_KEYWORDS.some((keyword) => normalised.includes(keyword));
+  if (FLOORPLAN_KEYWORDS.some((keyword) => normalised.includes(keyword))) {
+    return true;
+  }
+  return FLOORPLAN_DYNAMIC_REGEX.test(normalised.replace(/[^a-z0-9\s]/g, " "));
+}
+
+function isLikelyFloorplanUrl(value: string, index?: number, total?: number): boolean {
+  const candidate = normaliseImageUrlForContain(value) ?? value;
+  if (!candidate) {
+    return false;
+  }
+  if (matchesFloorplanKeyword(candidate)) {
+    return true;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return matchesFloorplanKeyword(candidate);
+  }
+
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const normalizedSegments = segments.map((segment) => normaliseFloorplanCandidate(segment));
+  if (normalizedSegments.some((segment) => matchesFloorplanKeyword(segment))) {
+    return true;
+  }
+  if (normalizedSegments.some((segment) => FLOORPLAN_DYNAMIC_REGEX.test(segment))) {
+    return true;
+  }
+
+  const filenameSegment = segments[segments.length - 1];
+  const filenameLower = filenameSegment.toLowerCase();
+  if (/\.(?:svg|pdf)$/i.test(filenameLower)) {
+    return true;
+  }
+  const baseName = filenameLower.replace(/\.(?:jpe?g|png|webp|avif|gif)$/i, "");
+  const baseNormalised = normaliseFloorplanCandidate(baseName);
+  if (matchesFloorplanKeyword(baseNormalised) || FLOORPLAN_DYNAMIC_REGEX.test(baseNormalised)) {
+    return true;
+  }
+
+  const parentSegment = segments.length > 1 ? segments[segments.length - 2] : null;
+  if (parentSegment) {
+    const parentNormalised = normaliseFloorplanCandidate(parentSegment);
+    if (matchesFloorplanKeyword(parentNormalised) || FLOORPLAN_DYNAMIC_REGEX.test(parentNormalised)) {
+      return true;
+    }
+  }
+
+  if (
+    typeof index === "number" &&
+    typeof total === "number" &&
+    total > 0 &&
+    index >= total - Math.min(3, Math.max(1, Math.round(total * 0.25)))
+  ) {
+    if (/\.(?:png|webp)$/i.test(filenameLower)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function valueIndicatesFloorplan(value: unknown): boolean {
@@ -198,19 +286,21 @@ function normaliseImageUrlForContain(value: string): string | null {
 }
 
 function identifyFloorplanUrls(values: Iterable<string>): Set<string> {
+  const allValues = Array.from(values);
+  const total = allValues.length;
   const result = new Set<string>();
-  for (const value of values) {
+  allValues.forEach((value, index) => {
     if (typeof value !== "string") {
-      continue;
+      return;
     }
     const normalised = normaliseImageUrlForContain(value);
     if (!normalised) {
-      continue;
+      return;
     }
-    if (matchesFloorplanKeyword(normalised)) {
+    if (isLikelyFloorplanUrl(normalised, index, total)) {
       result.add(normalised);
     }
-  }
+  });
   return result;
 }
 
@@ -1263,7 +1353,7 @@ function colorClass(farge?: string): string {
     case "red":
       return "score-chip red";
     case "orange":
-      return "score-chip orange";
+      return "score-chip yellow";
     case "yellow":
       return "score-chip yellow";
     case "green":
@@ -1278,9 +1368,9 @@ function keyColorClass(farge?: string): string {
     case "red":
       return "key-value red";
     case "orange":
-      return "key-value orange";
+      return "key-value yellow";
     case "yellow":
-      return "key-value orange";
+      return "key-value yellow";
     case "green":
       return "key-value green";
     default:
@@ -1296,10 +1386,10 @@ function scoreFillColor(percent: number | null): string {
     return STRONG_RED_HEX;
   }
   if (percent < 50) {
-    return "#f97316"; // oransje
+    return "#fee440"; // gul
   }
   if (percent < 66) {
-    return "#a3e635"; // grønn-oransje (lime)
+    return "#a3e635"; // gulgrønn (lime)
   }
   if (percent < 84) {
     return "#22c55e"; // grønn
@@ -1329,6 +1419,11 @@ function AnalysisPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [prospectus, setProspectus] = useState<ProspectusExtract | null>(null);
+  const [manualProspectusFile, setManualProspectusFile] = useState<File | null>(null);
+  const [manualProspectusLoading, setManualProspectusLoading] = useState(false);
+  const [manualProspectusError, setManualProspectusError] = useState<string | null>(null);
+  const [manualProspectusSuccess, setManualProspectusSuccess] = useState(false);
+  const [manualProspectusShouldRefresh, setManualProspectusShouldRefresh] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewContainHints, setPreviewContainHints] = useState<Set<string>>(() => new Set());
   const [previewImageIndex, setPreviewImageIndex] = useState(0);
@@ -1340,6 +1435,7 @@ function AnalysisPageContent() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [jobStarting, setJobStarting] = useState(false);
+  const [autoManualJobId, setAutoManualJobId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackCategory, setFeedbackCategory] = useState<FeedbackCategory>("idea");
@@ -1513,8 +1609,14 @@ function AnalysisPageContent() {
     return null;
   }, [jobStatus]);
   const effectiveLinks = prospectusLinks ?? jobLinkInfo;
-  const tg2DisplaySource = useMemo(() => sanitizeProspectusItems(tg2Items, 5), [tg2Items]);
-  const tg3DisplayItems = useMemo(() => sanitizeProspectusItems(tg3Items, 5), [tg3Items]);
+  const tg2DisplaySource = useMemo(
+    () => sanitizeProspectusItems(tg2Items, { preserveLabels: true }),
+    [tg2Items],
+  );
+  const tg3DisplayItems = useMemo(
+    () => sanitizeProspectusItems(tg3Items, { preserveLabels: true }),
+    [tg3Items],
+  );
   const watchoutDisplayItems = useMemo(
     () => sanitizeProspectusItems(watchoutItems),
     [watchoutItems],
@@ -1536,6 +1638,33 @@ function AnalysisPageContent() {
   }, [tg2DisplaySource, watchoutDisplayItems]);
   const tgDataAvailable = tg2Items.length > 0 || tg3Items.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+  const manualProspectusShowResults =
+    manualProspectusSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+  const missingProspectus = useMemo(() => {
+    if (effectiveLinks?.salgsoppgave_pdf) {
+      return false;
+    }
+    const statusKey = (jobStatus?.status ?? "").trim().toLowerCase();
+    const parts = [
+      jobStatus?.message,
+      jobStatus?.error,
+      jobStatus?.result?.links?.message,
+      jobError,
+    ]
+      .map((value) => (typeof value === "string" ? value.toLowerCase() : ""))
+      .filter(Boolean);
+    const combined = parts.join(" ");
+    if (combined.includes("uten salgsoppgave") || combined.includes("fant ikke salgsoppgave") || combined.includes("fant ikke prospekt")) {
+      return true;
+    }
+    if (statusKey === "failed" && (combined.includes("salgsoppgave") || combined.includes("prospekt") || combined.includes("pdf"))) {
+      return true;
+    }
+    if (result && !prospectus && !effectiveLinks?.salgsoppgave_pdf) {
+      return true;
+    }
+    return false;
+  }, [effectiveLinks, jobStatus, jobError, prospectus, result]);
   const scoreBreakdownEntries = useMemo(() => {
     const entries = Array.isArray(decisionUi?.score_breakdown)
       ? decisionUi.score_breakdown
@@ -1673,7 +1802,8 @@ function AnalysisPageContent() {
   const jobInProgress = jobStarting || (jobStatus ? !["done", "failed"].includes(statusKey) : false);
   const submitDisabled = analyzing || (jobInProgress && !jobFailed);
   const fieldsDisabled = analyzing || (jobInProgress && !jobFailed);
-  const submitLabel = analyzing ? "Oppdaterer..." : jobFailed ? "Kjør manuelt" : "Oppdater";
+  const submitLabel = analyzing ? "Oppdaterer..." : "Oppdater";
+  const autoManualActive = Boolean(jobFailed && statusKey === "failed" && jobId && autoManualJobId === jobId);
   const resourcePdfUrl = useMemo(() => {
     const candidate = effectiveLinks?.salgsoppgave_pdf;
     if (typeof candidate === "string" && candidate.trim()) {
@@ -1721,8 +1851,7 @@ function AnalysisPageContent() {
     });
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const runManualAnalysis = useCallback(async () => {
     setAnalyzing(true);
     setError(null);
 
@@ -1743,6 +1872,74 @@ function AnalysisPageContent() {
     } finally {
       setAnalyzing(false);
     }
+  }, [form, tg2Items, tg3Items, tgDataAvailable, prospectus, watchoutItems]);
+
+  const handleManualProspectusAnalyze = useCallback(async () => {
+    if (!manualProspectusFile) {
+      setManualProspectusError("Velg en PDF-fil først.");
+      setManualProspectusSuccess(false);
+      return;
+    }
+    setManualProspectusLoading(true);
+    setManualProspectusError(null);
+    setManualProspectusSuccess(false);
+    try {
+      const response = await analyzeProspectusPdf(manualProspectusFile);
+      setProspectus((prev) => ({
+        ...response,
+        links: prev?.links,
+      }));
+      setManualProspectusSuccess(true);
+      setManualProspectusShouldRefresh(true);
+    } catch (err) {
+      setManualProspectusError(
+        err instanceof Error ? err.message : "Kunne ikke analysere PDF-filen.",
+      );
+    } finally {
+      setManualProspectusLoading(false);
+    }
+  }, [manualProspectusFile]);
+
+  const handleManualProspectusFileChange = useCallback(
+    (file: File | null) => {
+      if (file) {
+        const type = (file.type || "").toLowerCase();
+        const name = file.name.toLowerCase();
+        if (!(type.includes("pdf") || name.endswith(".pdf"))) {
+          setManualProspectusFile(null);
+          setManualProspectusSuccess(false);
+          setManualProspectusError("Filen må være en PDF.");
+          return;
+        }
+      }
+      setManualProspectusFile(file);
+      if (manualProspectusError) {
+        setManualProspectusError(null);
+      }
+      if (manualProspectusSuccess) {
+        setManualProspectusSuccess(false);
+      }
+    },
+    [manualProspectusError, manualProspectusSuccess],
+  );
+
+  const handleManualProspectusClear = useCallback(() => {
+    setManualProspectusFile(null);
+    setManualProspectusError(null);
+    setManualProspectusSuccess(false);
+  }, []);
+
+  useEffect(() => {
+    if (!manualProspectusShouldRefresh) {
+      return;
+    }
+    setManualProspectusShouldRefresh(false);
+    void runManualAnalysis();
+  }, [manualProspectusShouldRefresh, runManualAnalysis]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await runManualAnalysis();
   };
 
   const handleFeedbackSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -1791,6 +1988,14 @@ function AnalysisPageContent() {
         throw new Error(detail ?? "Kunne ikke sende tilbakemelding.");
       })
       .catch((sendError) => {
+        if (
+          !emailValue &&
+          sendError instanceof Error &&
+          sendError.message.toLowerCase().includes("smtp_host mangler for feedback-epost")
+        ) {
+          // Ignore missing SMTP config when no reply email is provided to avoid confusing the user.
+          return;
+        }
         setFeedbackSuccess(false);
         setFeedbackErrorMessage(
           sendError instanceof Error ? sendError.message : "Kunne ikke sende tilbakemelding. Prøv igjen senere.",
@@ -1817,6 +2022,7 @@ function AnalysisPageContent() {
       setJobId(null);
       setJobStatus(null);
       setJobError(null);
+      setAutoManualJobId(null);
       return;
     }
 
@@ -1837,7 +2043,13 @@ function AnalysisPageContent() {
     setJobStatus(null);
     setJobId(null);
     setJobError(null);
+    setAutoManualJobId(null);
     setProspectus(null);
+    setManualProspectusFile(null);
+    setManualProspectusError(null);
+    setManualProspectusSuccess(false);
+    setManualProspectusShouldRefresh(false);
+    setManualProspectusLoading(false);
     setPreviewImages([]);
     setPreviewContainHints(new Set());
     setPreviewImageIndex(0);
@@ -2134,6 +2346,40 @@ function AnalysisPageContent() {
     }
   }, [jobStatus, jobId, listingDetails]);
 
+  useEffect(() => {
+    if (!jobId || !jobStatus) {
+      return;
+    }
+    const statusValue = (jobStatus.status ?? "").toLowerCase();
+    if (statusValue !== "failed") {
+      return;
+    }
+    if (jobStatus.result?.analysis) {
+      return;
+    }
+    if (autoManualJobId === jobId) {
+      return;
+    }
+    if (analyzing) {
+      return;
+    }
+    const failureText = [jobError, jobStatus.message, jobStatus.error]
+      .map((value) => (typeof value === "string" ? value.toLowerCase() : ""))
+      .filter(Boolean)
+      .join(" ");
+    const missingProspect =
+      failureText.includes("salgsoppgave") || failureText.includes("prospekt") || failureText.includes("pdf");
+    if (!missingProspect) {
+      return;
+    }
+    const hasPriceValue = typeof form.price === "string" && form.price.trim() !== "";
+    if (!hasPriceValue) {
+      return;
+    }
+    setAutoManualJobId(jobId);
+    void runManualAnalysis();
+  }, [jobId, jobStatus, autoManualJobId, analyzing, runManualAnalysis, jobError, form.price]);
+
   return (
     <>
       <ListingDetailsModal
@@ -2197,13 +2443,16 @@ function AnalysisPageContent() {
           </div>
           {jobFailed && !jobCompleted ? (
             <p className="analysis-manual-hint">
-              Automatisk innhenting feilet. Fyll inn tallene manuelt og trykk &quot;Kjør manuelt&quot;.
+              {autoManualActive
+                ? "Automatisk innhenting feilet. Analysen er kjørt manuelt med tallene under."
+                : 'Automatisk innhenting feilet. Fyll inn tallene manuelt og trykk &quot;Oppdater&quot;.'}
             </p>
           ) : null}
           <form className="analysis-form" onSubmit={handleSubmit}>
             <div className="form-grid">
               <FormField
                 label="Kjøpesum"
+                tooltip={FORM_FIELD_TOOLTIPS["Kjøpesum"]}
                 value={form.price}
                 placeholder="4 500 000"
                 onChange={handleChange("price")}
@@ -2211,6 +2460,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Egenkapital"
+                tooltip={FORM_FIELD_TOOLTIPS["Egenkapital"]}
                 value={form.equity}
                 placeholder="675 000"
                 onChange={handleChange("equity")}
@@ -2218,6 +2468,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Rente % p.a."
+                tooltip={FORM_FIELD_TOOLTIPS["Rente % p.a."]}
                 value={form.interest}
                 placeholder="5.10"
                 onChange={handleChange("interest")}
@@ -2225,6 +2476,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Lånetid (år)"
+                tooltip={FORM_FIELD_TOOLTIPS["Lånetid (år)"]}
                 value={form.term_years}
                 placeholder="30"
                 onChange={handleChange("term_years")}
@@ -2232,6 +2484,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Leie (mnd)"
+                tooltip={FORM_FIELD_TOOLTIPS["Leie (mnd)"]}
                 value={form.rent}
                 placeholder="18 000"
                 onChange={handleChange("rent")}
@@ -2239,6 +2492,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Felleskost (mnd)"
+                tooltip={FORM_FIELD_TOOLTIPS["Felleskost (mnd)"]}
                 value={form.hoa}
                 placeholder="3 000"
                 onChange={handleChange("hoa")}
@@ -2246,6 +2500,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Vedlikehold % av leie"
+                tooltip={FORM_FIELD_TOOLTIPS["Vedlikehold % av leie"]}
                 value={form.maint_pct}
                 placeholder="6.0"
                 onChange={handleChange("maint_pct")}
@@ -2253,6 +2508,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Andre kost (mnd)"
+                tooltip={FORM_FIELD_TOOLTIPS["Andre kost (mnd)"]}
                 value={form.other_costs}
                 placeholder="800"
                 onChange={handleChange("other_costs")}
@@ -2260,6 +2516,7 @@ function AnalysisPageContent() {
               />
               <FormField
                 label="Ledighet %"
+                tooltip={FORM_FIELD_TOOLTIPS["Ledighet %"]}
                 value={form.vacancy_pct}
                 placeholder="0.0"
                 onChange={handleChange("vacancy_pct")}
@@ -2361,14 +2618,9 @@ function AnalysisPageContent() {
                         <span className="key-name-text">{navn}</span>
                         {description ? (
                           <div className="key-tooltip">
-                            <button
-                              type="button"
-                              className="key-info"
-                              aria-label={`Forklaring for ${navn}`}
-                              aria-describedby={tooltipId}
-                            >
+                            <span className="key-info" aria-hidden="true">
                               ?
-                            </button>
+                            </span>
                             <div className="key-tooltip-bubble" role="tooltip" id={tooltipId}>
                               {description}
                             </div>
@@ -2399,18 +2651,56 @@ function AnalysisPageContent() {
 
             <div className="analysis-column analysis-column-prospectus">
               <div className="prospectus-grid">
-                <ProspectusCard
-                  title="⚠️ TG2"
-                  badge={{ label: "Middels risiko", tone: "warn" }}
-                  items={tg2DisplayItems}
-                  empty="Ingen TG2- eller observasjonspunkter funnet ennå."
-                />
-                <ProspectusCard
-                  title="🛑 TG3 (alvorlig)"
-                  badge={{ label: "Høy risiko", tone: "danger" }}
-                  items={tg3DisplayItems}
-                  empty="Ingen TG3-punkter funnet ennå."
-                />
+                {missingProspectus ? (
+                  <>
+                    <ManualProspectusCard
+                      file={manualProspectusFile}
+                      onFileChange={handleManualProspectusFileChange}
+                      onAnalyze={handleManualProspectusAnalyze}
+                      onClear={handleManualProspectusClear}
+                      loading={manualProspectusLoading}
+                      error={manualProspectusError}
+                      success={manualProspectusSuccess}
+                    />
+                    {manualProspectusShowResults ? (
+                      <>
+                        <ProspectusCard
+                          title="⚠️ TG2"
+                          badge={{ label: "Middels risiko", tone: "warn" }}
+                          tooltip={PROSPECTUS_CARD_TOOLTIPS["⚠️ TG2"]}
+                          items={tg2DisplayItems}
+                          empty="Ingen TG2- eller observasjonspunkter funnet ennå."
+                          className="manual-prospectus-result-card"
+                        />
+                        <ProspectusCard
+                          title="🛑 TG3"
+                          badge={{ label: "Høy risiko", tone: "danger" }}
+                          tooltip={PROSPECTUS_CARD_TOOLTIPS["🛑 TG3"]}
+                          items={tg3DisplayItems}
+                          empty="Ingen TG3-punkter funnet ennå."
+                          className="manual-prospectus-result-card"
+                        />
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <ProspectusCard
+                      title="⚠️ TG2"
+                      badge={{ label: "Middels risiko", tone: "warn" }}
+                      tooltip={PROSPECTUS_CARD_TOOLTIPS["⚠️ TG2"]}
+                      items={tg2DisplayItems}
+                      empty="Ingen TG2- eller observasjonspunkter funnet ennå."
+                    />
+                    <ProspectusCard
+                      title="🛑 TG3"
+                      badge={{ label: "Høy risiko", tone: "danger" }}
+                      tooltip={PROSPECTUS_CARD_TOOLTIPS["🛑 TG3"]}
+                      items={tg3DisplayItems}
+                      empty="Ingen TG3-punkter funnet ennå."
+                    />
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -2481,14 +2771,26 @@ function JobStatusCard({ status, jobError, starting, completed }: JobStatusCardP
 
   const derivedState = completed ? "done" : undefined;
   const stateKey = status?.status ?? derivedState ?? (jobError ? "failed" : starting ? "queued" : undefined);
-  const label = jobStatusHeadline(status, stateKey);
+  const failureDetails = stateKey === "failed" ? [status?.message, status?.error, jobError] : [];
+  const failureSignalText = failureDetails
+    .map((value) => (typeof value === "string" ? value.toLowerCase() : ""))
+    .filter(Boolean)
+    .join(" ");
+  const missingProspect =
+    stateKey === "failed" &&
+    (failureSignalText.includes("salgsoppgave") ||
+      failureSignalText.includes("prospekt") ||
+      failureSignalText.includes("pdf"));
+  const label = missingProspect ? "Analyse fullført" : jobStatusHeadline(status, stateKey);
   const progressValueRaw = typeof status?.progress === "number" ? Math.max(0, Math.min(100, status.progress)) : null;
   const isActive = stateKey !== "failed" && stateKey !== "done";
   const progressValue = isActive ? null : (stateKey === "done" ? 100 : progressValueRaw);
   const showIndeterminate = isActive;
   const showProgress = stateKey !== "failed";
   const failureMessage = stateKey === "failed"
-    ? stringOrNull(status?.message) ?? stringOrNull(status?.error) ?? jobError
+    ? missingProspect
+      ? "Fant ikke salgsoppgaven"
+      : stringOrNull(status?.message) ?? stringOrNull(status?.error) ?? jobError
     : null;
 
   return (
@@ -2879,7 +3181,6 @@ function FeedbackDialog({
             <h2 className="feedback-title" id={titleId}>
               Takk for tilbakemeldingen!
             </h2>
-            <p>Vi tar kontakt dersom vi trenger mer informasjon.</p>
             <button type="button" className="analysis-button" onClick={onClose}>
               Lukk
             </button>
@@ -2933,7 +3234,13 @@ function FeedbackDialog({
                       id={messageId}
                       name="message"
                       value={message}
-                      onChange={(event) => onMessageChange(event.target.value)}
+                      onChange={(event) => {
+                        event.currentTarget.setCustomValidity("");
+                        onMessageChange(event.currentTarget.value);
+                      }}
+                      onInvalid={(event) => {
+                        event.currentTarget.setCustomValidity("Vennligst fyll inn dette feltet");
+                      }}
                       placeholder="Del tanker, utfordringer eller ønsker..."
                       required
                       disabled={submitting}
@@ -2987,16 +3294,116 @@ function ListingPreviewCard({
   const hasImages = imageCount > 0;
   const safeIndex = hasImages ? Math.max(0, Math.min(currentIndex, imageCount - 1)) : 0;
   const currentImage = hasImages ? imageUrls[safeIndex] : null;
+  const [dimensionContainHints, setDimensionContainHints] = useState<Set<string>>(() => new Set());
+  const normalisedCurrentImage = useMemo(() => {
+    if (!currentImage || typeof currentImage !== "string") {
+      return null;
+    }
+    return normaliseImageUrlForContain(currentImage) ?? currentImage;
+  }, [currentImage]);
+
+  useEffect(() => {
+    setDimensionContainHints(new Set());
+  }, [imageUrls]);
+
+  const handleImageLoad = useCallback(
+    (event: SyntheticEvent<HTMLImageElement>) => {
+      const target = event.currentTarget;
+      const { naturalWidth, naturalHeight } = target;
+      if (!naturalWidth || !naturalHeight) {
+        return;
+      }
+      const ratio = naturalWidth / naturalHeight;
+
+      const resolvedSrc =
+        normaliseImageUrlForContain(target.currentSrc || target.src) ??
+        normalisedCurrentImage ??
+        target.currentSrc ??
+        target.src;
+      if (!resolvedSrc) {
+        return;
+      }
+      setDimensionContainHints((prev) => {
+        const shouldContain = ratio <= 1.1;
+        const hasEntry = prev.has(resolvedSrc);
+        if (shouldContain && !hasEntry) {
+          const next = new Set(prev);
+          next.add(resolvedSrc);
+          return next;
+        }
+        if (!shouldContain && hasEntry) {
+          const next = new Set(prev);
+          next.delete(resolvedSrc);
+          return next;
+        }
+        return prev;
+      });
+    },
+    [normalisedCurrentImage],
+  );
+
+  const normalisedContainHints = useMemo(() => {
+    if (!containHints || containHints.size === 0) {
+      return new Set<string>();
+    }
+    const result = new Set<string>();
+    containHints.forEach((value) => {
+      if (typeof value !== "string") {
+        return;
+      }
+      const normalised = normaliseImageUrlForContain(value);
+      if (normalised) {
+        result.add(normalised);
+      } else {
+        result.add(value);
+      }
+    });
+    return result;
+  }, [containHints]);
+
+  const autoContainHints = useMemo(() => {
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+      return new Set<string>();
+    }
+    const total = imageUrls.length;
+    const result = new Set<string>();
+    imageUrls.forEach((value, index) => {
+      if (typeof value !== "string") {
+        return;
+      }
+      const normalised = normaliseImageUrlForContain(value) ?? value;
+      if (isLikelyFloorplanUrl(normalised, index, total)) {
+        result.add(normalised);
+      }
+    });
+    return result;
+  }, [imageUrls]);
+
+  const combinedContainHints = useMemo(() => {
+    if (
+      normalisedContainHints.size === 0 &&
+      autoContainHints.size === 0 &&
+      dimensionContainHints.size === 0
+    ) {
+      return dimensionContainHints;
+    }
+    const merged = new Set<string>();
+    normalisedContainHints.forEach((value) => merged.add(value));
+    autoContainHints.forEach((value) => merged.add(value));
+    dimensionContainHints.forEach((value) => merged.add(value));
+    return merged;
+  }, [normalisedContainHints, autoContainHints, dimensionContainHints]);
+
   const shouldContainImage = useMemo(() => {
     if (!currentImage) {
       return false;
     }
-    if (containHints?.has(currentImage)) {
+    const normalised = normaliseImageUrlForContain(currentImage) ?? currentImage;
+    if (combinedContainHints.has(normalised)) {
       return true;
     }
-    const normalised = normaliseImageUrlForContain(currentImage) ?? currentImage;
     return matchesFloorplanKeyword(normalised);
-  }, [containHints, currentImage]);
+  }, [combinedContainHints, currentImage]);
   const heading = (() => {
     const trimmedAddress = listingAddress?.trim();
     if (trimmedAddress) {
@@ -3054,6 +3461,7 @@ function ListingPreviewCard({
             <img
               src={currentImage}
               alt={altText}
+              onLoad={handleImageLoad}
               className={shouldContainImage ? "listing-image listing-image-contain" : "listing-image"}
             />
             {imageCount > 1 ? (
@@ -3094,20 +3502,54 @@ function ListingPreviewCard({
   );
 }
 
+interface KeyTooltipProps {
+  tooltip: string;
+  tooltipId: string;
+  className?: string;
+}
+
+function KeyTooltip({ tooltip, tooltipId, className }: KeyTooltipProps) {
+  const tooltipClassName = className ? `key-tooltip ${className}` : "key-tooltip";
+  return (
+    <span className={tooltipClassName}>
+      <span className="key-info" aria-hidden="true">
+        ?
+      </span>
+      <div className="key-tooltip-bubble" role="tooltip" id={tooltipId}>
+        {tooltip}
+      </div>
+    </span>
+  );
+}
+
 interface FormFieldProps {
   label: string;
   value: string;
   placeholder?: string;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   disabled?: boolean;
+  tooltip?: string;
 }
 
-function FormField({ label, value, placeholder, onChange, disabled }: FormFieldProps) {
+function FormField({ label, value, placeholder, onChange, disabled, tooltip }: FormFieldProps) {
+  const reactId = useId();
+  const tooltipId = tooltip ? `${reactId}-tooltip` : undefined;
   const fieldClass = disabled ? "form-field form-field-disabled" : "form-field";
   return (
     <label className={fieldClass}>
-      <span>{label}</span>
-      <input value={value} placeholder={placeholder} onChange={onChange} disabled={disabled} />
+      <span className="form-field-label">
+        <span className="form-field-label-text">{label}</span>
+        {tooltipId && tooltip ? (
+          <KeyTooltip tooltip={tooltip} tooltipId={tooltipId} className="form-field-tooltip" />
+        ) : null}
+      </span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={onChange}
+        disabled={disabled}
+        aria-describedby={tooltipId}
+      />
     </label>
   );
 }
@@ -3137,21 +3579,185 @@ function DecisionList({ title, items, empty, showPlaceholder = true }: DecisionL
   );
 }
 
+interface ManualProspectusCardProps {
+  file: File | null;
+  onFileChange: (file: File | null) => void;
+  onAnalyze: () => void;
+  onClear: () => void;
+  loading: boolean;
+  error: string | null;
+  success: boolean;
+}
+
+function formatFileSize(bytes: number): string {
+  const kilobytes = bytes / 1024;
+  if (kilobytes < 1024) {
+    const rounded = kilobytes < 10 ? kilobytes.toFixed(1) : Math.round(kilobytes);
+    return `${rounded} kB`;
+  }
+  const megabytes = kilobytes / 1024;
+  const rounded = megabytes < 10 ? megabytes.toFixed(1) : Math.round(megabytes);
+  return `${rounded} MB`;
+}
+
+function ManualProspectusCard({
+  file,
+  onFileChange,
+  onAnalyze,
+  onClear,
+  loading,
+  error,
+  success,
+}: ManualProspectusCardProps) {
+  const inputId = useId();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const analyzeDisabled = loading || !file;
+  const fileLabel = file ? `${file.name}${file.size ? ` • ${formatFileSize(file.size)}` : ""}` : null;
+
+  useEffect(() => {
+    if (!file && fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [file]);
+
+  const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextFile = event.target.files?.[0] ?? null;
+    onFileChange(nextFile);
+    event.target.value = "";
+  };
+
+  const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    if (loading) {
+      return;
+    }
+    const nextFile = event.dataTransfer?.files?.[0] ?? null;
+    if (!nextFile) {
+      return;
+    }
+    onFileChange(nextFile);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    if (loading) {
+      return;
+    }
+    event.dataTransfer.dropEffect = "copy";
+    if (!dragActive) {
+      setDragActive(true);
+    }
+  };
+
+  const handleDragLeave = () => {
+    if (dragActive) {
+      setDragActive(false);
+    }
+  };
+
+  const uploadClassName = [
+    "manual-prospectus-upload",
+    dragActive ? "manual-prospectus-upload--drag" : null,
+    loading ? "manual-prospectus-upload--disabled" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className="prospectus-card prospectus-card-span manual-prospectus-card">
+      <div className="prospectus-card-header">
+        <h3>Last opp salgsoppgaven</h3>
+        <span className="prospectus-badge info">Manuell</span>
+      </div>
+      <p className="manual-prospectus-intro">
+        Vi fant ikke salgsoppgaven automatisk. Last opp PDF-dokumentet.
+      </p>
+      <label className="manual-prospectus-label" htmlFor={inputId}>
+        Salgsoppgave (PDF)
+      </label>
+      <label
+        className={uploadClassName}
+        htmlFor={inputId}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        data-disabled={loading ? "true" : undefined}
+      >
+        <input
+          id={inputId}
+          ref={fileInputRef}
+          className="manual-prospectus-upload-input"
+          type="file"
+          accept="application/pdf"
+          onChange={handleInputChange}
+          disabled={loading}
+        />
+        <div className="manual-prospectus-upload-content">
+          {file ? (
+            <>
+              <span className="manual-prospectus-upload-file">{fileLabel}</span>
+            </>
+          ) : (
+            <span className="manual-prospectus-upload-title">Klikk eller slipp PDF her</span>
+          )}
+        </div>
+      </label>
+      {fileLabel ? (
+        <p className="manual-prospectus-file-info">Valgt fil: {fileLabel}</p>
+      ) : (
+        <p className="manual-prospectus-file-hint">Kun PDF-filer støttes.</p>
+      )}
+      <div className="prospectus-actions manual-prospectus-actions">
+        <button
+          type="button"
+          className="prospectus-action primary"
+          onClick={onAnalyze}
+          disabled={analyzeDisabled}
+        >
+          {loading ? "Analyserer…" : "Analyser PDF"}
+        </button>
+        <button
+          type="button"
+          className="prospectus-action secondary"
+          onClick={onClear}
+          disabled={loading || !file}
+        >
+          Fjern fil
+        </button>
+      </div>
+      {error ? <p className="manual-prospectus-feedback error">{error}</p> : null}
+      {!error && success ? (
+        <p className="manual-prospectus-feedback success">TG-punktene er oppdatert.</p>
+      ) : null}
+    </div>
+  );
+}
+
 interface ProspectusCardProps {
   title: string;
   items: string[];
   empty: string;
   badge?: { label: string; tone: "danger" | "warn" | "info" };
   className?: string;
+  tooltip?: string;
 }
 
-function ProspectusCard({ title, items, empty, badge, className }: ProspectusCardProps) {
+function ProspectusCard({ title, items, empty, badge, className, tooltip }: ProspectusCardProps) {
   const hasItems = items.length > 0;
   const cardClass = className ? `prospectus-card ${className}` : "prospectus-card";
+  const reactId = useId();
+  const tooltipId = tooltip ? `${reactId}-tooltip` : undefined;
   return (
     <div className={cardClass}>
       <div className="prospectus-card-header">
-        <h3>{title}</h3>
+        <h3 className="prospectus-card-title">
+          <span>{title}</span>
+          {tooltipId && tooltip ? (
+            <KeyTooltip tooltip={tooltip} tooltipId={tooltipId} className="prospectus-card-tooltip" />
+          ) : null}
+        </h3>
         {badge ? <span className={`prospectus-badge ${badge.tone}`}>{badge.label}</span> : null}
       </div>
       {hasItems ? (
@@ -3377,11 +3983,31 @@ function sanitizeProspectusEntry(value: string): string {
   return result;
 }
 
-function sanitizeProspectusItems(items: readonly string[], limit = 8): string[] {
+type ProspectusSanitizeOptions = {
+  limit?: number;
+  preserveLabels?: boolean;
+};
+
+function sanitizeProspectusItems(
+  items: readonly string[],
+  limitOrOptions?: number | ProspectusSanitizeOptions,
+): string[] {
+  const options: ProspectusSanitizeOptions =
+    typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions ?? {};
+  const preserveLabels = options.preserveLabels ?? false;
+  const effectiveLimit =
+    options.limit !== undefined ? options.limit : preserveLabels ? undefined : 8;
   const seen = new Set<string>();
   const cleaned: string[] = [];
   for (const item of items) {
-    const sanitized = sanitizeProspectusEntry(item).trim();
+    if (item === null || item === undefined) {
+      continue;
+    }
+    const raw = (typeof item === "string" ? item : String(item)).trim();
+    if (!raw) {
+      continue;
+    }
+    const sanitized = sanitizeProspectusEntry(raw).trim();
     if (!sanitized || !isSpecificProspectusEntry(sanitized)) {
       continue;
     }
@@ -3390,8 +4016,8 @@ function sanitizeProspectusItems(items: readonly string[], limit = 8): string[] 
       continue;
     }
     seen.add(key);
-    cleaned.push(sanitized);
-    if (cleaned.length >= limit) {
+    cleaned.push(preserveLabels ? raw : sanitized);
+    if (typeof effectiveLimit === "number" && effectiveLimit > 0 && cleaned.length >= effectiveLimit) {
       break;
     }
   }

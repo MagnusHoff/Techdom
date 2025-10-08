@@ -36,6 +36,7 @@ from techdom.domain.analysis_service import (
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
 from techdom.infrastructure.db import ensure_auth_schema, init_models
+from techdom.processing.ai import analyze_prospectus
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
@@ -80,6 +81,19 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+
+
+class ProspectusManualReq(BaseModel):
+    text: str = ""
+
+
+class ProspectusManualResp(BaseModel):
+    summary_md: str
+    tg3: List[str]
+    tg2: List[str]
+    upgrades: List[str]
+    watchouts: List[str]
+    questions: List[str]
 
 
 class AnalysisReq(BaseModel):
@@ -179,6 +193,39 @@ class FeedbackPayload(BaseModel):
         if not cleaned:
             raise ValueError("Meldingen kan ikke være tom.")
         return cleaned
+
+
+@app.post("/prospectus/manual", response_model=ProspectusManualResp)
+def prospectus_manual(payload: ProspectusManualReq) -> ProspectusManualResp:
+    try:
+        result = analyze_prospectus(payload.text or "")
+    except Exception as exc:  # pragma: no cover - defensive catch
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke analysere salgsoppgaven.",
+        ) from exc
+
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke analysere salgsoppgaven.",
+        )
+
+    summary = str(result.get("summary_md") or "")
+    tg3 = [str(item) for item in (result.get("tg3") or [])]
+    tg2 = [str(item) for item in (result.get("tg2") or [])]
+    upgrades = [str(item) for item in (result.get("upgrades") or [])]
+    watchouts = [str(item) for item in (result.get("watchouts") or [])]
+    questions = [str(item) for item in (result.get("questions") or [])]
+
+    return ProspectusManualResp(
+        summary_md=summary,
+        tg3=tg3,
+        tg2=tg2,
+        upgrades=upgrades,
+        watchouts=watchouts,
+        questions=questions,
+    )
 
 
 @app.post("/analysis", response_model=AnalysisResp)

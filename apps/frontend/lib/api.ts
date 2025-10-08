@@ -14,6 +14,7 @@ import type {
   UpdateUsernamePayload,
   EmailVerificationConfirmPayload,
   StoredAnalysesResponse,
+  ProspectusExtract,
 } from "./types";
 
 function withApiPrefix(path: string): string {
@@ -180,6 +181,19 @@ export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisRes
     body: JSON.stringify(payload),
   });
   return handleResponse<AnalysisResponse>(res);
+}
+
+export interface ManualProspectusPayload {
+  text: string;
+}
+
+export async function analyzeProspectusText(payload: ManualProspectusPayload): Promise<ProspectusExtract> {
+  const res = await apiFetch("/prospectus/manual", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<ProspectusExtract>(res);
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
