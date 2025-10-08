@@ -274,6 +274,10 @@ export default function LandingPage() {
                   user={user}
                   totalAnalyses={analysesForBadge}
                   statusError={statusError}
+                  onUserUpdate={(updated) => {
+                    setUser(updated);
+                    emitUserUpdate(updated);
+                  }}
                 />
                 <div className="status-card-stack">
                   <MetricCard label="Totalt på plattformen" value={formattedTotalAnalyses} variant="square" />
@@ -320,9 +324,10 @@ interface MinStatusCardProps {
   user: AuthUser;
   totalAnalyses: number;
   statusError: string | null;
+  onUserUpdate: (user: AuthUser) => void;
 }
 
-function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps) {
+function MinStatusCard({ user, totalAnalyses, statusError, onUserUpdate }: MinStatusCardProps) {
   const initials = userInitials(user);
   const name = userDisplayName(user);
   const level = resolveUserLevel(totalAnalyses);
@@ -351,10 +356,7 @@ function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps)
             avatarColor={user.avatar_color ?? null}
             className="status-card__avatar"
             label="Velg emoji for avatar"
-            onUserUpdate={(updated) => {
-              setUser(updated);
-              emitUserUpdate(updated);
-            }}
+            onUserUpdate={onUserUpdate}
           />
         </div>
 
