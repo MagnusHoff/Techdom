@@ -1105,8 +1105,10 @@ def fetch_pdf_with_browser_filtered(
         lo = (u or "").lower()
         if any(d in lo for d in deny):
             return False
-        if allow:
-            return any(a in lo for a in allow)
+        if allow and not any(a in lo for a in allow):
+            if ".pdf" in lo or PDF_URL_HINTS.search(u or ""):
+                return True
+            return False
         return True
 
     pdf_bytes: bytes | None = None

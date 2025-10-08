@@ -438,6 +438,7 @@ async def change_password(
     return user
 
 
+
 async def set_user_password(
     session: AsyncSession,
     *,
@@ -468,6 +469,7 @@ async def delete_user(
 
     await session.delete(user)
     await session.commit()
+
 
 
 async def get_user_by_email(

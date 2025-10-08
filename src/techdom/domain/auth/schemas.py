@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import re
-
 from datetime import datetime
+import re
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -97,6 +96,7 @@ class ChangePassword(BaseModel):
         return value
 
 
+
 class AdminUpdateUser(BaseModel):
     username: str = Field(min_length=3, max_length=20)
 
@@ -126,6 +126,7 @@ class AdminChangeUserPassword(BaseModel):
                 "Passordet må være minst 8 tegn og inneholde store og små bokstaver, tall og spesialtegn."
             )
         return value
+
 
 
 class Token(BaseModel):

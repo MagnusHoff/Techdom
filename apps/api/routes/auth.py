@@ -137,22 +137,6 @@ async def read_me(
     return schemas.UserRead.model_validate(current_user)
 
 
-@router.get(
-    "/me/status",
-    response_model=schemas.UserStatus,
-    summary="Hent status for analyser til innlogget bruker",
-)
-async def read_my_status(
-    current_user: User = Depends(auth_service.get_current_active_user),
-) -> schemas.UserStatus:
-    summary = history.summarise(window_days=7)
-    return schemas.UserStatus(
-        total_user_analyses=summary.total,
-        total_last_7_days=summary.last_7_days,
-        last_run_at=summary.last_run_at,
-    )
-
-
 @router.patch(
     "/me/username",
     response_model=schemas.UserRead,
@@ -215,6 +199,24 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
         ) from exc
+
+
+@router.get(
+    "/me/status",
+    response_model=schemas.UserStatus,
+    summary="Hent status for analyser til innlogget bruker",
+)
+async def read_my_status(
+    current_user: User = Depends(auth_service.get_current_active_user),
+) -> schemas.UserStatus:
+    summary = history.summarise(window_days=7)
+    return schemas.UserStatus(
+        total_user_analyses=summary.total,
+        total_last_7_days=summary.last_7_days,
+        last_run_at=summary.last_run_at,
+    )
+
+
 @router.get(
     "/admin/ping",
     response_model=schemas.UserRead,

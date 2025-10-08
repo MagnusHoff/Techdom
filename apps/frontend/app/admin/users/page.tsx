@@ -15,7 +15,7 @@ import type { AuthUser } from "@/lib/types";
 
 const ROLE_LABELS: Record<AuthUser["role"], string> = {
   user: "Standard",
-  plus: "Pro",
+  plus: "Pluss",
   admin: "Admin",
 };
 
@@ -325,6 +325,7 @@ export default function UserAdminPage() {
                     </tr>
                   </thead>
                   <tbody>
+
                     {users.map((user) => {
                       const usernameValue = usernameDrafts[user.id] ?? "";
                       const passwordValue = passwordDrafts[user.id] ?? "";
@@ -427,6 +428,7 @@ export default function UserAdminPage() {
                         </tr>
                       );
                     })}
+
                   </tbody>
                 </table>
               ) : null}
