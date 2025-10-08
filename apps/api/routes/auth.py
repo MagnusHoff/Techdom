@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from datetime import timedelta
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ from techdom.services.auth import (
     InvalidPasswordError,
     InvalidUsernameError,
     UserNotFoundError,
+    EmailVerificationRateLimitedError,
 )
 from techdom.infrastructure.email import (
     send_email_verification_email,
@@ -407,6 +410,49 @@ async def password_reset_confirm(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Ugyldig eller utløpt token"
         ) from exc
+
+
+@router.post(
+    "/verify-email/resend",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Send e-postverifisering på nytt",
+)
+async def resend_email_verification(
+    payload: schemas.EmailVerificationResend,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    normalized_email = payload.email.strip().lower()
+    user = await auth_service.get_user_by_email(session, email=normalized_email)
+    if not user or user.is_email_verified:
+        return {"status": "accepted"}
+
+    try:
+        verification = await auth_service.generate_email_verification_token(
+            session,
+            user_id=user.id,
+            min_interval=timedelta(seconds=30),
+        )
+    except EmailVerificationRateLimitedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Vent {exc.retry_after_seconds} sekunder før du prøver igjen.",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    if verification:
+        email_address, token = verification
+        verification_url = auth_service.build_email_verification_url(token)
+        if verification_url:
+            background_tasks.add_task(send_email_verification_email, email_address, verification_url)
+        else:
+            logger.warning(
+                "EMAIL_VERIFICATION_URL_BASE not configured; resend token for %s: %s",
+                email_address,
+                token,
+            )
+
+    return {"status": "accepted"}
 
 
 @router.post(

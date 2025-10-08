@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { PageContainer, SiteFooter, SiteHeader } from "./components/chrome";
 import { fetchCurrentUser, fetchStats, fetchUserStatus } from "@/lib/api";
 import { extractFinnkode } from "@/lib/listing";
+import { userBadgeLabel, userDisplayName, userInitials } from "@/lib/user";
 import type { AuthUser, UserStatusResponse } from "@/lib/types";
 
 const INITIAL_ANALYSED_COUNT = 48;
@@ -14,10 +15,6 @@ const USER_UPDATED_EVENT = "techdom:user-updated";
 
 const NUMBER_FORMATTER = new Intl.NumberFormat("nb-NO", {
   maximumFractionDigits: 0,
-});
-
-const RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat("nb-NO", {
-  numeric: "auto",
 });
 
 function formatNumber(value: number): string {
@@ -28,50 +25,6 @@ function formatNumber(value: number): string {
   }
 }
 
-function formatRelativeTime(timestamp: string | null): string {
-  if (!timestamp) {
-    return "Ingen kjøringer ennå";
-  }
-  const timeValue = Date.parse(timestamp);
-  if (Number.isNaN(timeValue)) {
-    return "Ukjent tidspunkt";
-  }
-
-  const now = Date.now();
-  const diffMs = timeValue - now;
-  const diffMinutes = Math.round(diffMs / (60 * 1000));
-
-  if (Math.abs(diffMinutes) < 1) {
-    return "Akkurat nå";
-  }
-
-  if (Math.abs(diffMinutes) < 60) {
-    return RELATIVE_TIME_FORMATTER.format(diffMinutes, "minute");
-  }
-
-  const diffHours = Math.round(diffMinutes / 60);
-  if (Math.abs(diffHours) < 24) {
-    return RELATIVE_TIME_FORMATTER.format(diffHours, "hour");
-  }
-
-  const diffDays = Math.round(diffHours / 24);
-  if (Math.abs(diffDays) < 14) {
-    return RELATIVE_TIME_FORMATTER.format(diffDays, "day");
-  }
-
-  const diffWeeks = Math.round(diffDays / 7);
-  if (Math.abs(diffWeeks) < 8) {
-    return RELATIVE_TIME_FORMATTER.format(diffWeeks, "week");
-  }
-
-  const diffMonths = Math.round(diffDays / 30);
-  if (Math.abs(diffMonths) < 18) {
-    return RELATIVE_TIME_FORMATTER.format(diffMonths, "month");
-  }
-
-  const diffYears = Math.round(diffDays / 365);
-  return RELATIVE_TIME_FORMATTER.format(diffYears, "year");
-}
 
 export default function LandingPage() {
   const router = useRouter();
@@ -210,10 +163,14 @@ export default function LandingPage() {
     return formatNumber(status.total_last_7_days);
   }, [status]);
 
-  const lastRunRelative = useMemo(() => formatRelativeTime(status?.last_run_at ?? null), [status?.last_run_at]);
-
   const showSkeleton = !userResolved || (user !== null && statusLoading);
   const showMinStatusCard = Boolean(user);
+  const statusGridClassName = [
+    "landing-status-grid",
+    !showMinStatusCard ? "landing-status-grid--solo" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <main className="page-gradient">
@@ -243,60 +200,35 @@ export default function LandingPage() {
             </button>
           </form>
           {error ? <p className="error-text">{error}</p> : <div className="error-spacer" />}
-
-          <div className="landing-status-grid">
+          <div className={statusGridClassName}>
             {showSkeleton ? (
+              showMinStatusCard ? (
+                <>
+                  <StatusCardSkeleton />
+                  <div className="status-card-stack">
+                    <StatusCardSkeleton className="status-card--square" />
+                    <StatusCardSkeleton className="status-card--square" />
+                    <StatusCardSkeleton className="status-card--square" />
+                  </div>
+                </>
+              ) : (
+                <StatusCardSkeleton />
+              )
+            ) : showMinStatusCard && user ? (
               <>
-                <div className="status-card status-card--skeleton" aria-hidden="true" />
-                <div className="status-card status-card--skeleton" aria-hidden="true" />
+                <MinStatusCard
+                  user={user}
+                  totalAnalyses={status?.total_user_analyses ?? 0}
+                  statusError={statusError}
+                />
+                <div className="status-card-stack">
+                  <MetricCard label="Totalt på plattformen" value={formattedTotalAnalyses} variant="square" />
+                  <MetricCard label="Dine analyser totalt" value={formattedUserTotal} variant="square" />
+                  <MetricCard label="Analyser siste 7 dager" value={formattedRecentCount} variant="square" />
+                </div>
               </>
             ) : (
-              <>
-                <div className="status-card status-card--highlight">
-                  <span className="status-card__label">Eiendommer analysert</span>
-                  <strong className="status-card__value">{formattedTotalAnalyses}</strong>
-                </div>
-                {showMinStatusCard ? (
-                  <div className="status-card status-card--personal">
-                    <div className="status-card__header">
-                      <span className="status-card__title">Min status</span>
-                      <div className="status-card__metric">
-                        <span className="status-card__metric-label">Analyser totalt</span>
-                        <span className="status-card__value status-card__value--large">
-                          {formattedUserTotal}
-                        </span>
-                      </div>
-                    </div>
-
-                    {statusError ? (
-                      <p className="status-card__error" role="status">
-                        {statusError}
-                      </p>
-                    ) : status && status.total_user_analyses === 0 ? (
-                      <p className="status-card__empty">Ingen analyser ennå</p>
-                    ) : (
-                      <div className="status-card__badges">
-                        <span className="status-badge">
-                          <span className="status-badge__label">Siste 7 dager</span>
-                          <span className="status-badge__value">{formattedRecentCount}</span>
-                        </span>
-                        <span className="status-badge">
-                          <span className="status-badge__label">Sist kjørt</span>
-                          <span className="status-badge__value">
-                            {status?.last_run_at ? lastRunRelative : "Ingen kjøringer ennå"}
-                          </span>
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="status-card__footer">
-                      <Link className="status-card__cta" href="/mine-analyser">
-                        Gå til Lagrede analyser
-                      </Link>
-                    </div>
-                  </div>
-                ) : null}
-              </>
+              <MetricCard label="Eiendommer analysert" value={formattedTotalAnalyses} />
             )}
           </div>
         </section>
@@ -305,4 +237,86 @@ export default function LandingPage() {
       </PageContainer>
     </main>
   );
+}
+
+interface MetricCardProps {
+  label: string;
+  value: string;
+  variant?: "highlight" | "square";
+}
+
+function MetricCard({ label, value, variant = "highlight" }: MetricCardProps) {
+  const className = [
+    "status-card",
+    "status-card--highlight",
+    variant === "square" ? "status-card--square" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <article className={className} aria-live="polite">
+      <span className="status-card__label">{label}</span>
+      <strong className="status-card__value">{value}</strong>
+    </article>
+  );
+}
+
+interface MinStatusCardProps {
+  user: AuthUser;
+  totalAnalyses: number;
+  statusError: string | null;
+}
+
+function MinStatusCard({ user, totalAnalyses, statusError }: MinStatusCardProps) {
+  const initials = userInitials(user);
+  const name = userDisplayName(user);
+  const badge = userBadgeLabel(totalAnalyses);
+
+  return (
+    <article className="status-card status-card--personal" aria-live="polite">
+      <h2 className="status-card__title sr-only">Min status</h2>
+
+      <div className="status-card__personal-content">
+        <div className="status-card__avatar-group">
+          <div className="status-card__avatar" aria-hidden="true">
+            <span>{initials}</span>
+          </div>
+        </div>
+
+        <div className="status-card__personal-details">
+          <p className="status-card__name">{name}</p>
+          <span className="status-card__badge" aria-label={`Badge: ${badge}`}>
+            {badge}
+          </span>
+        </div>
+      </div>
+
+      {statusError ? (
+        <p className="status-card__message status-card__message--error" role="status">
+          {statusError}
+        </p>
+      ) : null}
+
+      <div className="status-card__actions">
+        <Link className="status-card__action" href="/mine-analyser">
+          Mine analyser
+        </Link>
+        <Link className="status-card__action" href="/mine-venner">
+          Mine venner
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+interface StatusCardSkeletonProps {
+  className?: string;
+}
+
+function StatusCardSkeleton({ className = "" }: StatusCardSkeletonProps) {
+  const skeletonClassName = ["status-card", "status-card--skeleton", className]
+    .filter(Boolean)
+    .join(" ");
+  return <div className={skeletonClassName} aria-hidden="true" />;
 }

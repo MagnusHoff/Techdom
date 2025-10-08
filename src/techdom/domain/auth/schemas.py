@@ -46,6 +46,8 @@ class UserRead(UserBase):
     role: UserRole
     is_active: bool
     is_email_verified: bool
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -167,3 +169,7 @@ class PasswordResetConfirm(BaseModel):
 
 class EmailVerificationConfirm(BaseModel):
     token: str = Field(min_length=1)
+
+
+class EmailVerificationResend(BaseModel):
+    email: EmailStr

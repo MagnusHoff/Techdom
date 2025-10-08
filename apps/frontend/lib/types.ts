@@ -148,6 +148,8 @@ export interface AuthUser {
   role: "user" | "plus" | "admin";
   is_active: boolean;
   is_email_verified: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AuthResponse {
@@ -186,6 +188,10 @@ export interface ChangePasswordPayload {
 
 export interface EmailVerificationConfirmPayload {
   token: string;
+}
+
+export interface EmailVerificationResendPayload {
+  email: string;
 }
 
 export interface AdminUpdateUserPayload {
