@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import parse_qs, urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse
+import requests
+try:
+    from pydantic import BaseModel, EmailStr, Field, field_validator
+except ImportError:  # pragma: no cover - compatibility with Pydantic v1
+    from pydantic import BaseModel, EmailStr, Field, validator as field_validator  # type: ignore[assignment]
 
 from apps.api import runtime
 
@@ -13,6 +21,13 @@ _bootstrap = runtime.ensure_bootstrap()
 runtime.load_environment()
 
 from apps.api.routes import auth_router
+from techdom.services.feedback import (
+    FeedbackConfigError,
+    FeedbackDeliveryError,
+    FeedbackMailConfig,
+    send_feedback_email,
+)
+from techdom.ingestion.scrape import scrape_finn_key_numbers
 from techdom.domain.analysis_service import (
     AnalysisDecisionContext,
     compute_analysis,
@@ -20,7 +35,7 @@ from techdom.domain.analysis_service import (
 )
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
-from techdom.infrastructure.db import init_models
+from techdom.infrastructure.db import ensure_auth_schema, init_models
 
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
@@ -29,6 +44,7 @@ job_service = ProspectJobService()
 @app.on_event("startup")
 async def _startup() -> None:
     await init_models()
+    await ensure_auth_schema()
 
 
 def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
@@ -130,8 +146,39 @@ class AnalyzeReq(BaseModel):
     finnkode: str
 
 
+class FinnKeyNumbersReq(BaseModel):
+    finnkode: Optional[str] = None
+    url: Optional[str] = None
+
+
 class StatsResp(BaseModel):
     total_analyses: int
+
+
+class FeedbackCategory(str, Enum):
+    IDEA = "idea"
+    PROBLEM = "problem"
+    OTHER = "other"
+
+
+FEEDBACK_CATEGORY_LABELS: dict[FeedbackCategory, str] = {
+    FeedbackCategory.IDEA: "Idé",
+    FeedbackCategory.PROBLEM: "Problem",
+    FeedbackCategory.OTHER: "Annet",
+}
+
+
+class FeedbackPayload(BaseModel):
+    category: FeedbackCategory
+    message: str = Field(..., min_length=1, max_length=5000)
+    email: Optional[EmailStr] = None
+
+    @field_validator("message")
+    def _strip_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Meldingen kan ikke være tom.")
+        return cleaned
 
 
 @app.post("/analysis", response_model=AnalysisResp)
@@ -161,23 +208,127 @@ def analyze(req: AnalyzeReq):
     return {"job_id": job.id, "status": job.status}
 
 
+def _build_finn_url(finnkode: str) -> str:
+    return f"https://www.finn.no/realestate/homes/ad.html?finnkode={finnkode}"
+
+
+def _extract_finnkode_from_url(url: str) -> Optional[str]:
+    try:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        candidate = params.get("finnkode")
+        if not candidate:
+            return None
+        value = (candidate[0] or "").strip()
+        return value if value.isdigit() else None
+    except Exception:
+        return None
+
+
+def _has_key_number_values(data: Dict[str, Any]) -> bool:
+    for value in data.values():
+        if value not in (None, "", [], {}):
+            return True
+    return False
+
+
+@app.post("/finn/key-numbers")
+def finn_key_numbers(payload: FinnKeyNumbersReq):
+    raw_finnkode = (payload.finnkode or "").strip()
+    raw_url = (payload.url or "").strip()
+
+    if not raw_url and not raw_finnkode:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Oppgi enten URL eller finnkode.")
+
+    finnkode: Optional[str] = None
+    url: str
+
+    if raw_url:
+        url = raw_url
+        finnkode = _extract_finnkode_from_url(raw_url)
+    else:
+        if not raw_finnkode.isdigit():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ugyldig finnkode.")
+        finnkode = raw_finnkode
+        url = _build_finn_url(raw_finnkode)
+
+    try:
+        key_numbers = scrape_finn_key_numbers(url)
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else None
+        detail = f"Kunne ikke hente nøkkeltall fra FINN (HTTP {code})." if code else "Kunne ikke hente nøkkeltall fra FINN."
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Kunne ikke hente nøkkeltall fra FINN.") from exc
+
+    available = _has_key_number_values(key_numbers)
+
+    return {
+        "finnkode": finnkode,
+        "url": url,
+        "available": available,
+        "key_numbers": key_numbers,
+    }
+
+
 @app.get("/status/{job_id}")
-def status(job_id: str):
+def get_job_status(job_id: str):
     job = job_service.get(job_id)
     if not job:
         raise HTTPException(404, "unknown job")
     return job
 
 
+def _prospekt_path_for(finnkode: str) -> Path:
+    if not finnkode.isdigit():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ugyldig finnkode")
+    return Path("data/cache/prospekt") / f"{finnkode}.pdf"
+
+
 @app.get("/pdf/{finnkode}")
 def pdf_link(finnkode: str):
-    path = f"data/cache/prospekt/{finnkode}.pdf"
-    if not os.path.exists(path):
-        raise HTTPException(404, "not ready")
-    return {"path": path}
+    path = _prospekt_path_for(finnkode)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not ready")
+    return {"path": str(path), "url": f"/files/{finnkode}.pdf"}
+
+
+@app.get("/files/{finnkode}.pdf")
+def download_prospect(finnkode: str):
+    path = _prospekt_path_for(finnkode)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not ready")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=f"{finnkode}.pdf",
+    )
 
 
 @app.get("/stats", response_model=StatsResp)
 def stats() -> StatsResp:
     total = get_total_count()
     return StatsResp(total_analyses=total)
+
+
+@app.post("/feedback", status_code=status.HTTP_202_ACCEPTED)
+def feedback(payload: FeedbackPayload) -> dict[str, str]:
+    try:
+        mail_config = FeedbackMailConfig.from_env()
+    except FeedbackConfigError as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    category_label = FEEDBACK_CATEGORY_LABELS[payload.category]
+    subject = f"Ny tilbakemelding: {category_label}"
+    lines = [f"Kategori: {category_label}", "", payload.message]
+    if payload.email:
+        lines.extend(["", f"E-post fra bruker: {payload.email}"])
+
+    body = "\n".join(lines)
+
+    try:
+        send_feedback_email(subject, body, reply_to=payload.email, config=mail_config)
+    except FeedbackDeliveryError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Kunne ikke sende tilbakemeldingen.") from exc
+
+    return {"status": "sent"}

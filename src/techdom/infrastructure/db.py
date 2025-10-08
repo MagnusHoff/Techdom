@@ -4,8 +4,9 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, Tuple
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.engine import make_url
+from sqlalchemy.engine.url import URL
 
 
 logger = logging.getLogger(__name__)
@@ -23,27 +26,43 @@ def _should_echo_sql() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _resolve_database_url() -> str:
+def _normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
+    """Normalise database URL for async usage."""
+
+    url: URL = make_url(raw)
+    driver = url.drivername
+
+    if driver in {"postgres", "postgresql", "postgresql+psycopg", "postgresql+psycopg2", "postgresql+asyncpg"}:
+        url = url.set(drivername="postgresql+psycopg_async")
+
+    return url.render_as_string(hide_password=False), {}
+
+
+def _resolve_database_url() -> Tuple[str, Dict[str, Any]]:
     url = os.getenv("DATABASE_URL")
     if url:
-        return url
+        return _normalise_database_url(url)
 
     sqlite_path = Path(os.getenv("LOCAL_SQLITE_PATH", "data/local.db")).resolve()
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     logger.warning(
         "DATABASE_URL is not set. Falling back to local SQLite database at %s", sqlite_path
     )
-    return f"sqlite+aiosqlite:///{sqlite_path}"
+    return f"sqlite+aiosqlite:///{sqlite_path}", {}
 
 
-DATABASE_URL = _resolve_database_url()
+DATABASE_URL, CONNECT_ARGS = _resolve_database_url()
 
 
 class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
 
 
-engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=_should_echo_sql())
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL,
+    echo=_should_echo_sql(),
+    connect_args=CONNECT_ARGS,
+)
 SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
@@ -56,6 +75,50 @@ async def init_models() -> None:
     """Create database tables if they do not already exist."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+
+
+def _ensure_users_schema(sync_conn) -> None:
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("users"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    if "username" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR(150);"))
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username "
+                "ON users (username) WHERE username IS NOT NULL;"
+            )
+        )
+        columns.add("username")
+
+    if "username_canonical" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN username_canonical VARCHAR(150);"))
+        sync_conn.execute(
+            text(
+                "UPDATE users SET username_canonical = LOWER(username) WHERE username IS NOT NULL;"
+            )
+        )
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_username_canonical "
+                "ON users (username_canonical) WHERE username_canonical IS NOT NULL;"
+            )
+        )
+
+    if "is_email_verified" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;"
+            )
+        )
+
+
+async def ensure_auth_schema() -> None:
+    """Ensure backward compatible auth schema (e.g. username column)."""
+    async with engine.begin() as connection:
+        await connection.run_sync(_ensure_users_schema)
 
 
 @asynccontextmanager

@@ -16,6 +16,27 @@ export interface ProspectusExtract {
   upgrades?: string[];
   watchouts?: string[];
   questions?: string[];
+  links?: ProspectusLinks;
+}
+
+export interface ProspectusLinks {
+  salgsoppgave_pdf?: string | null;
+  confidence?: number | null;
+  message?: string | null;
+}
+
+export type KeyFactRaw = {
+  label: string;
+  value: string;
+  order: number;
+};
+
+export interface ListingDetailsDTO extends Record<string, unknown> {
+  address?: string;
+  keyFactsRaw?: KeyFactRaw[];
+  key_facts_raw?: KeyFactRaw[];
+  keyFacts?: Array<Record<string, unknown>>;
+  key_facts?: Array<Record<string, unknown>>;
 }
 
 export interface DecisionUi {
@@ -60,13 +81,32 @@ export interface AnalysisResponse {
   ai_text: string;
 }
 
+export interface StoredAnalysis {
+  id: string;
+  title: string;
+  address: string;
+  image: string | null;
+  savedAt: string | null;
+  totalScore: number | null;
+  riskLevel: string | null;
+  price: number | null;
+  finnkode: string | null;
+  summary: string | null;
+  sourceUrl: string | null;
+}
+
+export interface StoredAnalysesResponse {
+  items: StoredAnalysis[];
+}
+
 export interface ProspectJobResult {
   analysis?: AnalysisResponse;
-  listing?: Record<string, unknown> | null;
+  listing?: ListingDetailsDTO | null;
   ai_extract?: ProspectusExtract | null;
   rent_estimate?: Record<string, unknown> | null;
   interest_estimate?: Record<string, unknown> | null;
   pdf_text_excerpt?: unknown;
+  links?: ProspectusLinks | null;
   [key: string]: unknown;
 }
 
@@ -90,7 +130,68 @@ export interface StatsResponse {
   total_analyses: number;
 }
 
+export interface UserStatusResponse {
+  total_user_analyses: number;
+  total_last_7_days: number;
+  last_run_at: string | null;
+}
+
 export interface AnalyzeJobResponse {
   job_id: string;
   status: string;
+}
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  username?: string | null;
+  role: "user" | "plus" | "admin";
+  is_active: boolean;
+  is_email_verified: boolean;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
+}
+
+export interface AuthErrorResponse {
+  detail?: string;
+  error?: string;
+}
+
+export interface UserListResponse {
+  total: number;
+  items: AuthUser[];
+}
+
+export interface PasswordResetRequestPayload {
+  email: string;
+}
+
+export interface PasswordResetConfirmPayload {
+  token: string;
+  password: string;
+}
+
+export interface UpdateUsernamePayload {
+  username: string;
+}
+
+export interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface EmailVerificationConfirmPayload {
+  token: string;
+}
+
+export interface AdminUpdateUserPayload {
+  username: string;
+}
+
+export interface AdminChangeUserPasswordPayload {
+  newPassword: string;
 }
