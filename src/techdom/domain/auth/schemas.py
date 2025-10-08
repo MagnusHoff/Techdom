@@ -167,3 +167,7 @@ class PasswordResetConfirm(BaseModel):
 
 class EmailVerificationConfirm(BaseModel):
     token: str = Field(min_length=1)
+
+
+class EmailVerificationResend(BaseModel):
+    email: EmailStr

@@ -13,6 +13,7 @@ import type {
   ChangePasswordPayload,
   UpdateUsernamePayload,
   EmailVerificationConfirmPayload,
+  EmailVerificationResendPayload,
   StoredAnalysesResponse,
   AdminChangeUserPasswordPayload,
   AdminUpdateUserPayload,
@@ -143,6 +144,45 @@ export async function verifyEmail(
   }
 
   await handleResponse<unknown>(res);
+}
+
+export async function resendVerificationEmail(
+  payload: EmailVerificationResendPayload,
+): Promise<void> {
+  const res = await apiFetch("/auth/verify-email/resend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 202) {
+    return;
+  }
+
+  if (res.ok) {
+    await handleResponse<unknown>(res);
+    return;
+  }
+
+  const retryAfterHeader = res.headers.get("Retry-After");
+  const raw = await res.text();
+  let message = raw;
+  try {
+    const parsed = JSON.parse(raw) as AuthErrorResponse;
+    message = parsed.detail || parsed.error || raw;
+  } catch {
+    /* ignore parse errors */
+  }
+
+  const error = new Error(message || "Kunne ikke sende verifiseringsmail på nytt.");
+  (error as Error & { status?: number }).status = res.status;
+  if (retryAfterHeader) {
+    const retryAfter = Number.parseInt(retryAfterHeader, 10);
+    if (!Number.isNaN(retryAfter)) {
+      (error as Error & { retryAfter?: number }).retryAfter = retryAfter;
+    }
+  }
+  throw error;
 }
 
 export async function updateUsername(payload: UpdateUsernamePayload): Promise<AuthUser> {

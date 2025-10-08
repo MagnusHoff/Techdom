@@ -446,6 +446,46 @@ main {
   text-decoration: underline;
 }
 
+.login-resend {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  align-items: flex-start;
+}
+
+.login-resend-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(226, 232, 240, 0.75);
+}
+
+.login-resend-button {
+  padding: 0.65rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  background: rgba(30, 64, 175, 0.28);
+  color: rgba(191, 219, 254, 0.95);
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+}
+
+.login-resend-button:hover {
+  transform: translateY(-1px);
+  opacity: 0.95;
+}
+
+.login-resend-button:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  background: rgba(148, 163, 184, 0.22);
+  border-color: rgba(148, 163, 184, 0.32);
+  color: rgba(226, 232, 240, 0.65);
+  transform: none;
+}
+
 .landing-section {
   background: rgba(9, 15, 31, 0.88);
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -533,15 +573,22 @@ main {
 
 .landing-status-grid {
   display: grid;
-  gap: 1.5rem;
-  margin-top: 2.5rem;
   grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+  margin-top: 2.5rem;
+}
+
+.landing-status-grid--solo {
+  justify-items: center;
+}
+
+.landing-status-grid--solo .status-card {
+  width: min(100%, 420px);
 }
 
 @media (min-width: 768px) {
   .landing-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2rem;
     align-items: stretch;
   }
 }
@@ -550,15 +597,15 @@ main {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  border-radius: 24px;
-  padding: 1.6rem 1.75rem;
-  background: rgba(15, 23, 42, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 22px 48px rgba(7, 12, 30, 0.55);
-  backdrop-filter: blur(18px);
-  min-height: 220px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  border-radius: 1.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(24px);
+  min-height: 0;
+  color: rgba(248, 250, 252, 0.92);
 }
 
 @media (min-width: 768px) {
@@ -567,160 +614,159 @@ main {
   }
 }
 
-.status-card--highlight {
-  justify-content: center;
+.status-card--global {
   align-items: center;
+  justify-content: center;
   text-align: center;
-  gap: 1.1rem;
-  box-shadow: inset 0 0 36px rgba(56, 189, 248, 0.12), 0 24px 56px rgba(2, 6, 23, 0.55);
+  gap: 1.25rem;
 }
 
 .status-card--personal {
-  gap: 1.4rem;
-}
-
-.status-card--skeleton {
-  overflow: hidden;
-  background: rgba(15, 23, 42, 0.4);
-  border-color: rgba(148, 163, 184, 0.14);
-  box-shadow: none;
-}
-
-.status-card--skeleton::after {
-  content: "";
-  position: absolute;
-  inset: -20% 0;
-  background: linear-gradient(
-    120deg,
-    rgba(148, 163, 184, 0.08) 0%,
-    rgba(148, 163, 184, 0.22) 45%,
-    rgba(148, 163, 184, 0.08) 100%
-  );
-  transform: translateX(-60%);
-  animation: statusShimmer 1.6s ease-in-out infinite;
-}
-
-.status-card__label {
-  text-transform: uppercase;
-  letter-spacing: 0.28em;
-  font-size: 0.78rem;
-  color: rgba(148, 163, 184, 0.7);
-}
-
-.status-card__title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-
-.status-card__metric {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  text-align: right;
-}
-
-.status-card__metric-label {
-  font-size: 0.86rem;
-  color: rgba(226, 232, 240, 0.62);
-  letter-spacing: 0.01em;
-}
-
-.status-card__value {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  font-size: clamp(2.4rem, 6.5vw, 3.4rem);
-  font-weight: 600;
-  color: #f8fafc;
-  letter-spacing: -0.015em;
-}
-
-.status-card__value--large {
-  font-size: clamp(2.6rem, 7.2vw, 3.65rem);
+  gap: 1.75rem;
 }
 
 .status-card__header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1.2rem;
 }
 
-.status-card__badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.8rem;
-}
-
-.status-badge {
+.status-card__header-inner {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  padding: 0.55rem 0.95rem;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  font-size: 0.88rem;
-  color: rgba(226, 232, 240, 0.88);
 }
 
-.status-badge__label {
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: rgba(148, 163, 184, 0.7);
+.status-card__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: rgba(248, 250, 252, 0.88);
 }
 
-.status-badge__value {
+@media (min-width: 768px) {
+  .status-card__title {
+    font-size: 1.25rem;
+  }
+}
+
+.status-card__value {
+  margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+  font-size: clamp(2.4rem, 6vw, 3.4rem);
   font-weight: 600;
-  letter-spacing: -0.01em;
-  color: #f1f5f9;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
 }
 
-.status-card__empty,
-.status-card__error {
-  font-size: 0.95rem;
-  color: rgba(226, 232, 240, 0.7);
+.status-card--global .status-card__value {
+  font-size: clamp(2.8rem, 6.5vw, 3.75rem);
+}
+
+.status-card__subtitle {
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.status-card__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.status-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.status-card__row:first-of-type {
+  border-top: 0;
+}
+
+.status-card__row-label {
   margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.72);
 }
 
-.status-card__error {
+.status-card__row-value {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+
+.status-card__message {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(248, 250, 252, 0.75);
+}
+
+.status-card__message--error {
   color: rgba(248, 113, 113, 0.9);
 }
 
 .status-card__footer {
-  display: flex;
-  justify-content: flex-end;
   margin-top: auto;
+  display: flex;
+  justify-content: flex-start;
 }
 
 .status-card__cta {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  padding: 0.75rem 1.6rem;
-  border-radius: 14px;
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(14, 165, 233, 0.8));
-  color: #f8fafc;
-  font-weight: 600;
-  text-decoration: none;
-  box-shadow: 0 14px 36px rgba(14, 165, 233, 0.22);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(255, 255, 255, 0.2);
+  transition: color 0.2s ease, text-decoration-color 0.2s ease;
 }
 
-.status-card__cta:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 18px 48px rgba(56, 189, 248, 0.28);
+.status-card__cta:hover,
+.status-card__cta:focus-visible {
+  color: #fff;
+  text-decoration-color: rgba(255, 255, 255, 0.6);
 }
 
 .status-card__cta:focus-visible {
-  outline: 2px solid rgba(56, 189, 248, 0.6);
-  outline-offset: 3px;
+  outline: none;
+}
+
+.status-card--skeleton {
+  overflow: hidden;
+  min-height: 220px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+  color: transparent;
+}
+
+.status-card--skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.22) 45%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  transform: translateX(-60%);
+  animation: statusShimmer 1.6s ease-in-out infinite;
 }
 
 @keyframes statusShimmer {

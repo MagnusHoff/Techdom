@@ -214,6 +214,14 @@ export default function LandingPage() {
 
   const showSkeleton = !userResolved || (user !== null && statusLoading);
   const showMinStatusCard = Boolean(user);
+  const hasAnyAnalyses = (status?.total_user_analyses ?? 0) > 0;
+  const statusGridClassName = [
+    "landing-status-grid",
+    !showSkeleton && !showMinStatusCard ? "landing-status-grid--solo" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const lastAnalysisDisplay = hasAnyAnalyses ? lastRunRelative : "Ingen analyser ennå";
 
   return (
     <main className="page-gradient">
@@ -243,60 +251,25 @@ export default function LandingPage() {
             </button>
           </form>
           {error ? <p className="error-text">{error}</p> : <div className="error-spacer" />}
-
-          <div className="landing-status-grid">
+          <div className={statusGridClassName}>
             {showSkeleton ? (
               <>
-                <div className="status-card status-card--skeleton" aria-hidden="true" />
-                <div className="status-card status-card--skeleton" aria-hidden="true" />
+                <StatusCardSkeleton />
+                <StatusCardSkeleton />
+              </>
+            ) : showMinStatusCard ? (
+              <>
+                <MinStatusCard
+                  total={formattedUserTotal}
+                  recentCount={formattedRecentCount}
+                  lastAnalysis={lastAnalysisDisplay}
+                  statusError={statusError}
+                  hasAnyAnalyses={hasAnyAnalyses}
+                />
+                <GlobalAnalyzedCard total={formattedTotalAnalyses} />
               </>
             ) : (
-              <>
-                <div className="status-card status-card--highlight">
-                  <span className="status-card__label">Eiendommer analysert</span>
-                  <strong className="status-card__value">{formattedTotalAnalyses}</strong>
-                </div>
-                {showMinStatusCard ? (
-                  <div className="status-card status-card--personal">
-                    <div className="status-card__header">
-                      <span className="status-card__title">Min status</span>
-                      <div className="status-card__metric">
-                        <span className="status-card__metric-label">Analyser totalt</span>
-                        <span className="status-card__value status-card__value--large">
-                          {formattedUserTotal}
-                        </span>
-                      </div>
-                    </div>
-
-                    {statusError ? (
-                      <p className="status-card__error" role="status">
-                        {statusError}
-                      </p>
-                    ) : status && status.total_user_analyses === 0 ? (
-                      <p className="status-card__empty">Ingen analyser ennå</p>
-                    ) : (
-                      <div className="status-card__badges">
-                        <span className="status-badge">
-                          <span className="status-badge__label">Siste 7 dager</span>
-                          <span className="status-badge__value">{formattedRecentCount}</span>
-                        </span>
-                        <span className="status-badge">
-                          <span className="status-badge__label">Sist kjørt</span>
-                          <span className="status-badge__value">
-                            {status?.last_run_at ? lastRunRelative : "Ingen kjøringer ennå"}
-                          </span>
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="status-card__footer">
-                      <Link className="status-card__cta" href="/mine-analyser">
-                        Gå til Lagrede analyser
-                      </Link>
-                    </div>
-                  </div>
-                ) : null}
-              </>
+              <GlobalAnalyzedCard total={formattedTotalAnalyses} />
             )}
           </div>
         </section>
@@ -305,4 +278,70 @@ export default function LandingPage() {
       </PageContainer>
     </main>
   );
+}
+
+interface GlobalAnalyzedCardProps {
+  total: string;
+}
+
+function GlobalAnalyzedCard({ total }: GlobalAnalyzedCardProps) {
+  return (
+    <article className="status-card status-card--global">
+      <header className="status-card__header">
+        <h2 className="status-card__title">Eiendommer analysert</h2>
+      </header>
+      <p className="status-card__value" aria-live="polite">
+        {total}
+      </p>
+    </article>
+  );
+}
+
+interface MinStatusCardProps {
+  total: string;
+  recentCount: string;
+  lastAnalysis: string;
+  statusError: string | null;
+  hasAnyAnalyses: boolean;
+}
+
+function MinStatusCard({ total, recentCount, lastAnalysis, statusError, hasAnyAnalyses }: MinStatusCardProps) {
+  return (
+    <article className="status-card status-card--personal" aria-live="polite">
+      <header className="status-card__header">
+        <div className="status-card__header-inner">
+          <h2 className="status-card__title">Min status</h2>
+          <p className="status-card__value">{total}</p>
+          <span className="status-card__subtitle">Analyser totalt</span>
+        </div>
+      </header>
+
+      {statusError ? (
+        <p className="status-card__message status-card__message--error" role="status">
+          {statusError}
+        </p>
+      ) : (
+        <dl className="status-card__list">
+          <div className="status-card__row">
+            <dt className="status-card__row-label">Analyser siste 7 dager</dt>
+            <dd className="status-card__row-value">{recentCount}</dd>
+          </div>
+          <div className="status-card__row">
+            <dt className="status-card__row-label">Siste analyse</dt>
+            <dd className="status-card__row-value">{hasAnyAnalyses ? lastAnalysis : "Ingen analyser ennå"}</dd>
+          </div>
+        </dl>
+      )}
+
+      <footer className="status-card__footer">
+        <Link className="status-card__cta" href="/mine-analyser">
+          Lagrede analyser
+        </Link>
+      </footer>
+    </article>
+  );
+}
+
+function StatusCardSkeleton() {
+  return <div className="status-card status-card--skeleton" aria-hidden="true" />;
 }

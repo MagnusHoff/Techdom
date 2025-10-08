@@ -188,6 +188,10 @@ export interface EmailVerificationConfirmPayload {
   token: string;
 }
 
+export interface EmailVerificationResendPayload {
+  email: string;
+}
+
 export interface AdminUpdateUserPayload {
   username: string;
 }

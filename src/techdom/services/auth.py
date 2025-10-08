@@ -105,6 +105,14 @@ class ExpiredEmailVerificationTokenError(Exception):
     """Raised when an email verification token has expired."""
 
 
+class EmailVerificationRateLimitedError(Exception):
+    """Raised when a verification email is requested too frequently."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Too many email verification requests")
+        self.retry_after_seconds = max(retry_after_seconds, 1)
+
+
 def _hash_reset_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -315,6 +323,7 @@ async def generate_email_verification_token(
     *,
     user_id: int,
     expires_in: Optional[timedelta] = None,
+    min_interval: Optional[timedelta] = None,
 ) -> Optional[tuple[str, str]]:
     user = await session.get(User, user_id)
     if not user:
@@ -322,6 +331,21 @@ async def generate_email_verification_token(
 
     if user.is_email_verified:
         return None
+
+    if min_interval and min_interval.total_seconds() > 0:
+        result = await session.execute(
+            select(EmailVerificationToken)
+            .where(EmailVerificationToken.user_id == user_id)
+            .order_by(EmailVerificationToken.created_at.desc())
+            .limit(1)
+        )
+        latest_token = result.scalar_one_or_none()
+        if latest_token and latest_token.created_at:
+            retry_available_at = latest_token.created_at + min_interval
+            now = datetime.now(timezone.utc)
+            if retry_available_at > now:
+                remaining = int((retry_available_at - now).total_seconds()) + 1
+                raise EmailVerificationRateLimitedError(remaining)
 
     await session.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
 
