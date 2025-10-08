@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+import { resolveApiBase } from "../../_lib/api-base";
 
 export async function GET(request: Request) {
-  if (!API_BASE) {
+  const apiBase = resolveApiBase();
+  if (!apiBase) {
     return NextResponse.json(
       { error: "NEXT_PUBLIC_API_BASE_URL mangler" },
       { status: 500 },
@@ -19,13 +20,22 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const query = url.search ? `?${url.searchParams.toString()}` : "";
 
-  const upstream = await fetch(`${API_BASE}/auth/users${query}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    cache: "no-store",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${apiBase}/auth/users${query}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.error("auth/users proxy failed", error);
+    return NextResponse.json(
+      { error: "Kunne ikke kontakte API-et for brukerliste" },
+      { status: 502 },
+    );
+  }
 
   const payloadText = await upstream.text();
   let payload: unknown = null;
