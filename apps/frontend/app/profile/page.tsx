@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
+import UserEmojiAvatar from "../components/user-avatar";
 import { changePassword, fetchCurrentUser, logoutUser, updateUsername } from "@/lib/api";
+import { userDisplayName, userInitials } from "@/lib/user";
 import { Lock, LogOut, User } from "lucide-react";
 import type { AuthUser } from "@/lib/types";
 
@@ -15,34 +17,19 @@ const PASSWORD_PATTERN =
 const PASSWORD_REQUIREMENT_MESSAGE =
   "Passordet må være minst 8 tegn og inneholde store og små bokstaver, tall og spesialtegn.";
 
-function buildInitials(user: AuthUser | null): string {
-  const name = user?.username?.trim();
-  if (name) {
-    return name
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((part) => part.charAt(0).toUpperCase())
-      .join("")
-      .slice(0, 2) || name.charAt(0).toUpperCase();
-  }
-  const email = user?.email ?? "";
-  if (email) {
-    const first = email.charAt(0).toUpperCase();
-    const second = email.split("@")[0].charAt(1)?.toUpperCase();
-    return (first + (second ?? "")).slice(0, 2);
-  }
-  return "?";
+type SectionId = "profile" | "subscription" | "settings";
+
+interface SectionConfig {
+  id: SectionId;
+  label: string;
+  comingSoon: boolean;
 }
 
-function displayName(user: AuthUser | null): string {
-  if (!user) {
-    return "";
-  }
-  if (user.username && user.username.trim()) {
-    return user.username.trim();
-  }
-  return "Ikke satt";
-}
+const SECTIONS: SectionConfig[] = [
+  { id: "profile", label: "Min profil", comingSoon: false },
+  { id: "subscription", label: "Abonnement", comingSoon: true },
+  { id: "settings", label: "Innstillinger", comingSoon: true },
+];
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -61,6 +48,7 @@ export default function ProfilePage() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<SectionId>("profile");
 
   useEffect(() => {
     let cancelled = false;
@@ -95,8 +83,8 @@ export default function ProfilePage() {
     setUsernameValue(user?.username?.trim() ?? "");
   }, [user]);
 
-  const initials = useMemo(() => buildInitials(user), [user]);
-  const friendlyName = useMemo(() => displayName(user), [user]);
+  const initials = useMemo(() => userInitials(user), [user]);
+  const friendlyName = useMemo(() => userDisplayName(user, "Ikke satt"), [user]);
 
   const emitUserUpdate = (nextUser: AuthUser | null) => {
     if (typeof window === "undefined") {
@@ -105,6 +93,11 @@ export default function ProfilePage() {
     window.dispatchEvent(
       new CustomEvent<AuthUser | null>(USER_UPDATED_EVENT, { detail: nextUser }),
     );
+  };
+
+  const applyUserUpdate = (nextUser: AuthUser) => {
+    setUser(nextUser);
+    emitUserUpdate(nextUser);
   };
 
   const handleUsernameSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -129,10 +122,9 @@ export default function ProfilePage() {
     setUsernameLoading(true);
     try {
       const updated = await updateUsername({ username: trimmed });
-      setUser(updated);
+      applyUserUpdate(updated);
       setUsernameValue(updated.username?.trim() ?? "");
       setUsernameMessage("Brukernavnet er oppdatert.");
-      emitUserUpdate(updated);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Kunne ikke oppdatere brukernavnet akkurat nå.";
@@ -196,6 +188,185 @@ export default function ProfilePage() {
     }
   };
 
+  const renderSectionContent = () => {
+    switch (activeSection) {
+      case "profile":
+        return (
+          <div className="profile-card">
+            <div className="profile-main">
+              <UserEmojiAvatar
+                user={user}
+                initials={initials}
+                avatarEmoji={user?.avatar_emoji ?? null}
+                avatarColor={user?.avatar_color ?? null}
+                className="profile-avatar"
+                label="Velg emoji for avatar"
+                onUserUpdate={applyUserUpdate}
+              />
+              <div className="profile-details">
+                <div className="profile-row">
+                  <span className="profile-label">Navn</span>
+                  <p className="profile-value">{friendlyName}</p>
+                </div>
+                <div className="profile-row">
+                  <span className="profile-label">E-post</span>
+                  <p className="profile-value">{user?.email}</p>
+                </div>
+                <div className="profile-row">
+                  <span className="profile-label">Rolle</span>
+                  <p className="profile-value">{user?.role}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="profile-settings">
+              <section className="profile-section">
+                <div className="profile-section-header">
+                  <div className="profile-section-title">
+                    <User aria-hidden="true" className="profile-section-icon" size={18} />
+                    <h3>Brukernavn</h3>
+                  </div>
+                  <p>Velg hvordan navnet ditt vises i appen.</p>
+                  <p className="profile-hint">Tillatte tegn: bokstaver, tall, punktum og understrek.</p>
+                </div>
+                {usernameError ? (
+                  <p className="profile-feedback profile-feedback--error">{usernameError}</p>
+                ) : null}
+                {usernameMessage ? (
+                  <p className="profile-feedback profile-feedback--success">{usernameMessage}</p>
+                ) : null}
+                <form className="profile-form" onSubmit={handleUsernameSubmit}>
+                  <label className="sr-only" htmlFor="profile-username">
+                    Brukernavn
+                  </label>
+                  <input
+                    id="profile-username"
+                    type="text"
+                    className="login-input profile-input"
+                    placeholder="Brukernavn"
+                    value={usernameValue}
+                    onChange={(event) => setUsernameValue(event.target.value)}
+                    autoComplete="name"
+                    minLength={3}
+                    maxLength={20}
+                    pattern="[A-Za-z0-9._]{3,20}"
+                    required
+                    disabled={usernameLoading}
+                  />
+                  <button type="submit" className="profile-button" disabled={usernameLoading}>
+                    {usernameLoading ? "Lagrer…" : "Oppdater brukernavn"}
+                  </button>
+                </form>
+              </section>
+
+              <section className="profile-section">
+                <div className="profile-section-header">
+                  <div className="profile-section-title">
+                    <Lock aria-hidden="true" className="profile-section-icon" size={18} />
+                    <h3>Passord</h3>
+                  </div>
+                  <p>
+                    Bytt passordet ditt uten å gå via e-post. Passordet må inneholde store og små bokstaver,
+                    tall og spesialtegn.
+                  </p>
+                </div>
+                {passwordError ? (
+                  <p className="profile-feedback profile-feedback--error">{passwordError}</p>
+                ) : null}
+                {passwordMessage ? (
+                  <p className="profile-feedback profile-feedback--success">{passwordMessage}</p>
+                ) : null}
+                <form className="profile-form" onSubmit={handlePasswordSubmit}>
+                  <label className="sr-only" htmlFor="profile-current-password">
+                    Nåværende passord
+                  </label>
+                  <input
+                    id="profile-current-password"
+                    type="password"
+                    className="login-input profile-input"
+                    placeholder="Nåværende passord"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    autoComplete="current-password"
+                    required
+                    disabled={passwordLoading}
+                  />
+                  <label className="sr-only" htmlFor="profile-new-password">
+                    Nytt passord
+                  </label>
+                  <input
+                    id="profile-new-password"
+                    type="password"
+                    className="login-input profile-input"
+                    placeholder="Nytt passord"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                    disabled={passwordLoading}
+                  />
+                  <label className="sr-only" htmlFor="profile-repeat-password">
+                    Gjenta nytt passord
+                  </label>
+                  <input
+                    id="profile-repeat-password"
+                    type="password"
+                    className="login-input profile-input"
+                    placeholder="Gjenta nytt passord"
+                    value={repeatPassword}
+                    onChange={(event) => setRepeatPassword(event.target.value)}
+                    autoComplete="new-password"
+                    minLength={8}
+                    required
+                    disabled={passwordLoading}
+                  />
+                  <button type="submit" className="profile-button" disabled={passwordLoading}>
+                    {passwordLoading ? "Lagrer…" : "Oppdater passord"}
+                  </button>
+                </form>
+              </section>
+
+              <section className="profile-section profile-section--logout">
+                <div className="profile-section-header">
+                  <div className="profile-section-title">
+                    <LogOut aria-hidden="true" className="profile-section-icon" size={18} />
+                    <h3>Logg ut</h3>
+                  </div>
+                  <p>Avslutt sesjonen på denne enheten.</p>
+                </div>
+                {logoutError ? (
+                  <p className="profile-feedback profile-feedback--error">{logoutError}</p>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="profile-button profile-button--danger"
+                  disabled={logoutLoading}
+                >
+                  {logoutLoading ? "Logger ut…" : "Logg ut"}
+                </button>
+              </section>
+            </div>
+          </div>
+        );
+      case "subscription":
+      case "settings": {
+        const heading = activeSection === "subscription" ? "Abonnement" : "Innstillinger";
+        return (
+          <div className="profile-card profile-card--placeholder" role="status">
+            <div className="profile-placeholder-content">
+              <h2>{heading}</h2>
+              <p>Dette området blir tilgjengelig snart.</p>
+            </div>
+          </div>
+        );
+      }
+      default:
+        return null;
+    }
+  };
+
   return (
     <main className="page-gradient">
       <PageContainer>
@@ -204,7 +375,7 @@ export default function ProfilePage() {
         <section className="profile-page">
           <header className="profile-header">
             <div className="profile-breadcrumb" aria-label="Brødsmule">
-              <span>Konto</span>
+              <span>Mine sider</span>
               <span className="profile-breadcrumb-separator">/</span>
               <span>Min profil</span>
             </div>
@@ -225,168 +396,42 @@ export default function ProfilePage() {
               <p>Bruk menyen øverst for å logge inn.</p>
             </div>
           ) : (
-            <div className="profile-card">
-              <div className="profile-main">
-                <div className="profile-avatar" aria-hidden="true">
-                  {initials}
+            <div className="profile-layout">
+              <aside className="profile-sidebar" aria-label="Profilvalg">
+                <div className="profile-sidebar-card">
+                  {SECTIONS.map((section) => {
+                    const isActive = activeSection === section.id;
+                    const isDisabled = section.comingSoon;
+                    const className = [
+                      "profile-sidebar-button",
+                      isActive ? "is-active" : "",
+                      section.comingSoon ? "is-coming-soon" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+
+                    return (
+                      <button
+                        key={section.id}
+                        type="button"
+                        className={className}
+                        onClick={() => {
+                          if (!isDisabled) {
+                            setActiveSection(section.id);
+                          }
+                        }}
+                        disabled={isDisabled}
+                        aria-current={isActive ? "page" : undefined}
+                      >
+                        <span>{section.label}</span>
+                        {section.comingSoon ? <span className="profile-sidebar-soon">Snart</span> : null}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div className="profile-details">
-                  <div className="profile-row">
-                    <span className="profile-label">Navn</span>
-                    <p className="profile-value">{friendlyName}</p>
-                  </div>
-                  <div className="profile-row">
-                    <span className="profile-label">E-post</span>
-                    <p className="profile-value">{user?.email}</p>
-                  </div>
-                  <div className="profile-row">
-                    <span className="profile-label">E-post bekreftet</span>
-                    <p
-                      className={
-                        user?.is_email_verified
-                          ? "profile-value profile-value--success"
-                          : "profile-value profile-value--warning"
-                      }
-                    >
-                      {user?.is_email_verified ? "Ja" : "Nei"}
-                    </p>
-                  </div>
-                  <div className="profile-row">
-                    <span className="profile-label">Rolle</span>
-                    <p className="profile-value">{user?.role}</p>
-                  </div>
-                </div>
-              </div>
+              </aside>
 
-              <div className="profile-settings">
-                <section className="profile-section">
-                  <div className="profile-section-header">
-                    <div className="profile-section-title">
-                      <User aria-hidden="true" className="profile-section-icon" size={18} />
-                      <h3>Brukernavn</h3>
-                    </div>
-                    <p>Velg hvordan navnet ditt vises i appen.</p>
-                    <p className="profile-hint">Tillatte tegn: bokstaver, tall, punktum og understrek.</p>
-                  </div>
-                  {usernameError ? (
-                    <p className="profile-feedback profile-feedback--error">{usernameError}</p>
-                  ) : null}
-                  {usernameMessage ? (
-                    <p className="profile-feedback profile-feedback--success">{usernameMessage}</p>
-                  ) : null}
-                  <form className="profile-form" onSubmit={handleUsernameSubmit}>
-                    <label className="sr-only" htmlFor="profile-username">
-                      Brukernavn
-                    </label>
-                    <input
-                      id="profile-username"
-                      type="text"
-                      className="login-input profile-input"
-                      placeholder="Brukernavn"
-                      value={usernameValue}
-                      onChange={(event) => setUsernameValue(event.target.value)}
-                      autoComplete="name"
-                      minLength={3}
-                      maxLength={20}
-                      pattern="[A-Za-z0-9._]{3,20}"
-                      required
-                      disabled={usernameLoading}
-                    />
-                    <button type="submit" className="profile-button" disabled={usernameLoading}>
-                      {usernameLoading ? "Lagrer…" : "Oppdater brukernavn"}
-                    </button>
-                  </form>
-                </section>
-
-                <section className="profile-section">
-                  <div className="profile-section-header">
-                    <div className="profile-section-title">
-                      <Lock aria-hidden="true" className="profile-section-icon" size={18} />
-                      <h3>Passord</h3>
-                    </div>
-                    <p>
-                      Bytt passordet ditt uten å gå via e-post. Passordet må inneholde store og små bokstaver,
-                      tall og spesialtegn.
-                    </p>
-                  </div>
-                  {passwordError ? (
-                    <p className="profile-feedback profile-feedback--error">{passwordError}</p>
-                  ) : null}
-                  {passwordMessage ? (
-                    <p className="profile-feedback profile-feedback--success">{passwordMessage}</p>
-                  ) : null}
-                  <form className="profile-form" onSubmit={handlePasswordSubmit}>
-                    <label className="sr-only" htmlFor="profile-current-password">
-                      Nåværende passord
-                    </label>
-                    <input
-                      id="profile-current-password"
-                      type="password"
-                      className="login-input profile-input"
-                      placeholder="Nåværende passord"
-                      value={currentPassword}
-                      onChange={(event) => setCurrentPassword(event.target.value)}
-                      autoComplete="current-password"
-                      required
-                      disabled={passwordLoading}
-                    />
-                    <label className="sr-only" htmlFor="profile-new-password">
-                      Nytt passord
-                    </label>
-                    <input
-                      id="profile-new-password"
-                      type="password"
-                      className="login-input profile-input"
-                      placeholder="Nytt passord"
-                      value={newPassword}
-                      onChange={(event) => setNewPassword(event.target.value)}
-                      autoComplete="new-password"
-                      minLength={8}
-                      required
-                      disabled={passwordLoading}
-                    />
-                    <label className="sr-only" htmlFor="profile-repeat-password">
-                      Gjenta nytt passord
-                    </label>
-                    <input
-                      id="profile-repeat-password"
-                      type="password"
-                      className="login-input profile-input"
-                      placeholder="Gjenta nytt passord"
-                      value={repeatPassword}
-                      onChange={(event) => setRepeatPassword(event.target.value)}
-                      autoComplete="new-password"
-                      minLength={8}
-                      required
-                      disabled={passwordLoading}
-                    />
-                    <button type="submit" className="profile-button" disabled={passwordLoading}>
-                      {passwordLoading ? "Lagrer…" : "Oppdater passord"}
-                    </button>
-                  </form>
-                </section>
-
-                <section className="profile-section profile-section--logout">
-                  <div className="profile-section-header">
-                    <div className="profile-section-title">
-                      <LogOut aria-hidden="true" className="profile-section-icon" size={18} />
-                      <h3>Logg ut</h3>
-                    </div>
-                    <p>Avslutt sesjonen på denne enheten.</p>
-                  </div>
-                  {logoutError ? (
-                    <p className="profile-feedback profile-feedback--error">{logoutError}</p>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="profile-button profile-button--danger"
-                    disabled={logoutLoading}
-                  >
-                    {logoutLoading ? "Logger ut…" : "Logg ut"}
-                  </button>
-                </section>
-              </div>
+              <div className="profile-content">{renderSectionContent()}</div>
             </div>
           )}
         </section>

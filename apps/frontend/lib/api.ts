@@ -13,8 +13,12 @@ import type {
   ChangePasswordPayload,
   UpdateUsernamePayload,
   EmailVerificationConfirmPayload,
+  EmailVerificationResendPayload,
   StoredAnalysesResponse,
   ProspectusExtract,
+  AdminChangeUserPasswordPayload,
+  AdminUpdateUserPayload,
+  UserStatusResponse,
 } from "./types";
 
 function withApiPrefix(path: string): string {
@@ -83,6 +87,11 @@ export interface UpdateUserRolePayload {
   role: AuthUser["role"];
 }
 
+export interface UpdateUserAvatarPayload {
+  avatarEmoji: string | null;
+  avatarColor: string | null;
+}
+
 export async function requestPasswordReset(
   payload: PasswordResetRequestPayload,
 ): Promise<void> {
@@ -143,11 +152,63 @@ export async function verifyEmail(
   await handleResponse<unknown>(res);
 }
 
+export async function resendVerificationEmail(
+  payload: EmailVerificationResendPayload,
+): Promise<void> {
+  const res = await apiFetch("/auth/verify-email/resend", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 202) {
+    return;
+  }
+
+  if (res.ok) {
+    await handleResponse<unknown>(res);
+    return;
+  }
+
+  const retryAfterHeader = res.headers.get("Retry-After");
+  const raw = await res.text();
+  let message = raw;
+  try {
+    const parsed = JSON.parse(raw) as AuthErrorResponse;
+    message = parsed.detail || parsed.error || raw;
+  } catch {
+    /* ignore parse errors */
+  }
+
+  const error = new Error(message || "Kunne ikke sende verifiseringsmail på nytt.");
+  (error as Error & { status?: number }).status = res.status;
+  if (retryAfterHeader) {
+    const retryAfter = Number.parseInt(retryAfterHeader, 10);
+    if (!Number.isNaN(retryAfter)) {
+      (error as Error & { retryAfter?: number }).retryAfter = retryAfter;
+    }
+  }
+  throw error;
+}
+
 export async function updateUsername(payload: UpdateUsernamePayload): Promise<AuthUser> {
   const res = await apiFetch("/auth/me/username", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
+}
+
+export async function updateUserAvatar(payload: UpdateUserAvatarPayload): Promise<AuthUser> {
+  const res = await apiFetch("/auth/me/avatar", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      avatar_emoji: payload.avatarEmoji,
+      avatar_color: payload.avatarColor,
+    }),
     cache: "no-store",
   });
   return handleResponse<AuthUser>(res);
@@ -173,6 +234,17 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
   }
 
   await handleResponse<unknown>(res);
+}
+
+export async function incrementUserAnalyses(increment = 1): Promise<AuthUser> {
+  const safeIncrement = Number.isFinite(increment) ? Math.max(1, Math.floor(increment)) : 1;
+  const res = await apiFetch("/auth/me/analyses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ increment: safeIncrement }),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
 }
 export async function runAnalysis(payload: AnalysisPayload): Promise<AnalysisResponse> {
   const res = await apiFetch("/analysis", {
@@ -232,6 +304,13 @@ export async function fetchStats(): Promise<StatsResponse> {
     cache: "no-store",
   });
   return handleResponse<StatsResponse>(res);
+}
+
+export async function fetchUserStatus(): Promise<UserStatusResponse> {
+  const res = await apiFetch("/auth/me/status", {
+    cache: "no-store",
+  });
+  return handleResponse<UserStatusResponse>(res);
 }
 
 export async function startAnalysisJob(finnkode: string): Promise<AnalyzeJobResponse> {
@@ -316,4 +395,58 @@ export async function changeUserRole(
     cache: "no-store",
   });
   return handleResponse<AuthUser>(res);
+}
+
+export async function updateUserProfile(
+  userId: number,
+  payload: AdminUpdateUserPayload,
+): Promise<AuthUser> {
+  const res = await apiFetch(`/auth/users/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  return handleResponse<AuthUser>(res);
+}
+
+export async function adminChangeUserPassword(
+  userId: number,
+  payload: AdminChangeUserPasswordPayload,
+): Promise<void> {
+  const res = await apiFetch(`/auth/users/${userId}/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ new_password: payload.newPassword }),
+    cache: "no-store",
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke oppdatere passordet");
+  }
+
+  await handleResponse<unknown>(res);
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  const res = await apiFetch(`/auth/users/${userId}`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+
+  if (res.status === 204) {
+    return;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Kunne ikke slette brukeren");
+  }
+
+  await handleResponse<unknown>(res);
 }

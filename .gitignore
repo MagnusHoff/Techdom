@@ -224,3 +224,6 @@ data/raw/proxy/proxies.txt
 apps/frontend/node_modules/
 apps/frontend/.next/
 apps/frontend/tsconfig.tsbuildinfo
+# Frontend environment overrides
+apps/frontend/.env.local
+apps/frontend/env.local

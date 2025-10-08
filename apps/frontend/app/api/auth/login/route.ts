@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+import { resolveApiBase } from "../../_lib/api-base";
 
 export async function POST(request: Request) {
-  if (!API_BASE) {
+  const apiBase = resolveApiBase();
+  if (!apiBase) {
     return NextResponse.json(
       { error: "NEXT_PUBLIC_API_BASE_URL mangler" },
       { status: 500 },
@@ -11,13 +12,22 @@ export async function POST(request: Request) {
   }
 
   const body = await request.text();
+  let upstream: Response;
 
-  const upstream = await fetch(`${API_BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-    cache: "no-store",
-  });
+  try {
+    upstream = await fetch(`${apiBase}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.error("auth/login proxy failed", error);
+    return NextResponse.json(
+      { error: "Kunne ikke kontakte API-et for innlogging" },
+      { status: 502 },
+    );
+  }
 
   const payloadText = await upstream.text();
   let payload: unknown = null;

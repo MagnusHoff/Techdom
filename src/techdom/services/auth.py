@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from techdom.domain.auth.constants import normalise_avatar_emoji, normalise_avatar_color
 from techdom.domain.auth.models import (
     EmailVerificationToken,
     LoginAttempt,
@@ -97,12 +98,42 @@ class InvalidPasswordError(Exception):
     """Raised when a password does not meet complexity requirements."""
 
 
+class InvalidAvatarEmojiError(Exception):
+    """Raised when an avatar emoji selection is not allowed."""
+
+    def __init__(self, value: str | None) -> None:
+        message = "Ugyldig emoji-valg. Velg en av de tilgjengelige alternativene."
+        super().__init__(message)
+        self.value = value
+
+
+class InvalidAvatarColorError(Exception):
+    """Raised when an avatar background color selection is not allowed."""
+
+    def __init__(self, value: str | None) -> None:
+        message = "Ugyldig bakgrunnsfarge."
+        super().__init__(message)
+        self.value = value
+
+
 class InvalidEmailVerificationTokenError(Exception):
     """Raised when email verification token validation fails."""
 
 
 class ExpiredEmailVerificationTokenError(Exception):
     """Raised when an email verification token has expired."""
+
+
+class EmailVerificationRateLimitedError(Exception):
+    """Raised when a verification email is requested too frequently."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Too many email verification requests")
+        self.retry_after_seconds = max(retry_after_seconds, 1)
+
+
+class InvalidAnalysisIncrementError(Exception):
+    """Raised when an invalid analysis increment is requested."""
 
 
 def _hash_reset_token(token: str) -> str:
@@ -170,10 +201,12 @@ async def register_failed_login_attempt(
 
     cutoff = datetime.now(timezone.utc) - _login_attempt_window()
     await session.execute(
-        delete(LoginAttempt).where(
+        delete(LoginAttempt)
+        .where(
             LoginAttempt.email == normalized_email,
             LoginAttempt.attempted_at < cutoff,
         )
+        .execution_options(synchronize_session=False)
     )
     await session.commit()
 
@@ -219,6 +252,26 @@ def _validate_username(username: str) -> str:
             "Brukernavn må være 3-20 tegn og kan kun inneholde bokstaver, tall, punktum og understrek."
         )
     return normalized
+
+
+def _validate_avatar_emoji(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalised = normalise_avatar_emoji(value)
+    if normalised is None:
+        raise InvalidAvatarEmojiError(value)
+    return normalised
+
+
+def _validate_avatar_color(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalised = normalise_avatar_color(value)
+    if normalised is None:
+        raise InvalidAvatarColorError(value)
+    return normalised
 
 
 def _validate_password(password: str) -> str:
@@ -313,6 +366,7 @@ async def generate_email_verification_token(
     *,
     user_id: int,
     expires_in: Optional[timedelta] = None,
+    min_interval: Optional[timedelta] = None,
 ) -> Optional[tuple[str, str]]:
     user = await session.get(User, user_id)
     if not user:
@@ -320,6 +374,21 @@ async def generate_email_verification_token(
 
     if user.is_email_verified:
         return None
+
+    if min_interval and min_interval.total_seconds() > 0:
+        result = await session.execute(
+            select(EmailVerificationToken)
+            .where(EmailVerificationToken.user_id == user_id)
+            .order_by(EmailVerificationToken.created_at.desc())
+            .limit(1)
+        )
+        latest_token = result.scalar_one_or_none()
+        if latest_token and latest_token.created_at:
+            retry_available_at = latest_token.created_at + min_interval
+            now = datetime.now(timezone.utc)
+            if retry_available_at > now:
+                remaining = int((retry_available_at - now).total_seconds()) + 1
+                raise EmailVerificationRateLimitedError(remaining)
 
     await session.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
 
@@ -407,6 +476,51 @@ async def update_username(
     return user
 
 
+async def update_avatar_preferences(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    avatar_emoji: str | None,
+    avatar_color: str | None,
+) -> User:
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    user.avatar_emoji = _validate_avatar_emoji(avatar_emoji)
+    user.avatar_color = _validate_avatar_color(avatar_color)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def increment_user_analyses(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    increment: int = 1,
+) -> User:
+    if increment < 1:
+        raise InvalidAnalysisIncrementError("Increment must be at least 1")
+
+    user = await session.get(User, user_id)
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    current_total = int(user.total_analyses or 0)
+    next_total = current_total + int(increment)
+    if next_total < 0:
+        next_total = 0
+
+    user.total_analyses = next_total
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
 async def change_password(
     session: AsyncSession,
     *,
@@ -434,6 +548,40 @@ async def change_password(
     await session.commit()
     await session.refresh(user)
     return user
+
+
+
+async def set_user_password(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    new_password: str,
+) -> User:
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    _validate_password(new_password)
+    user.hashed_password = hash_password(new_password)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def delete_user(
+    session: AsyncSession,
+    *,
+    user_id: int,
+) -> None:
+    user = await session.get(User, user_id)
+    if not user:
+        raise UserNotFoundError(user_id)
+
+    await session.delete(user)
+    await session.commit()
+
 
 
 async def get_user_by_email(

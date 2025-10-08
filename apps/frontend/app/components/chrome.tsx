@@ -10,6 +10,7 @@ import {
   logoutUser,
   registerUser,
   requestPasswordReset,
+  resendVerificationEmail,
 } from "@/lib/api";
 import type { AuthUser } from "@/lib/types";
 
@@ -75,8 +76,31 @@ export function SiteHeader({
   const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendFeedback, setResendFeedback] = useState<
+    { type: "info" | "error"; message: string } | null
+  >(null);
   const ignoreBackdropClickRef = useRef(false); // Avoid closing when dragging from inside modal
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!unverifiedEmail) {
+      return;
+    }
+    setResendCooldown((current) => (current > 0 ? current : 30));
+  }, [unverifiedEmail]);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setResendCooldown((value) => (value > 1 ? value - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -111,9 +135,11 @@ export function SiteHeader({
     fetchCurrentUser()
       .then((user) => {
         setCurrentUser(user);
+        emitUserUpdate(user);
       })
       .catch(() => {
         setCurrentUser(null);
+        emitUserUpdate(null);
       });
   }, []);
 
@@ -160,6 +186,16 @@ export function SiteHeader({
     return null;
   }, [authMode]);
 
+  const resendButtonLabel = useMemo(() => {
+    if (resendLoading) {
+      return "Sender...";
+    }
+    if (resendCooldown > 0) {
+      return `Send verifiseringsmail på nytt (${resendCooldown}s)`;
+    }
+    return "Send verifiseringsmail på nytt";
+  }, [resendLoading, resendCooldown]);
+
   const passwordStrength = useMemo(() => evaluatePasswordStrength(password), [password]);
   const passwordMeetsRequirements = useMemo(
     () => PASSWORD_PATTERN.test(password),
@@ -203,6 +239,7 @@ export function SiteHeader({
     event.preventDefault();
     setLoginError(null);
     setLoginNotice(null);
+    setResendFeedback(null);
 
     if (authMode === "forgot") {
       setLoginLoading(true);
@@ -214,6 +251,8 @@ export function SiteHeader({
         setAuthMode("login");
         setPassword("");
         setPasswordVisible(false);
+        setUnverifiedEmail(null);
+        setResendCooldown(0);
       } catch (error) {
         const message =
           error instanceof Error
@@ -247,12 +286,14 @@ export function SiteHeader({
         const trimmedUsername = username.trim();
         await registerUser({ email, username: trimmedUsername, password });
         setLoginNotice(
-          "Konto opprettet! Sjekk e-posten din for å bekrefte adressen før du logger inn.",
+          "Konto opprettet! Sjekk e-posten din for å bekrefte adressen før du logger inn."
         );
         setAuthMode("login");
         setPassword("");
         setUsername("");
         setPasswordVisible(false);
+        setUnverifiedEmail(email.trim().toLowerCase());
+        setResendCooldown(30);
         return;
       }
 
@@ -266,12 +307,51 @@ export function SiteHeader({
       setUsername("");
       setPasswordVisible(false);
       setLoginNotice(null);
+      setUnverifiedEmail(null);
+      setResendFeedback(null);
+      setResendCooldown(0);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Ukjent feil under innlogging";
       setLoginError(message);
+      const normalizedEmail = email.trim().toLowerCase();
+      if (normalizedEmail && message.toLowerCase().includes("verifiser")) {
+        setUnverifiedEmail(normalizedEmail);
+        setResendCooldown(30);
+      } else {
+        setUnverifiedEmail(null);
+        setResendCooldown(0);
+      }
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!unverifiedEmail || resendLoading) {
+      return;
+    }
+    setResendLoading(true);
+    setResendFeedback(null);
+    try {
+      await resendVerificationEmail({ email: unverifiedEmail });
+      setResendFeedback({ type: "info", message: "Ny verifiseringsmail er sendt." });
+      setResendCooldown(30);
+    } catch (error) {
+      const retryAfter =
+        error && typeof (error as { retryAfter?: number }).retryAfter === "number"
+          ? Math.max(0, Math.trunc((error as { retryAfter?: number }).retryAfter ?? 0))
+          : 0;
+      if (retryAfter > 0) {
+        setResendCooldown(retryAfter);
+      }
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Kunne ikke sende verifiseringsmail. Prøv igjen om litt.";
+      setResendFeedback({ type: "error", message });
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -284,6 +364,9 @@ export function SiteHeader({
     setPasswordVisible(false);
     setLoginError(null);
     setLoginNotice(null);
+    setUnverifiedEmail(null);
+    setResendFeedback(null);
+    setResendCooldown(0);
   };
 
   const handleBackdropClick = () => {
@@ -345,14 +428,7 @@ export function SiteHeader({
               {userMenuOpen ? (
                 <div className="header-user-dropdown" id="header-user-dropdown">
                   <Link href="/profile" className="header-user-item" onClick={() => setUserMenuOpen(false)}>
-                    Min profil
-                  </Link>
-                  <Link
-                    href="/mine-analyser"
-                    className="header-user-item"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    Mine analyser
+                    Mine sider
                   </Link>
                   <button
                     type="button"
@@ -407,6 +483,30 @@ export function SiteHeader({
             ) : null}
             {loginError ? <div className="error-banner">{loginError}</div> : null}
             {loginNotice ? <p className="login-notice">{loginNotice}</p> : null}
+            {authMode === "login" && unverifiedEmail ? (
+              <div className="login-resend">
+                <p className="login-resend-hint">
+                  Fikk du ikke e-posten? Send verifiseringsmail på nytt.
+                </p>
+                {resendFeedback ? (
+                  <div
+                    className={
+                      resendFeedback.type === "error" ? "error-banner" : "login-notice"
+                    }
+                  >
+                    {resendFeedback.message}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="login-resend-button"
+                  onClick={handleResendVerification}
+                  disabled={resendLoading || resendCooldown > 0}
+                >
+                  {resendButtonLabel}
+                </button>
+              </div>
+            ) : null}
             <form className="login-form" onSubmit={handleLoginSubmit}>
               <label className="sr-only" htmlFor="header-login-email">
                 E-post
@@ -496,6 +596,9 @@ export function SiteHeader({
                 onClick={() => {
                   setAuthMode("forgot");
                   setPasswordVisible(false);
+                  setUnverifiedEmail(null);
+                  setResendFeedback(null);
+                  setResendCooldown(0);
                 }}
               >
                 Glemt passord?
@@ -509,6 +612,11 @@ export function SiteHeader({
                   setPasswordVisible(false);
                   if (nextMode !== "signup") {
                     setUsername("");
+                  }
+                  if (nextMode !== "login") {
+                    setUnverifiedEmail(null);
+                    setResendFeedback(null);
+                    setResendCooldown(0);
                   }
                 }}
               >

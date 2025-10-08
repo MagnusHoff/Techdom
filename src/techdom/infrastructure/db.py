@@ -4,7 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, Tuple
 
 from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import (
@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.engine import make_url
+from sqlalchemy.engine.url import URL
 
 
 logger = logging.getLogger(__name__)
@@ -24,27 +26,43 @@ def _should_echo_sql() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _resolve_database_url() -> str:
+def _normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
+    """Normalise database URL for async usage."""
+
+    url: URL = make_url(raw)
+    driver = url.drivername
+
+    if driver in {"postgres", "postgresql", "postgresql+psycopg", "postgresql+psycopg2", "postgresql+asyncpg"}:
+        url = url.set(drivername="postgresql+psycopg_async")
+
+    return url.render_as_string(hide_password=False), {}
+
+
+def _resolve_database_url() -> Tuple[str, Dict[str, Any]]:
     url = os.getenv("DATABASE_URL")
     if url:
-        return url
+        return _normalise_database_url(url)
 
     sqlite_path = Path(os.getenv("LOCAL_SQLITE_PATH", "data/local.db")).resolve()
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     logger.warning(
         "DATABASE_URL is not set. Falling back to local SQLite database at %s", sqlite_path
     )
-    return f"sqlite+aiosqlite:///{sqlite_path}"
+    return f"sqlite+aiosqlite:///{sqlite_path}", {}
 
 
-DATABASE_URL = _resolve_database_url()
+DATABASE_URL, CONNECT_ARGS = _resolve_database_url()
 
 
 class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
 
 
-engine: AsyncEngine = create_async_engine(DATABASE_URL, echo=_should_echo_sql())
+engine: AsyncEngine = create_async_engine(
+    DATABASE_URL,
+    echo=_should_echo_sql(),
+    connect_args=CONNECT_ARGS,
+)
 SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
@@ -95,6 +113,21 @@ def _ensure_users_schema(sync_conn) -> None:
                 "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;"
             )
         )
+        columns.add("is_email_verified")
+
+    if "avatar_emoji" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN avatar_emoji VARCHAR(16);"))
+        columns.add("avatar_emoji")
+
+    if "avatar_color" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN avatar_color VARCHAR(16);"))
+        columns.add("avatar_color")
+
+    if "total_analyses" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN total_analyses INTEGER NOT NULL DEFAULT 0;")
+        )
+        columns.add("total_analyses")
 
 
 async def ensure_auth_schema() -> None:

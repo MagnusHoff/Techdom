@@ -141,6 +141,12 @@ export interface StatsResponse {
   total_analyses: number;
 }
 
+export interface UserStatusResponse {
+  total_user_analyses: number;
+  total_last_7_days: number;
+  last_run_at: string | null;
+}
+
 export interface AnalyzeJobResponse {
   job_id: string;
   status: string;
@@ -150,9 +156,14 @@ export interface AuthUser {
   id: number;
   email: string;
   username?: string | null;
+  avatar_emoji?: string | null;
+  avatar_color?: string | null;
   role: "user" | "plus" | "admin";
   is_active: boolean;
   is_email_verified: boolean;
+  created_at: string;
+  updated_at: string;
+  total_analyses: number;
 }
 
 export interface AuthResponse {
@@ -191,4 +202,16 @@ export interface ChangePasswordPayload {
 
 export interface EmailVerificationConfirmPayload {
   token: string;
+}
+
+export interface EmailVerificationResendPayload {
+  email: string;
+}
+
+export interface AdminUpdateUserPayload {
+  username: string;
+}
+
+export interface AdminChangeUserPasswordPayload {
+  newPassword: string;
 }

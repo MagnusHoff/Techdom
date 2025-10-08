@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 
+from datetime import timedelta
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from techdom.domain import history
 from techdom.domain.auth import schemas
 from techdom.domain.auth.models import User, UserRole
 from techdom.infrastructure.db import get_session
@@ -12,7 +15,11 @@ from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
 from techdom.services.auth import (
     DuplicateUsernameError,
+    EmailVerificationRateLimitedError,
     ExpiredEmailVerificationTokenError,
+    InvalidAnalysisIncrementError,
+    InvalidAvatarEmojiError,
+    InvalidAvatarColorError,
     InvalidCurrentPasswordError,
     InvalidEmailVerificationTokenError,
     InvalidPasswordError,
@@ -27,6 +34,25 @@ from techdom.infrastructure.email import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
+
+
+def _serialize_user(
+    user: User,
+    *,
+    total_analyses: int | None = None,
+) -> schemas.UserRead:
+    raw_total = total_analyses if total_analyses is not None else getattr(user, "total_analyses", 0)
+    try:
+        safe_total = max(int(raw_total or 0), 0)
+    except (TypeError, ValueError):
+        safe_total = 0
+
+    try:
+        user.total_analyses = safe_total  # type: ignore[assignment]
+    except AttributeError:
+        setattr(user, "total_analyses", safe_total)
+
+    return schemas.UserRead.model_validate(user)
 
 
 @router.post(
@@ -69,7 +95,7 @@ async def register_user(
                 email_address,
                 token,
             )
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user, total_analyses=0)
 
 
 @router.post("/login", response_model=schemas.AuthResponse, summary="Authenticate a user")
@@ -124,16 +150,15 @@ async def login(
     fallback_role = UserRole.USER.value
     role_value = str(raw_role or fallback_role)
     access_token = create_access_token(data={"sub": user.email, "role": role_value})
-    return schemas.AuthResponse(
-        access_token=access_token, user=schemas.UserRead.model_validate(user)
-    )
+    user_read = _serialize_user(user)
+    return schemas.AuthResponse(access_token=access_token, user=user_read)
 
 
 @router.get("/me", response_model=schemas.UserRead, summary="Get current user")
 async def read_me(
     current_user: User = Depends(auth_service.get_current_active_user),
 ) -> schemas.UserRead:
-    return schemas.UserRead.model_validate(current_user)
+    return _serialize_user(current_user)
 
 
 @router.patch(
@@ -164,7 +189,36 @@ async def update_username(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user)
+
+
+@router.patch(
+    "/me/avatar",
+    response_model=schemas.UserRead,
+    summary="Oppdater avatar for innlogget bruker",
+)
+async def update_avatar(
+    payload: schemas.UpdateAvatar,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_avatar_preferences(
+            session,
+            user_id=current_user.id,
+            avatar_emoji=payload.avatar_emoji,
+            avatar_color=payload.avatar_color,
+        )
+    except InvalidAvatarEmojiError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except InvalidAvatarColorError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+
+    return _serialize_user(user)
 
 
 @router.post(
@@ -198,6 +252,48 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
         ) from exc
+
+
+@router.get(
+    "/me/status",
+    response_model=schemas.UserStatus,
+    summary="Hent status for analyser til innlogget bruker",
+)
+async def read_my_status(
+    current_user: User = Depends(auth_service.get_current_active_user),
+) -> schemas.UserStatus:
+    summary = history.summarise(window_days=7)
+    return schemas.UserStatus(
+        total_user_analyses=current_user.total_analyses,
+        total_last_7_days=summary.last_7_days,
+        last_run_at=summary.last_run_at,
+    )
+
+
+@router.post(
+    "/me/analyses",
+    response_model=schemas.UserRead,
+    summary="Registrer fullført analyse for innlogget bruker",
+)
+async def increment_my_analyses(
+    payload: schemas.IncrementAnalyses,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.increment_user_analyses(
+            session,
+            user_id=current_user.id,
+            increment=payload.increment,
+        )
+    except InvalidAnalysisIncrementError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _serialize_user(user)
+
+
 @router.get(
     "/admin/ping",
     response_model=schemas.UserRead,
@@ -206,7 +302,7 @@ async def change_password(
 async def admin_ping(
     current_admin: User = Depends(auth_service.get_current_active_admin),
 ) -> schemas.UserRead:
-    return schemas.UserRead.model_validate(current_admin)
+    return _serialize_user(current_admin)
 
 
 @router.get(
@@ -235,7 +331,7 @@ async def list_users(
     users, total = await auth_service.list_users(
         session, search=search, limit=limit, offset=offset
     )
-    items = [schemas.UserRead.model_validate(user) for user in users]
+    items = [_serialize_user(user) for user in users]
     return schemas.UserCollection(total=total, items=items)
 
 
@@ -256,7 +352,89 @@ async def update_user_role(
         )
     except UserNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found") from exc
-    return schemas.UserRead.model_validate(user)
+    return _serialize_user(user)
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=schemas.UserRead,
+    summary="Oppdater brukerdetaljer (kun admin)",
+)
+async def admin_update_user(
+    user_id: int,
+    payload: schemas.AdminUpdateUser,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> schemas.UserRead:
+    try:
+        user = await auth_service.update_username(
+            session, user_id=user_id, username=payload.username
+        )
+    except DuplicateUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Brukernavn er allerede i bruk",
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+    except InvalidUsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return _serialize_user(user)
+
+
+@router.post(
+    "/users/{user_id}/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Oppdater passord for bruker (kun admin)",
+)
+async def admin_update_user_password(
+    user_id: int,
+    payload: schemas.AdminChangeUserPassword,
+    session: AsyncSession = Depends(get_session),
+    _: User = Depends(auth_service.get_current_active_admin),
+) -> None:
+    try:
+        await auth_service.set_user_password(
+            session, user_id=user_id, new_password=payload.new_password
+        )
+    except InvalidPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Slett bruker (kun admin)",
+)
+async def admin_delete_user(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_admin: User = Depends(auth_service.get_current_active_admin),
+) -> None:
+    if user_id == current_admin.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Du kan ikke slette din egen administratorkonto.",
+        )
+
+    try:
+        await auth_service.delete_user(session, user_id=user_id)
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Bruker ikke funnet"
+        ) from exc
 
 
 @router.post(
@@ -306,6 +484,49 @@ async def password_reset_confirm(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Ugyldig eller utløpt token"
         ) from exc
+
+
+@router.post(
+    "/verify-email/resend",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Send e-postverifisering på nytt",
+)
+async def resend_email_verification(
+    payload: schemas.EmailVerificationResend,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    normalized_email = payload.email.strip().lower()
+    user = await auth_service.get_user_by_email(session, email=normalized_email)
+    if not user or user.is_email_verified:
+        return {"status": "accepted"}
+
+    try:
+        verification = await auth_service.generate_email_verification_token(
+            session,
+            user_id=user.id,
+            min_interval=timedelta(seconds=30),
+        )
+    except EmailVerificationRateLimitedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Vent {exc.retry_after_seconds} sekunder før du prøver igjen.",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    if verification:
+        email_address, token = verification
+        verification_url = auth_service.build_email_verification_url(token)
+        if verification_url:
+            background_tasks.add_task(send_email_verification_email, email_address, verification_url)
+        else:
+            logger.warning(
+                "EMAIL_VERIFICATION_URL_BASE not configured; resend token for %s: %s",
+                email_address,
+                token,
+            )
+
+    return {"status": "accepted"}
 
 
 @router.post(

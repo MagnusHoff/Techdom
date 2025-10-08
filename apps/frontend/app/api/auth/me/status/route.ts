@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { resolveApiBase } from "../../_lib/api-base";
+import { resolveApiBase } from "../../../_lib/api-base";
 
 export async function GET() {
   const apiBase = resolveApiBase();
@@ -18,7 +18,7 @@ export async function GET() {
   }
   let upstream: Response;
   try {
-    upstream = await fetch(`${apiBase}/auth/me`, {
+    upstream = await fetch(`${apiBase}/auth/me/status`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -26,9 +26,9 @@ export async function GET() {
       cache: "no-store",
     });
   } catch (error) {
-    console.error("auth/me proxy failed", error);
+    console.error("auth/me/status proxy failed", error);
     return NextResponse.json(
-      { error: "Kunne ikke kontakte API-et for brukerdata" },
+      { error: "Kunne ikke kontakte API-et for status" },
       { status: 502 },
     );
   }
@@ -43,7 +43,7 @@ export async function GET() {
 
   if (!upstream.ok) {
     return NextResponse.json(
-      payload ?? { error: payloadText || "Kunne ikke hente bruker" },
+      payload ?? { error: payloadText || "Kunne ikke hente status" },
       { status: upstream.status },
     );
   }
