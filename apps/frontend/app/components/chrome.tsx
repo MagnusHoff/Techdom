@@ -52,6 +52,12 @@ function evaluatePasswordStrength(value: string): PasswordStrength {
 }
 
 const USER_UPDATED_EVENT = "techdom:user-updated";
+export const AUTH_MODAL_EVENT = "techdom:auth-modal";
+
+interface AuthModalEventDetail {
+  open?: boolean;
+  mode?: "login" | "forgot" | "signup";
+}
 
 interface SiteHeaderProps {
   showAction?: boolean;
@@ -128,6 +134,45 @@ export function SiteHeader({
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [loginOpen]);
+
+  useEffect(() => {
+    const handleAuthModal = (event: Event) => {
+      const detail = (event as CustomEvent<AuthModalEventDetail | undefined>).detail ?? {};
+      const shouldOpen = detail.open ?? true;
+
+      if (shouldOpen) {
+        if (detail.mode) {
+          setAuthMode(detail.mode);
+        }
+        setLoginOpen(true);
+        setLoginError(null);
+        setLoginNotice(null);
+        setResendFeedback(null);
+        setResendCooldown(0);
+        setPasswordVisible(false);
+        if (detail.mode !== "signup") {
+          setUsername("");
+        }
+        setEmail("");
+        setPassword("");
+        return;
+      }
+
+      setLoginOpen(false);
+      setAuthMode("login");
+      setPasswordVisible(false);
+      setLoginError(null);
+      setLoginNotice(null);
+      setResendFeedback(null);
+      setResendCooldown(0);
+      setEmail("");
+      setPassword("");
+      setUsername("");
+    };
+
+    window.addEventListener(AUTH_MODAL_EVENT, handleAuthModal as EventListener);
+    return () => window.removeEventListener(AUTH_MODAL_EVENT, handleAuthModal as EventListener);
+  }, []);
 
   const headerClass = scrolled ? "site-header is-scrolled" : "site-header";
 
@@ -429,6 +474,13 @@ export function SiteHeader({
                 <div className="header-user-dropdown" id="header-user-dropdown">
                   <Link href="/profile" className="header-user-item" onClick={() => setUserMenuOpen(false)}>
                     Mine sider
+                  </Link>
+                  <Link
+                    href="/profile?section=subscription"
+                    className="header-user-item"
+                    onClick={() => setUserMenuOpen(false)}
+                  >
+                    Abonnement
                   </Link>
                   <button
                     type="button"

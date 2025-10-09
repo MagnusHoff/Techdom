@@ -14,6 +14,7 @@ import type {
   UpdateUsernamePayload,
   EmailVerificationConfirmPayload,
   EmailVerificationResendPayload,
+  StoredAnalysis,
   StoredAnalysesResponse,
   ProspectusExtract,
   AdminChangeUserPasswordPayload,
@@ -64,6 +65,42 @@ async function handleResponse<T>(res: Response): Promise<T> {
     throw new Error(message);
   }
   return (await res.json()) as T;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
+}
+
+function normaliseString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  return null;
+}
+
+function mapSavedAnalysis(raw: Record<string, unknown>): StoredAnalysis {
+  return {
+    id: typeof raw.id === "string" ? raw.id : String(raw.id ?? ""),
+    title: typeof raw.title === "string" ? raw.title : normaliseString(raw.address) ?? "",
+    address: typeof raw.address === "string" ? raw.address : "",
+    image: normaliseString(raw.image_url),
+    savedAt: normaliseString(raw.saved_at),
+    totalScore: toNullableNumber(raw.total_score),
+    riskLevel: normaliseString(raw.risk_level),
+    price: toNullableNumber(raw.price),
+    finnkode: normaliseString(raw.finnkode),
+    summary: normaliseString(raw.summary),
+    sourceUrl: normaliseString(raw.source_url),
+    analysisKey: normaliseString(raw.analysis_key),
+  };
 }
 
 export interface LoginPayload {
@@ -377,11 +414,78 @@ export async function fetchUsers(params: UserSearchParams = {}): Promise<UserLis
   return handleResponse<UserListResponse>(res);
 }
 
-export async function fetchSavedAnalyses(): Promise<StoredAnalysesResponse> {
-  const res = await apiFetch("/analyses", {
+export interface FetchSavedAnalysesParams {
+  analysisKey?: string | null;
+}
+
+export async function fetchSavedAnalyses(
+  params: FetchSavedAnalysesParams = {},
+): Promise<StoredAnalysesResponse> {
+  const query = new URLSearchParams();
+  if (params.analysisKey) {
+    query.set("analysisKey", params.analysisKey);
+  }
+  const queryString = query.toString();
+  const resource = queryString ? `/analyses?${queryString}` : "/analyses";
+  const res = await apiFetch(resource, {
     cache: "no-store",
   });
-  return handleResponse<StoredAnalysesResponse>(res);
+  const data = await handleResponse<{ items?: Array<Record<string, unknown>> }>(res);
+  const items = Array.isArray(data.items)
+    ? data.items.map((item) => mapSavedAnalysis(item as Record<string, unknown>))
+    : [];
+  return { items };
+}
+
+export interface SaveAnalysisPayload {
+  analysisKey: string;
+  title?: string | null;
+  address?: string | null;
+  imageUrl?: string | null;
+  totalScore?: number | null;
+  riskLevel?: string | null;
+  price?: number | null;
+  finnkode?: string | null;
+  summary?: string | null;
+  sourceUrl?: string | null;
+}
+
+export async function saveAnalysis(payload: SaveAnalysisPayload): Promise<StoredAnalysis> {
+  const body = {
+    analysis_key: payload.analysisKey,
+    title: payload.title ?? null,
+    address: payload.address ?? null,
+    image_url: payload.imageUrl ?? null,
+    total_score: payload.totalScore ?? null,
+    risk_level: payload.riskLevel ?? null,
+    price: payload.price ?? null,
+    finnkode: payload.finnkode ?? null,
+    summary: payload.summary ?? null,
+    source_url: payload.sourceUrl ?? null,
+  };
+  const res = await apiFetch("/analyses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const data = await handleResponse<Record<string, unknown>>(res);
+  return mapSavedAnalysis(data);
+}
+
+export async function deleteSavedAnalysis(analysisId: string): Promise<void> {
+  const res = await apiFetch(`/analyses/${analysisId}`, {
+    method: "DELETE",
+    cache: "no-store",
+  });
+  if (res.status === 204) {
+    return;
+  }
+  if (!res.ok) {
+    const message = await res.text();
+    throw new Error(message || "Kunne ikke fjerne analysen.");
+  }
+  await handleResponse<unknown>(res);
 }
 
 export async function changeUserRole(

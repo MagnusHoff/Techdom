@@ -2,13 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "./components/chrome";
 import UserEmojiAvatar from "./components/user-avatar";
 import { fetchCurrentUser, fetchStats, fetchUserStatus } from "@/lib/api";
 import { extractFinnkode } from "@/lib/listing";
-import { resolveUserLevel, userDisplayName, userInitials } from "@/lib/user";
+import {
+  listUserLevels,
+  resolveUserLevel,
+  userDisplayName,
+  userInitials,
+  type UserLevelDefinition,
+} from "@/lib/user";
 import type { AuthUser, UserStatusResponse } from "@/lib/types";
 
 const INITIAL_ANALYSED_COUNT = 48;
@@ -331,15 +338,90 @@ function MinStatusCard({ user, totalAnalyses, statusError, onUserUpdate }: MinSt
   const initials = userInitials(user);
   const name = userDisplayName(user);
   const level = resolveUserLevel(totalAnalyses);
-  const badgeStyle = useMemo(() => {
-    const baseColor = level.color || "#9CA3AF";
-    return {
-      color: baseColor,
-      backgroundColor: hexWithAlpha(baseColor, 0.18),
-      borderColor: hexWithAlpha(baseColor, 0.35),
-      boxShadow: `0 0 0 1px ${hexWithAlpha(baseColor, 0.22)} inset`,
-    } as const;
-  }, [level.color]);
+  const [levelDialogOpen, setLevelDialogOpen] = useState(false);
+  const levelDefinitions = useMemo(() => listUserLevels(), []);
+  const badgeContainerRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+
+  const closeLevelDialog = useCallback(() => {
+    setLevelDialogOpen(false);
+  }, []);
+
+  const buildBadgeStyle = useCallback(
+    (definition: Pick<UserLevelDefinition, "color" | "glow">): CSSProperties => {
+      const accent = definition.color?.trim() || "#94a3b8";
+      const hoverBackground = hexWithAlpha(accent, 0.45);
+      return {
+        "--level-badge-bg": hexWithAlpha(accent, 0.32),
+        "--level-badge-bg-hover": hoverBackground,
+        "--level-badge-border": hexWithAlpha(accent, 0.6),
+        "--level-badge-color": "#FFFFFF",
+        "--level-badge-shadow": definition.glow
+          ? `${definition.glow}, 0 0 0 1px ${hexWithAlpha(accent, 0.45)} inset`
+          : `0 0 0 1px ${hexWithAlpha(accent, 0.45)} inset`,
+      } as CSSProperties;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!levelDialogOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeLevelDialog();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeLevelDialog, levelDialogOpen]);
+
+  useEffect(() => {
+    if (!levelDialogOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      const container = badgeContainerRef.current;
+      const popover = popoverRef.current;
+
+      if (!target) {
+        return;
+      }
+
+      if (container && container.contains(target)) {
+        return;
+      }
+
+      if (popover && popover.contains(target)) {
+        return;
+      }
+
+      closeLevelDialog();
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [closeLevelDialog, levelDialogOpen]);
+
+  const formatLevelRequirement = (definition: UserLevelDefinition): string => {
+    const minLabel = formatNumber(definition.minAnalyses);
+    if (definition.maxAnalyses === null) {
+      return `${minLabel}+ analyser`;
+    }
+    const maxLabel = formatNumber(definition.maxAnalyses);
+    return `${minLabel}–${maxLabel} analyser`;
+  };
+
+  const badgeStyle = useMemo(
+    () => buildBadgeStyle(level),
+    [buildBadgeStyle, level.color, level.glow],
+  );
   const analysisLabel = level.analyses === 1 ? "analyse" : "analyser";
   const badgeAriaLabel = `${level.label} – ${level.analyses} ${analysisLabel}`;
 
@@ -362,15 +444,72 @@ function MinStatusCard({ user, totalAnalyses, statusError, onUserUpdate }: MinSt
 
         <div className="status-card__personal-details">
           <p className="status-card__name">{name}</p>
-          <span
-            className="status-card__badge"
-            aria-label={badgeAriaLabel}
-            title={`${level.analyses} ${analysisLabel}`}
-            style={badgeStyle}
-            data-user-level={level.level}
-          >
-            {level.label}
-          </span>
+          <div className="status-card__badge-wrapper" ref={badgeContainerRef}>
+            <button
+              type="button"
+              className="status-card__badge"
+              aria-label={`${badgeAriaLabel}. Trykk for å se alle nivåer.`}
+              aria-haspopup="dialog"
+              aria-expanded={levelDialogOpen}
+              title={`${level.analyses} ${analysisLabel}`}
+              style={badgeStyle}
+              data-user-level={level.level}
+              onClick={() => setLevelDialogOpen((prev) => !prev)}
+            >
+              {level.label}
+            </button>
+
+            {levelDialogOpen ? (
+              <div
+                ref={popoverRef}
+                className="level-popover"
+                role="dialog"
+                aria-labelledby="level-dialog-title"
+              >
+                <div className="level-popover__header">
+                  <h3 id="level-dialog-title">Nivåer</h3>
+                  <button
+                    type="button"
+                    className="level-popover__close"
+                    aria-label="Lukk nivåoversikten"
+                    onClick={closeLevelDialog}
+                  >
+                    x
+                  </button>
+                </div>
+                <p className="level-popover__description">Krav for hvert nivå i Techdom.</p>
+                <ul className="level-popover__list">
+                  {levelDefinitions.map((definition) => {
+                    const requirement = formatLevelRequirement(definition);
+                    const isActive = definition.level === level.level;
+                    const style = buildBadgeStyle(definition);
+                    return (
+                      <li key={definition.level} className="level-popover__item" data-level={definition.level}>
+                        <span
+                          className={
+                            isActive
+                              ? "level-popover__pill is-active"
+                              : "level-popover__pill"
+                          }
+                          style={style}
+                        >
+                          <span className="level-popover__pill-label">
+                            {definition.emoji ? (
+                              <span className="level-popover__pill-emoji" aria-hidden="true">
+                                {definition.emoji}
+                              </span>
+                            ) : null}
+                            <span className="level-popover__pill-text">{definition.label}</span>
+                          </span>
+                          <span className="level-popover__pill-requirement">{requirement}</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { fetchSavedAnalyses } from "@/lib/api";
+import { deleteSavedAnalysis, fetchSavedAnalyses } from "@/lib/api";
 import type { StoredAnalysis } from "@/lib/types";
 import {
   ArrowLeft,
@@ -208,6 +208,8 @@ export default function MyAnalysesPage() {
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const fetchAnalyses = useCallback(async () => {
     setLoading(true);
@@ -375,7 +377,7 @@ export default function MyAnalysesPage() {
     });
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (!hasSelections) {
       return;
     }
@@ -385,17 +387,69 @@ export default function MyAnalysesPage() {
     if (!confirmed) {
       return;
     }
-    setAnalyses((prev) => prev.filter((item) => !selectedSet.has(item.id)));
-    setSelectedIds([]);
+    setBulkDeleting(true);
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      selectedIds.forEach((id) => next.add(id));
+      return next;
+    });
+    const targets = analyses.filter((item) => selectedIds.includes(item.id));
+    const failures: string[] = [];
+    const succeededIds = new Set<string>();
+    await Promise.all(
+      targets.map(async (analysis) => {
+        try {
+          await deleteSavedAnalysis(analysis.id);
+          succeededIds.add(analysis.id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Kunne ikke slette analysen.";
+          failures.push(`${analysis.address || analysis.title || analysis.id}: ${message}`);
+        }
+      }),
+    );
+    if (failures.length) {
+      window.alert(`Noen analyser kunne ikke slettes:\n${failures.join("\n")}`);
+    }
+    if (succeededIds.size > 0) {
+      setAnalyses((prev) => prev.filter((item) => !succeededIds.has(item.id)));
+      setSelectedIds((prevSelected) => prevSelected.filter((id) => !succeededIds.has(id)));
+      setPreviewId((prev) => (prev && succeededIds.has(prev) ? null : prev));
+    }
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      selectedIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    setBulkDeleting(false);
+    void fetchAnalyses();
   };
 
-  const handleSingleDelete = (analysisId: string) => {
+  const handleSingleDelete = async (analysisId: string) => {
     const confirmed = window.confirm("Fjern denne analysen fra listen? Du kan hente den igjen ved å laste siden.");
     if (!confirmed) {
       return;
     }
-    setAnalyses((prev) => prev.filter((item) => item.id !== analysisId));
-    setSelectedIds((prevSelected) => prevSelected.filter((id) => id !== analysisId));
+    setDeletingIds((prev) => {
+      const next = new Set(prev);
+      next.add(analysisId);
+      return next;
+    });
+    try {
+      await deleteSavedAnalysis(analysisId);
+      setAnalyses((prev) => prev.filter((item) => item.id !== analysisId));
+      setSelectedIds((prevSelected) => prevSelected.filter((id) => id !== analysisId));
+      setPreviewId((prev) => (prev === analysisId ? null : prev));
+      void fetchAnalyses();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke slette analysen.";
+      window.alert(message);
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(analysisId);
+        return next;
+      });
+    }
   };
 
   const handleDuplicate = (analysis: StoredAnalysis) => {
@@ -497,7 +551,7 @@ export default function MyAnalysesPage() {
   return (
     <main className="page-gradient">
       <PageContainer>
-        <SiteHeader showAction actionHref="/analysis" actionLabel="Ny analyse" />
+        <SiteHeader showAction actionHref="/" actionLabel="Ny analyse" />
 
         <section className="analyses-premium">
           <div className="analyses-premium-card">
@@ -555,7 +609,13 @@ export default function MyAnalysesPage() {
               <div className="analyses-bulk-bar">
                 <span className="analyses-bulk-count">{selectedIds.length} valgt</span>
                 <div className="analyses-bulk-actions">
-                  <button type="button" className="analyses-bulk-button analyses-bulk-button--danger" onClick={handleBulkDelete}>
+                  <button
+                    type="button"
+                    className="analyses-bulk-button analyses-bulk-button--danger"
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    aria-busy={bulkDeleting ? "true" : undefined}
+                  >
                     <Trash2 size={16} aria-hidden="true" />
                     Slett valgte
                   </button>
@@ -585,7 +645,7 @@ export default function MyAnalysesPage() {
                 <EmptyIllustration />
                 <h2>Ingen analyser ennå</h2>
                 <p>Kjør en ny analyse eller juster filtrene for å komme i gang.</p>
-                <Link href="/analysis" className="analyses-empty-action">
+                <Link href="/" className="analyses-empty-action">
                   Ny analyse
                 </Link>
               </div>
@@ -620,6 +680,7 @@ export default function MyAnalysesPage() {
                         const { economy, condition } = extractScores(analysis.summary);
                         const riskVariant = getRiskVariant(analysis.riskLevel);
                         const targetLink = buildAnalysisLink(analysis);
+                        const deleting = deletingIds.has(analysis.id);
                         return (
                           <tr key={analysis.id} onClick={() => handleOpenPreview(analysis.id)}>
                             <td onClick={(event) => event.stopPropagation()}>
@@ -729,6 +790,8 @@ export default function MyAnalysesPage() {
                                   className="analysis-action-button analysis-action-button--danger"
                                   onClick={() => handleSingleDelete(analysis.id)}
                                   aria-label="Slett analyse"
+                                  disabled={deleting || bulkDeleting}
+                                  aria-busy={deleting ? "true" : undefined}
                                 >
                                   <Trash2 size={16} aria-hidden="true" />
                                 </button>
@@ -750,6 +813,7 @@ export default function MyAnalysesPage() {
                     const { economy, condition } = extractScores(analysis.summary);
                     const riskVariant = getRiskVariant(analysis.riskLevel);
                     const targetLink = buildAnalysisLink(analysis);
+                    const deleting = deletingIds.has(analysis.id);
                     return (
                       <li key={analysis.id}>
                         <div
@@ -859,6 +923,8 @@ export default function MyAnalysesPage() {
                               className="analysis-action-button analysis-action-button--danger"
                               onClick={() => handleSingleDelete(analysis.id)}
                               aria-label="Slett analyse"
+                              disabled={deleting || bulkDeleting}
+                              aria-busy={deleting ? "true" : undefined}
                             >
                               <Trash2 size={16} aria-hidden="true" />
                             </button>
@@ -1012,7 +1078,12 @@ export default function MyAnalysesPage() {
                 <button type="button" onClick={() => handleDuplicate(previewAnalysis)}>
                   Dupliser
                 </button>
-                <button type="button" onClick={() => handleSingleDelete(previewAnalysis.id)}>
+                <button
+                  type="button"
+                  onClick={() => handleSingleDelete(previewAnalysis.id)}
+                  disabled={deletingIds.has(previewAnalysis.id) || bulkDeleting}
+                  aria-busy={deletingIds.has(previewAnalysis.id) ? "true" : undefined}
+                >
                   Slett
                 </button>
               </div>

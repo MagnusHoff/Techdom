@@ -21,8 +21,20 @@ import {
   type SyntheticEvent,
 } from "react";
 
+import { Heart } from "lucide-react";
+
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { analyzeProspectusPdf, getJobStatus, incrementUserAnalyses, runAnalysis, startAnalysisJob } from "@/lib/api";
+import {
+  analyzeProspectusPdf,
+  analyzeProspectusText,
+  deleteSavedAnalysis,
+  fetchSavedAnalyses,
+  getJobStatus,
+  incrementUserAnalyses,
+  runAnalysis,
+  saveAnalysis,
+  startAnalysisJob,
+} from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -433,6 +445,39 @@ function parseNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function clampScore(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const bounded = Math.max(0, Math.min(100, Math.round(value)));
+  return bounded;
+}
+
+function buildSavedAnalysisSummary(
+  economyScore: number | null,
+  conditionScore: number | null,
+  statusSentence: string | null,
+): string | null {
+  const parts: string[] = [];
+  const econ = clampScore(economyScore);
+  if (econ !== null) {
+    parts.push(`Økonomi ${econ}`);
+  }
+  const condition = clampScore(conditionScore);
+  if (condition !== null) {
+    parts.push(`Tilstandsgrad ${condition}`);
+  }
+  const status = statusSentence?.trim();
+  if (status) {
+    parts.push(status);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  const summary = parts.join(". ");
+  return summary.endsWith(".") ? summary : `${summary}.`;
 }
 
 function formatNumberWithSpaces(value: number): string {
@@ -1517,9 +1562,14 @@ function AnalysisPageContent() {
   const [listingKeyFactsSource, setListingKeyFactsSource] = useState<"job" | "finn" | null>(null);
   const [listingKeyFactsLoading, setListingKeyFactsLoading] = useState(false);
   const [listingKeyFactsError, setListingKeyFactsError] = useState<string | null>(null);
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
   const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
+  const saveFeedbackTimerRef = useRef<number | null>(null);
 
   const registerAnalysisCompletion = useCallback(() => {
     void incrementUserAnalyses()
@@ -1536,13 +1586,76 @@ function AnalysisPageContent() {
       });
   }, [incrementUserAnalyses]);
 
+  const showSaveMessage = useCallback((message: string | null) => {
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current);
+      saveFeedbackTimerRef.current = null;
+    }
+    setSaveMessage(message);
+    if (message) {
+      saveFeedbackTimerRef.current = window.setTimeout(() => {
+        setSaveMessage(null);
+        saveFeedbackTimerRef.current = null;
+      }, 4000);
+    }
+  }, []);
+
   const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
+  const listingFinnkode = useMemo(() => (listingUrl ? extractFinnkode(listingUrl) : null), [listingUrl]);
+  const analysisKey = useMemo(() => {
+    if (listingFinnkode) {
+      return listingFinnkode;
+    }
+    if (listingUrl) {
+      return listingUrl.slice(0, 255);
+    }
+    return null;
+  }, [listingFinnkode, listingUrl]);
   const derivedListingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
     if (!listingDetails) {
       setDetailsOpen(false);
     }
   }, [listingDetails]);
+
+  useEffect(() => {
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current);
+      saveFeedbackTimerRef.current = null;
+    }
+    return () => {
+      if (saveFeedbackTimerRef.current !== null) {
+        window.clearTimeout(saveFeedbackTimerRef.current);
+        saveFeedbackTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!analysisKey) {
+      setSavedAnalysisId(null);
+      setSaveMessage(null);
+      setSaveError(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSavedAnalyses({ analysisKey })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const first = response.items?.[0] ?? null;
+        setSavedAnalysisId(first?.id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSavedAnalysisId(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisKey]);
 
   useEffect(() => {
     setListingKeyFacts([]);
@@ -1668,6 +1781,41 @@ function AnalysisPageContent() {
     return null;
   }, [decisionUi, scoreValue]);
 
+  const scoreBreakdown = useMemo(() => {
+    const fallback = { economy: null as number | null, condition: null as number | null };
+    if (!decisionUi || !Array.isArray(decisionUi.score_breakdown)) {
+      return fallback;
+    }
+    const entries = decisionUi.score_breakdown;
+    const findScore = (predicate: (entry: { id?: string | null; label?: string | null }) => boolean) => {
+      const match = entries.find((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        return predicate(entry);
+      });
+      const rawValue = match?.value;
+      return typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : null;
+    };
+    const economyScore = findScore((entry) => {
+      const id = entry.id?.toLowerCase() ?? "";
+      if (id === "econ" || id === "økonomi" || id === "okonomi") {
+        return true;
+      }
+      const label = entry.label?.toLowerCase() ?? "";
+      return label.includes("økonomi") || label.includes("okonomi") || label.includes("economy");
+    });
+    const conditionScore = findScore((entry) => {
+      const id = entry.id?.toLowerCase() ?? "";
+      if (id === "tr" || id === "tilstand" || id === "tg") {
+        return true;
+      }
+      const label = entry.label?.toLowerCase() ?? "";
+      return label.includes("tilstand") || label.includes("tg") || label.includes("tilstandsgrad");
+    });
+    return { economy: economyScore, condition: conditionScore };
+  }, [decisionUi]);
+
   const scoreColor = colorClass(decisionUi?.scorelinjal?.farge);
   const domLabel = decisionUi?.status?.dom ?? "";
   const statusSentence = decisionUi?.status?.setning ?? "";
@@ -1676,6 +1824,96 @@ function AnalysisPageContent() {
   const tg2Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg2_details), [prospectus]);
   const tg3Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg3_details), [prospectus]);
   const watchoutItems = useMemo(() => prospectus?.watchouts ?? [], [prospectus]);
+
+  const handleToggleSave = useCallback(async () => {
+    if (saveBusy) {
+      return;
+    }
+    if (!analysisKey) {
+      setSaveError("Legg inn FINN-annonsen for å lagre analysen.");
+      return;
+    }
+
+    if (savedAnalysisId) {
+      setSaveBusy(true);
+      setSaveError(null);
+      showSaveMessage(null);
+      try {
+        await deleteSavedAnalysis(savedAnalysisId);
+        setSavedAnalysisId(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Kunne ikke fjerne analysen.";
+        setSaveError(message || "Kunne ikke fjerne analysen.");
+      } finally {
+        setSaveBusy(false);
+      }
+      return;
+    }
+
+    if (!result) {
+      setSaveError("Kjør analysen før du kan lagre.");
+      return;
+    }
+
+    setSaveBusy(true);
+    setSaveError(null);
+    showSaveMessage(null);
+
+    const priceRaw = result.normalised_params?.price;
+    const priceValue = typeof priceRaw === "number" && Number.isFinite(priceRaw) ? priceRaw : null;
+    const summary = buildSavedAnalysisSummary(
+      scoreBreakdown.economy,
+      scoreBreakdown.condition,
+      statusSentence || null,
+    );
+    const payload = {
+      analysisKey,
+      title: previewTitle ?? previewAddress ?? null,
+      address: previewAddress ?? previewTitle ?? null,
+      imageUrl: previewImages.length > 0 ? previewImages[0] : null,
+      totalScore: scorePercent,
+      riskLevel: domLabel || null,
+      price: priceValue,
+      finnkode: listingFinnkode,
+      summary,
+      sourceUrl: listingUrl ?? null,
+    } as const;
+
+    try {
+      const saved = await saveAnalysis(payload);
+      setSavedAnalysisId(saved.id);
+      showSaveMessage("Denne analysen er nå lagret");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke lagre analysen.";
+      const lower = typeof message === "string" ? message.toLowerCase() : "";
+      if (lower.includes("401") || lower.includes("unauth") || lower.includes("forbidden")) {
+        setSaveError("Logg inn for å lagre analyser.");
+      } else {
+        setSaveError(message || "Kunne ikke lagre analysen.");
+      }
+    } finally {
+      setSaveBusy(false);
+    }
+  }, [
+    analysisKey,
+    deleteSavedAnalysis,
+    domLabel,
+    listingFinnkode,
+    listingUrl,
+    previewAddress,
+    previewImages,
+    previewTitle,
+    result,
+    saveAnalysis,
+    saveBusy,
+    savedAnalysisId,
+    scoreBreakdown.economy,
+    scoreBreakdown.condition,
+    scorePercent,
+    showSaveMessage,
+    statusSentence,
+  ]);
+
   const prospectusLinks = useMemo(() => prospectus?.links ?? null, [prospectus]);
   const jobLinkInfo = useMemo(() => {
     if (!jobStatus) {
@@ -1934,6 +2172,8 @@ function AnalysisPageContent() {
     };
 
   const jobCompleted = useMemo(() => Boolean(result), [result]);
+  const showSaveControl = Boolean(analysisKey || savedAnalysisId);
+  const saveToggleDisabled = (!result && !savedAnalysisId) || !analysisKey;
 
   const previewImageTotal = previewImages.length;
   const safePreviewIndex = previewImageTotal > 0 ? Math.max(0, Math.min(previewImageIndex, previewImageTotal - 1)) : 0;
@@ -2525,6 +2765,12 @@ function AnalysisPageContent() {
           listingAddress={previewAddress}
           loading={previewLoading}
           error={previewError}
+          onToggleSave={showSaveControl ? handleToggleSave : undefined}
+          saved={Boolean(savedAnalysisId)}
+          saveDisabled={saveToggleDisabled}
+          saveBusy={saveBusy}
+          saveMessage={saveMessage}
+          saveError={saveError}
           statusCard={
             analyzing ? (
               <AnalysisUpdateCard />
@@ -2849,6 +3095,12 @@ interface ListingPreviewCardProps {
   loading: boolean;
   error: string | null;
   statusCard?: ReactNode;
+  onToggleSave?: (() => void) | null;
+  saved?: boolean;
+  saveDisabled?: boolean;
+  saveBusy?: boolean;
+  saveMessage?: string | null;
+  saveError?: string | null;
 }
 
 interface JobStatusCardProps {
@@ -3442,6 +3694,12 @@ function ListingPreviewCard({
   loading,
   error,
   statusCard,
+  onToggleSave = null,
+  saved = false,
+  saveDisabled = false,
+  saveBusy = false,
+  saveMessage = null,
+  saveError = null,
 }: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
   const imageCount = Array.isArray(imageUrls) ? imageUrls.length : 0;
@@ -3613,11 +3871,30 @@ function ListingPreviewCard({
     return imageCount > 1 ? `${baseDescription} (${safeIndex + 1} av ${imageCount})` : baseDescription;
   })();
   const navigationDisabled = imageCount < 2;
+  const showSaveToggle = typeof onToggleSave === "function";
+  const disableSaveButton = Boolean(saveDisabled) || Boolean(saveBusy);
+  const saveButtonLabel = saved ? "Fjern fra lagrede analyser" : "Lagre denne analysen";
+  const feedbackText = saveError ?? saveMessage ?? null;
+  const feedbackClassName = saveError ? "preview-save-feedback has-error" : "preview-save-feedback";
 
   return (
     <aside className="listing-preview-card">
       {heading ? <h2 className="preview-heading">{heading}</h2> : null}
       <div className="preview-frame">
+        {showSaveToggle ? (
+          <button
+            type="button"
+            className={`preview-save-toggle${saved ? " is-active" : ""}${saveBusy ? " is-busy" : ""}`}
+            onClick={onToggleSave ?? undefined}
+            aria-pressed={saved ? "true" : "false"}
+            aria-label={saveButtonLabel}
+            disabled={disableSaveButton}
+            aria-busy={saveBusy ? "true" : undefined}
+          >
+            <Heart aria-hidden="true" />
+            <span className="sr-only">{saveButtonLabel}</span>
+          </button>
+        ) : null}
         {currentImage ? (
           <>
             <img
@@ -3659,6 +3936,11 @@ function ListingPreviewCard({
         )}
       </div>
       {currentImage ? <span className="sr-only">{srStatus}</span> : null}
+      {showSaveToggle && feedbackText ? (
+        <p className={feedbackClassName} role="status" aria-live="polite">
+          {feedbackText}
+        </p>
+      ) : null}
       {statusCard ? <div className="listing-status-card">{statusCard}</div> : null}
     </aside>
   );

@@ -114,6 +114,7 @@ export interface StoredAnalysis {
   finnkode: string | null;
   summary: string | null;
   sourceUrl: string | null;
+  analysisKey?: string | null;
 }
 
 export interface StoredAnalysesResponse {
