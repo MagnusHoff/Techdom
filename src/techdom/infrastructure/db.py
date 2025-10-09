@@ -34,6 +34,14 @@ def _normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
 
     if driver in {"postgres", "postgresql", "postgresql+psycopg", "postgresql+psycopg2", "postgresql+asyncpg"}:
         url = url.set(drivername="postgresql+psycopg_async")
+    elif driver and driver.startswith("sqlite"):
+        database = url.database or ""
+        if database:
+            db_path = Path(database)
+            if not db_path.is_absolute():
+                project_root = Path(__file__).resolve().parents[3]
+                db_path = (project_root / db_path).resolve()
+                url = url.set(database=str(db_path))
 
     return url.render_as_string(hide_password=False), {}
 
@@ -43,7 +51,12 @@ def _resolve_database_url() -> Tuple[str, Dict[str, Any]]:
     if url:
         return _normalise_database_url(url)
 
-    sqlite_path = Path(os.getenv("LOCAL_SQLITE_PATH", "data/local.db")).resolve()
+    sqlite_raw = os.getenv("LOCAL_SQLITE_PATH", "data/local.db")
+    sqlite_path = Path(sqlite_raw)
+    if not sqlite_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[3]
+        sqlite_path = project_root / sqlite_path
+    sqlite_path = sqlite_path.resolve()
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     logger.warning(
         "DATABASE_URL is not set. Falling back to local SQLite database at %s", sqlite_path

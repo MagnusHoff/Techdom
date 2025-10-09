@@ -610,7 +610,8 @@ class ProspectAnalysisPipeline:
                 "decision_ui": analysis_result.decision_ui,
                 "ai_text": analysis_result.ai_text,
             }
-                self.job_service.store_artifact(job_id, "analysis", analysis_payload)
+
+            self.job_service.store_artifact(job_id, "analysis", analysis_payload)
 
             self.job_service.mark_done(
                 job_id,

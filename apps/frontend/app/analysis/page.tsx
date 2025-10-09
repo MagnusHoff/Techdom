@@ -51,15 +51,24 @@ const DEFAULT_FORM: AnalysisPayload = {
 };
 
 const FORM_FIELD_TOOLTIPS: Record<string, string> = {
-  Kjøpesum: "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
-  Egenkapital: "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
-  "Rente % p.a.": "Hvor mye du betaler i renter til banken hvert år. For eksempel betyr 5 % rente at du betaler 5 % av lånet i renter årlig.",
-  "Lånetid (år)": "Hvor mange år du skal bruke på å betale ned hele lånet. Lengre tid gir lavere månedsbeløp, men mer renter totalt.",
-  "Leie (mnd)": "Summen du får inn fra leietaker hver måned før utgifter. Dette er hovedinntekten fra utleien.",
-  "Felleskost (mnd)": "Faste månedlige kostnader til sameiet, for eksempel vaktmester, felles forsikring og bygningsvedlikehold.",
-  "Vedlikehold % av leie": "En prosentandel av leien du setter av til vedlikehold. Dette dekker ting som maling, reparasjoner eller utskiftning av hvitevarer.",
-  "Andre kost (mnd)": "Andre faste utgifter du må regne med hver måned, som strøm, internett eller forsikring.",
-  "Ledighet %": "Hvor mye av året boligen står tom uten leietaker. For eksempel 10 % betyr at den er tom 1,2 måneder i året.",
+  Kjøpesum:
+    "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  Egenkapital:
+    "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  "Rente % p.a.":
+    "Hvor mye du betaler i renter til banken hvert år. For eksempel betyr 5 % rente at du betaler 5 % av lånet i renter årlig.",
+  "Lånetid (år)":
+    "Hvor mange år du skal bruke på å betale ned hele lånet. Lengre tid gir lavere månedsbeløp, men mer renter totalt.",
+  "Leie (mnd)":
+    "Summen du får inn fra leietaker hver måned før utgifter. Dette er hovedinntekten fra utleien.",
+  "Felleskost (mnd)":
+    "Faste månedlige kostnader til sameiet, for eksempel vaktmester, felles forsikring og bygningsvedlikehold.",
+  "Vedlikehold % av leie":
+    "En prosentandel av leien du setter av til vedlikehold. Dette dekker ting som maling, reparasjoner eller utskiftning av hvitevarer.",
+  "Andre kost (mnd)":
+    "Andre faste utgifter du må regne med hver måned, som strøm, internett eller forsikring.",
+  "Ledighet %":
+    "Hvor mye av året boligen står tom uten leietaker. For eksempel 10 % betyr at den er tom 1,2 måneder i året.",
 };
 
 const PROSPECTUS_CARD_TOOLTIPS: Record<string, string> = {
