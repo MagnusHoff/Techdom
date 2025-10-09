@@ -22,14 +22,7 @@ import {
 } from "react";
 
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import {
-  analyzeProspectusPdf,
-  analyzeProspectusText,
-  getJobStatus,
-  incrementUserAnalyses,
-  runAnalysis,
-  startAnalysisJob,
-} from "@/lib/api";
+import { analyzeProspectusPdf, getJobStatus, incrementUserAnalyses, runAnalysis, startAnalysisJob } from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -1489,10 +1482,6 @@ function AnalysisPageContent() {
   const [manualProspectusLoading, setManualProspectusLoading] = useState(false);
   const [manualProspectusError, setManualProspectusError] = useState<string | null>(null);
   const [manualProspectusSuccess, setManualProspectusSuccess] = useState(false);
-  const [manualProspectusText, setManualProspectusText] = useState("");
-  const [manualProspectusTextLoading, setManualProspectusTextLoading] = useState(false);
-  const [manualProspectusTextError, setManualProspectusTextError] = useState<string | null>(null);
-  const [manualProspectusTextSuccess, setManualProspectusTextSuccess] = useState(false);
   const [manualProspectusShouldRefresh, setManualProspectusShouldRefresh] = useState(false);
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewContainHints, setPreviewContainHints] = useState<Set<string>>(() => new Set());
@@ -1719,9 +1708,8 @@ function AnalysisPageContent() {
   const tgDataAvailable =
     tg2Items.length > 0 || tg3Items.length > 0 || tg2Details.length > 0 || tg3Details.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
-  const manualProspectusHasSuccess = manualProspectusSuccess || manualProspectusTextSuccess;
   const manualProspectusShowResults =
-    manualProspectusHasSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+    manualProspectusSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
   const missingProspectus = useMemo(() => {
     if (effectiveLinks?.salgsoppgave_pdf) {
       return false;
@@ -2013,52 +2001,6 @@ function AnalysisPageContent() {
     setManualProspectusSuccess(false);
   }, []);
 
-  const handleManualProspectusTextChange = useCallback(
-    (next: string) => {
-      setManualProspectusText(next);
-      if (manualProspectusTextError) {
-        setManualProspectusTextError(null);
-      }
-      if (manualProspectusTextSuccess) {
-        setManualProspectusTextSuccess(false);
-      }
-    },
-    [manualProspectusTextError, manualProspectusTextSuccess],
-  );
-
-  const handleManualProspectusTextAnalyze = useCallback(async () => {
-    const trimmed = manualProspectusText.trim();
-    if (!trimmed) {
-      setManualProspectusTextError("Lim inn salgsoppgaven først.");
-      setManualProspectusTextSuccess(false);
-      return;
-    }
-    setManualProspectusTextLoading(true);
-    setManualProspectusTextError(null);
-    setManualProspectusTextSuccess(false);
-    try {
-      const response = await analyzeProspectusText({ text: trimmed });
-      setProspectus((prev) => ({
-        ...response,
-        links: prev?.links,
-      }));
-      setManualProspectusTextSuccess(true);
-      setManualProspectusShouldRefresh(true);
-    } catch (err) {
-      setManualProspectusTextError(
-        err instanceof Error ? err.message : "Kunne ikke analysere teksten.",
-      );
-    } finally {
-      setManualProspectusTextLoading(false);
-    }
-  }, [manualProspectusText]);
-
-  const handleManualProspectusTextClear = useCallback(() => {
-    setManualProspectusText("");
-    setManualProspectusTextError(null);
-    setManualProspectusTextSuccess(false);
-  }, []);
-
   useEffect(() => {
     if (!manualProspectusShouldRefresh) {
       return;
@@ -2178,10 +2120,6 @@ function AnalysisPageContent() {
     setManualProspectusFile(null);
     setManualProspectusError(null);
     setManualProspectusSuccess(false);
-    setManualProspectusText("");
-    setManualProspectusTextError(null);
-    setManualProspectusTextSuccess(false);
-    setManualProspectusTextLoading(false);
     setManualProspectusShouldRefresh(false);
     setManualProspectusLoading(false);
     setPreviewImages([]);
@@ -2796,15 +2734,6 @@ function AnalysisPageContent() {
                       loading={manualProspectusLoading}
                       error={manualProspectusError}
                       success={manualProspectusSuccess}
-                    />
-                    <ManualProspectusTextCard
-                      text={manualProspectusText}
-                      onTextChange={handleManualProspectusTextChange}
-                      onAnalyze={handleManualProspectusTextAnalyze}
-                      onClear={handleManualProspectusTextClear}
-                      loading={manualProspectusTextLoading}
-                      error={manualProspectusTextError}
-                      success={manualProspectusTextSuccess}
                     />
                     {manualProspectusShowResults ? (
                       <>
@@ -3888,79 +3817,6 @@ function ManualProspectusCard({
           disabled={loading || !file}
         >
           Fjern fil
-        </button>
-      </div>
-      {error ? <p className="manual-prospectus-feedback error">{error}</p> : null}
-      {!error && success ? (
-        <p className="manual-prospectus-feedback success">TG-punktene er oppdatert.</p>
-      ) : null}
-    </div>
-  );
-}
-
-interface ManualProspectusTextCardProps {
-  text: string;
-  onTextChange: (value: string) => void;
-  onAnalyze: () => void;
-  onClear: () => void;
-  loading: boolean;
-  error: string | null;
-  success: boolean;
-}
-
-function ManualProspectusTextCard({
-  text,
-  onTextChange,
-  onAnalyze,
-  onClear,
-  loading,
-  error,
-  success,
-}: ManualProspectusTextCardProps) {
-  const textareaId = useId();
-  const trimmedLength = text.trim().length;
-  const analyzeDisabled = loading || trimmedLength === 0;
-
-  return (
-    <div className="prospectus-card prospectus-card-span manual-prospectus-card manual-prospectus-text-card">
-      <div className="prospectus-card-header">
-        <h3>Lim inn salgsoppgaven</h3>
-        <span className="prospectus-badge info">Manuell</span>
-      </div>
-      <p className="manual-prospectus-intro">
-        Kopier sentrale deler fra salgsoppgaven (for eksempel TG-listen) og lim inn teksten her.
-      </p>
-      <label className="manual-prospectus-label" htmlFor={textareaId}>
-        Tekstinnhold
-      </label>
-      <textarea
-        id={textareaId}
-        className="manual-prospectus-textarea"
-        value={text}
-        onChange={(event) => onTextChange(event.target.value)}
-        placeholder="Lim inn utdrag fra salgsoppgaven …"
-        rows={9}
-        disabled={loading}
-      />
-      <div className="manual-prospectus-text-meta">
-        <span>{trimmedLength.toLocaleString("nb-NO")} tegn</span>
-      </div>
-      <div className="prospectus-actions manual-prospectus-actions">
-        <button
-          type="button"
-          className="prospectus-action primary"
-          onClick={onAnalyze}
-          disabled={analyzeDisabled}
-        >
-          {loading ? "Analyserer…" : "Analyser tekst"}
-        </button>
-        <button
-          type="button"
-          className="prospectus-action secondary"
-          onClick={onClear}
-          disabled={loading || text.length === 0}
-        >
-          Tøm feltet
         </button>
       </div>
       {error ? <p className="manual-prospectus-feedback error">{error}</p> : null}
