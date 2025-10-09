@@ -159,6 +159,52 @@ def _ensure_users_schema(sync_conn) -> None:
         )
         columns.add("total_analyses")
 
+    if "stripe_customer_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(255);"))
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_stripe_customer_id "
+                "ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;"
+            )
+        )
+        columns.add("stripe_customer_id")
+
+    if "stripe_subscription_id" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN stripe_subscription_id VARCHAR(255);")
+        )
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_stripe_subscription_id "
+                "ON users (stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;"
+            )
+        )
+        columns.add("stripe_subscription_id")
+
+    if "subscription_status" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN subscription_status VARCHAR(64);"))
+        columns.add("subscription_status")
+
+    if "subscription_price_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN subscription_price_id VARCHAR(255);"))
+        columns.add("subscription_price_id")
+
+    if "subscription_current_period_end" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN subscription_current_period_end TIMESTAMPTZ;"
+            )
+        )
+        columns.add("subscription_current_period_end")
+
+    if "subscription_cancel_at_period_end" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN subscription_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;"
+            )
+        )
+        columns.add("subscription_cancel_at_period_end")
+
 
 async def ensure_auth_schema() -> None:
     """Ensure backward compatible auth schema (e.g. username column)."""

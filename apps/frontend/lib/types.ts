@@ -172,6 +172,12 @@ export interface AuthUser {
   role: "user" | "plus" | "admin";
   is_active: boolean;
   is_email_verified: boolean;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+  subscription_status?: string | null;
+  subscription_price_id?: string | null;
+  subscription_current_period_end?: string | null;
+  subscription_cancel_at_period_end?: boolean;
   created_at: string;
   updated_at: string;
   total_analyses: number;

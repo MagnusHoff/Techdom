@@ -5,7 +5,15 @@ import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "
 
 import { AUTH_MODAL_EVENT, PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
 import UserEmojiAvatar from "../components/user-avatar";
-import { changePassword, fetchCurrentUser, logoutUser, updateUsername } from "@/lib/api";
+import {
+  BillingInterval,
+  changePassword,
+  createSubscriptionCheckoutSession,
+  createSubscriptionPortalSession,
+  fetchCurrentUser,
+  logoutUser,
+  updateUsername,
+} from "@/lib/api";
 import { userDisplayName, userInitials } from "@/lib/user";
 import { AlertTriangle, Check, ChevronDown, Lock, LogOut, User } from "lucide-react";
 import type { AuthUser } from "@/lib/types";
@@ -17,7 +25,6 @@ const PASSWORD_PATTERN =
 const PASSWORD_REQUIREMENT_MESSAGE =
   "Passordet må være minst 8 tegn og inneholde store og små bokstaver, tall og spesialtegn.";
 
-type BillingInterval = "monthly" | "yearly";
 type PlanId = "free" | "plus";
 
 interface PlanCardConfig {
@@ -578,7 +585,9 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
   const [openAccordion, setOpenAccordion] = useState<string | null>(
     FEATURE_COMPARISON[0]?.id ?? null,
   );
-  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
   const [downgradeTooltip, setDowngradeTooltip] = useState(false);
   const [stickyVisible, setStickyVisible] = useState(false);
 
@@ -609,19 +618,6 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isPlusUser]);
-
-  useEffect(() => {
-    if (!upgradeModalOpen) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setUpgradeModalOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [upgradeModalOpen]);
 
   useEffect(() => {
     if (!isPlusUser) {
@@ -656,15 +652,63 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
     [],
   );
 
-  const handlePlusCta = useCallback(() => {
+  const handlePlusCta = useCallback(async () => {
     if (!isLoggedIn) {
       onRequestSignup();
       return;
     }
-    if (isFreeUser) {
-      setUpgradeModalOpen(true);
+
+    if (!isFreeUser) {
+      return;
     }
-  }, [isFreeUser, isLoggedIn, onRequestSignup]);
+
+    setSubscriptionError(null);
+    setCheckoutLoading(true);
+
+    try {
+      const checkoutUrl = await createSubscriptionCheckoutSession(billingInterval);
+      if (typeof window !== "undefined") {
+        window.location.assign(checkoutUrl);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke starte Stripe Checkout akkurat nå.";
+      setSubscriptionError(message);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, [billingInterval, isFreeUser, isLoggedIn, onRequestSignup]);
+
+  const handlePortalCta = useCallback(async () => {
+    if (!isLoggedIn) {
+      onRequestSignup();
+      return;
+    }
+
+    if (!isPlusUser) {
+      return;
+    }
+
+    setSubscriptionError(null);
+    setPortalLoading(true);
+
+    try {
+      const portalUrl = await createSubscriptionPortalSession();
+      if (typeof window !== "undefined") {
+        window.location.assign(portalUrl);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Kunne ikke åpne Stripe-portalen akkurat nå.";
+      setSubscriptionError(message);
+    } finally {
+      setPortalLoading(false);
+    }
+  }, [isLoggedIn, isPlusUser, onRequestSignup]);
 
   const handleFreeCta = useCallback(() => {
     if (!isLoggedIn) {
@@ -700,6 +744,12 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
           </button>
         </div>
       </section>
+
+      {subscriptionError ? (
+        <p className="profile-feedback profile-feedback--error" role="alert">
+          {subscriptionError}
+        </p>
+      ) : null}
 
       <section className="subscription-plan-grid" aria-label="Abonnementskort">
         {planOrder.map((planId) => {
@@ -760,15 +810,28 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
 
             if (planId === "plus") {
               if (isPlusUser) {
-                return <span className="subscription-plan-current">Nåværende plan</span>;
+                return (
+                  <>
+                    <span className="subscription-plan-current">Nåværende plan</span>
+                    <button
+                      type="button"
+                      className="subscription-plan-cta subscription-plan-cta--secondary"
+                      onClick={handlePortalCta}
+                      disabled={portalLoading}
+                    >
+                      {portalLoading ? "Åpner…" : "Administrer i Stripe"}
+                    </button>
+                  </>
+                );
               }
               return (
                 <button
                   type="button"
                   className="subscription-plan-cta"
                   onClick={handlePlusCta}
+                  disabled={checkoutLoading}
                 >
-                  Oppgrader til Pluss
+                  {checkoutLoading ? "Sender til Stripe…" : "Oppgrader til Pluss"}
                 </button>
               );
             }
@@ -881,54 +944,6 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
           >
             {stickyCtaLabel}
           </button>
-        </div>
-      ) : null}
-
-      {upgradeModalOpen ? (
-        <div
-          className="subscription-modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="subscription-upgrade-title"
-          onClick={() => setUpgradeModalOpen(false)}
-        >
-          <div
-            className="subscription-modal"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="subscription-modal-header">
-              <h3 id="subscription-upgrade-title">Oppgrader til Pluss</h3>
-              <button
-                type="button"
-                className="subscription-modal-close"
-                onClick={() => setUpgradeModalOpen(false)}
-                aria-label="Lukk oppgraderingsmodal"
-              >
-                ×
-              </button>
-            </div>
-            <p className="subscription-modal-body">
-              Få ubegrenset analysekapasitet, avansert innsikt og prioritert støtte fra Techdom.ai-teamet.
-            </p>
-            <ul className="subscription-modal-list">
-              <li>Ubegrensede analyser og historikk</li>
-              <li>Scenario-simulering og eksport av data</li>
-              <li>Prioritert kundestøtte fra spesialistene våre</li>
-            </ul>
-            <a
-              className="subscription-modal-primary"
-              href="mailto:support@techdom.ai?subject=Oppgradering%20til%20Techdom%20Pluss"
-            >
-              Send forespørsel
-            </a>
-            <button
-              type="button"
-              className="subscription-modal-secondary"
-              onClick={() => setUpgradeModalOpen(false)}
-            >
-              Avbryt
-            </button>
-          </div>
         </div>
       ) : null}
     </div>
