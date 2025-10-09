@@ -14,11 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 _STRIPE_IMPORT_ERROR: Exception | None = None
 
 try:
-    from stripe import StripeClient, Webhook
+    import stripe
     from stripe.error import SignatureVerificationError, StripeError
 except ImportError as exc:  # pragma: no cover - optional dependency
-    StripeClient = None  # type: ignore[assignment]
-    Webhook = None  # type: ignore[assignment]
+    stripe = None  # type: ignore[assignment]
     SignatureVerificationError = Exception  # type: ignore[assignment]
     StripeError = Exception  # type: ignore[assignment]
     _STRIPE_IMPORT_ERROR = exc
@@ -110,28 +109,26 @@ def get_stripe_settings() -> StripeSettings:
 
 
 @lru_cache(maxsize=1)
-def get_stripe_client() -> StripeClient:
-    if StripeClient is None:  # pragma: no cover - defensive guard when dependency missing
+def _ensure_stripe_module(settings: StripeSettings) -> None:
+    if stripe is None:  # pragma: no cover - defensive guard when dependency missing
         message = "stripe-biblioteket er ikke installert. Legg til 'stripe' i requirements."
         if _STRIPE_IMPORT_ERROR:
             message = f"{message} ({_STRIPE_IMPORT_ERROR})"
         raise StripeConfigurationError(message)
-    settings = get_stripe_settings()
-    return StripeClient(api_key=settings.api_key)
+    stripe.api_key = settings.api_key
 
 
 async def _ensure_customer(
     session: AsyncSession,
     *,
     user: User,
-    client: StripeClient,
 ) -> str:
     if user.stripe_customer_id:
         return user.stripe_customer_id
 
     metadata: dict[str, str] = {"user_id": str(user.id)}
     customer = await asyncio.to_thread(
-        client.customers.create,
+        stripe.Customer.create,
         email=user.email,
         name=user.username or None,
         metadata=metadata,
@@ -150,20 +147,20 @@ async def create_checkout_session(
     billing_interval: BillingInterval,
 ) -> str:
     settings = get_stripe_settings()
-    client = get_stripe_client()
+    _ensure_stripe_module(settings)
 
     user = await session.get(User, user_id)
     if not user:
         raise UserNotFoundError(user_id)
 
-    customer_id = await _ensure_customer(session, user=user, client=client)
+    customer_id = await _ensure_customer(session, user=user)
 
     price_id = settings.price_for(billing_interval)
     metadata = {"user_id": str(user.id), "billing_interval": billing_interval}
 
     try:
         checkout = await asyncio.to_thread(
-            client.checkout.sessions.create,
+            stripe.checkout.Session.create,
             customer=customer_id,
             mode="subscription",
             billing_address_collection="auto",
@@ -191,7 +188,7 @@ async def create_billing_portal_session(
     user_id: int,
 ) -> str:
     settings = get_stripe_settings()
-    client = get_stripe_client()
+    _ensure_stripe_module(settings)
 
     user = await session.get(User, user_id)
     if not user:
@@ -202,7 +199,7 @@ async def create_billing_portal_session(
 
     try:
         portal = await asyncio.to_thread(
-            client.billing_portal.sessions.create,
+            stripe.billing_portal.Session.create,
             customer=user.stripe_customer_id,
             return_url=settings.portal_return_url,
         )
@@ -224,12 +221,12 @@ def construct_event(payload: bytes, signature: str | None) -> Any:
     settings = get_stripe_settings()
     if not settings.webhook_secret:
         raise StripeConfigurationError("STRIPE_WEBHOOK_SECRET er ikke konfigurert")
-    if Webhook is None:  # pragma: no cover - defensive guard
+    if stripe is None:  # pragma: no cover - defensive guard
         raise StripeConfigurationError("stripe-biblioteket er ikke installert")
     if not signature:
         raise StripeSignatureError("Mangler Stripe-signatur i header")
     try:
-        return Webhook.construct_event(payload, signature, settings.webhook_secret)
+        return stripe.Webhook.construct_event(payload, signature, settings.webhook_secret)
     except SignatureVerificationError as exc:
         raise StripeSignatureError("Verifisering av webhook-signatur mislyktes") from exc
 
@@ -360,6 +357,7 @@ async def _apply_subscription_update(
 
 
 async def handle_event(session: AsyncSession, event: Any) -> None:
+    settings = get_stripe_settings()
     event_type = getattr(event, "type", None) or event.get("type")
     data_object = None
     data = getattr(event, "data", None) or event.get("data")
@@ -375,10 +373,10 @@ async def handle_event(session: AsyncSession, event: Any) -> None:
             logger.warning("Checkout-event mangler subscription-id")
             return
 
-        client = get_stripe_client()
+        _ensure_stripe_module(settings)
         try:
             subscription = await asyncio.to_thread(
-                client.subscriptions.retrieve,
+                stripe.Subscription.retrieve,
                 subscription_id,
                 expand=["items.data.price"],
             )
