@@ -1,6 +1,6 @@
 import type { AuthUser } from "./types";
 
-export interface UserLevel {
+export interface UserLevelDefinition {
   level: number;
   title: string;
   label: string;
@@ -8,28 +8,23 @@ export interface UserLevel {
   maxAnalyses: number | null;
   color: string;
   emoji?: string;
+  glow: string;
+}
+
+export interface UserLevel extends UserLevelDefinition {
   analyses: number;
 }
 
-interface RawUserLevel {
-  level: number;
-  title: string;
-  label: string;
-  minAnalyses: number;
-  maxAnalyses: number | null;
-  color: string;
-  emoji?: string;
-}
-
-const USER_LEVELS: RawUserLevel[] = [
+const USER_LEVELS: UserLevelDefinition[] = [
   {
     level: 5,
     title: "Dominus",
     label: "Dominus nivå 5 💎",
     minAnalyses: 1000,
     maxAnalyses: null,
-    color: "#3B82F6",
+    color: "#FFD700",
     emoji: "💎",
+    glow: "0 0 18px rgba(255, 215, 0, 0.6)",
   },
   {
     level: 4,
@@ -37,7 +32,8 @@ const USER_LEVELS: RawUserLevel[] = [
     label: "Eiendomsstrateg nivå 4",
     minAnalyses: 200,
     maxAnalyses: 999,
-    color: "#0EA5E9",
+    color: "#8B5CF6",
+    glow: "0 0 14px rgba(139, 92, 246, 0.4)",
   },
   {
     level: 3,
@@ -45,7 +41,8 @@ const USER_LEVELS: RawUserLevel[] = [
     label: "Porteføljebygger nivå 3",
     minAnalyses: 50,
     maxAnalyses: 199,
-    color: "#FFD700",
+    color: "#F59E0B",
+    glow: "0 0 12px rgba(245, 158, 11, 0.35)",
   },
   {
     level: 2,
@@ -53,7 +50,8 @@ const USER_LEVELS: RawUserLevel[] = [
     label: "Markedstolker nivå 2",
     minAnalyses: 10,
     maxAnalyses: 49,
-    color: "#C0C0C0",
+    color: "#22C55E",
+    glow: "0 0 10px rgba(34, 197, 94, 0.3)",
   },
   {
     level: 1,
@@ -61,9 +59,14 @@ const USER_LEVELS: RawUserLevel[] = [
     label: "Observatør nivå 1",
     minAnalyses: 0,
     maxAnalyses: 9,
-    color: "#9CA3AF",
+    color: "#A78BFA",
+    glow: "0 0 10px rgba(167, 139, 250, 0.3)",
   },
 ];
+
+export function listUserLevels(): UserLevelDefinition[] {
+  return [...USER_LEVELS].reverse();
+}
 
 function normaliseAnalysesCount(value: number): number {
   if (!Number.isFinite(value)) {

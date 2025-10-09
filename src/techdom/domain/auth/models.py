@@ -42,6 +42,12 @@ class User(Base):
         nullable=False,
     )
     total_analyses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    saved_analyses: Mapped[list["SavedAnalysis"]] = relationship(
+        "SavedAnalysis",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"User(id={self.id!r}, email={self.email!r}, role={self.role!r})"

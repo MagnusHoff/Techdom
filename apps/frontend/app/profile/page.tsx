@@ -1,13 +1,13 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
+import { AUTH_MODAL_EVENT, PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
 import UserEmojiAvatar from "../components/user-avatar";
 import { changePassword, fetchCurrentUser, logoutUser, updateUsername } from "@/lib/api";
 import { userDisplayName, userInitials } from "@/lib/user";
-import { Lock, LogOut, User } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Lock, LogOut, User } from "lucide-react";
 import type { AuthUser } from "@/lib/types";
 
 const USER_UPDATED_EVENT = "techdom:user-updated";
@@ -16,6 +16,72 @@ const PASSWORD_PATTERN =
   /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/;
 const PASSWORD_REQUIREMENT_MESSAGE =
   "Passordet må være minst 8 tegn og inneholde store og små bokstaver, tall og spesialtegn.";
+
+type BillingInterval = "monthly" | "yearly";
+type PlanId = "free" | "plus";
+
+interface PlanCardConfig {
+  name: string;
+  subtitle: string;
+  pricing: Record<BillingInterval, string>;
+  bullets: string[];
+  isFeatured?: boolean;
+}
+
+interface FeatureComparisonRow {
+  id: string;
+  label: string;
+  free: string | boolean;
+  plus: string | boolean;
+}
+
+const PLAN_CARDS: Record<PlanId, PlanCardConfig> = {
+  free: {
+    name: "Gratis",
+    subtitle: "Kom i gang med kjernefunksjonene.",
+    pricing: {
+      monthly: "kr 0,-",
+      yearly: "kr 0,-",
+    },
+    bullets: [
+      "Stander analyser",
+      "Utleiepris estimat",
+      "Tilgang til AI-chat",
+      "Tilgang til kundeservice",
+    ],
+  },
+  plus: {
+    name: "Pluss",
+    subtitle: "Full tilgang til Techdom.ai uten begrensninger.",
+    pricing: {
+      monthly: "kr 199,-",
+      yearly: "kr 1 990,-",
+    },
+    bullets: [
+      "Alt i gratis",
+      "Ubegrenset analyser",
+      "Agent (Kommer snart)",
+      "Maskinlære utleiepris estimat (kommer snart)",
+      "Tidlig tilgang til nyeste funksjoner",
+      "PDF - ananlyse eksport",
+    ],
+    isFeatured: true,
+  },
+};
+
+const FEATURE_COMPARISON: FeatureComparisonRow[] = [
+  { id: "analyses", label: "Analyser", free: "Standard", plus: "Ubegrenset" },
+  { id: "rent", label: "Utleiepris estimat", free: true, plus: true },
+  { id: "chat", label: "AI-chat", free: true, plus: true },
+  { id: "support", label: "Kundeservice", free: true, plus: "Prioritert" },
+  { id: "agent", label: "Agent", free: false, plus: "Kommer snart" },
+  { id: "ml-rent", label: "Maskinlære utleiepris estimat", free: false, plus: "Kommer snart" },
+  { id: "early", label: "Tidlig tilgang", free: false, plus: true },
+  { id: "pdf", label: "PDF-eksport", free: false, plus: true },
+];
+
+const TRUST_TEXT =
+  "Sikker betaling • Avbryt når som helst • Norsk MVA (25 %) inkludert ved betaling";
 
 type SectionId = "profile" | "subscription" | "settings";
 
@@ -27,12 +93,33 @@ interface SectionConfig {
 
 const SECTIONS: SectionConfig[] = [
   { id: "profile", label: "Min profil", comingSoon: false },
-  { id: "subscription", label: "Abonnement", comingSoon: true },
+  { id: "subscription", label: "Abonnement", comingSoon: false },
   { id: "settings", label: "Innstillinger", comingSoon: true },
 ];
 
+const isSectionId = (value: string | null): value is SectionId =>
+  typeof value === "string" && SECTIONS.some((section) => section.id === value);
+
+const isPlusRole = (role: AuthUser["role"]): boolean => role === "plus" || role === "admin";
+
+const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
+  profile: {
+    title: "Min profil",
+    subtitle: "Oppdater informasjonen din og administrer tilgang til Techdom.ai.",
+  },
+  subscription: {
+    title: "Abonnement",
+    subtitle: "Sammenlign planene og oppgrader når du er klar for mer analysekapasitet.",
+  },
+  settings: {
+    title: "Innstillinger",
+    subtitle: "Tilpass opplevelsen din. Flere valg kommer snart.",
+  },
+};
+
 export default function ProfilePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +136,17 @@ export default function ProfilePage() {
   const [logoutLoading, setLogoutLoading] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
+
+  useEffect(() => {
+    const sectionParam = searchParams.get("section");
+    if (isSectionId(sectionParam)) {
+      setActiveSection(sectionParam);
+      return;
+    }
+    if (!sectionParam) {
+      setActiveSection("profile");
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +183,21 @@ export default function ProfilePage() {
 
   const initials = useMemo(() => userInitials(user), [user]);
   const friendlyName = useMemo(() => userDisplayName(user, "Ikke satt"), [user]);
+  const activeMeta = SECTION_META[activeSection];
+
+  const openAuthModal = useCallback((mode: "login" | "signup" | "forgot" = "signup") => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent<{ open?: boolean; mode?: "login" | "signup" | "forgot" }>(
+        AUTH_MODAL_EVENT,
+        {
+          detail: { open: true, mode },
+        },
+      ),
+    );
+  }, []);
 
   const emitUserUpdate = (nextUser: AuthUser | null) => {
     if (typeof window === "undefined") {
@@ -351,12 +464,17 @@ export default function ProfilePage() {
           </div>
         );
       case "subscription":
+        return (
+          <SubscriptionSection
+            user={user}
+            onRequestSignup={() => openAuthModal("signup")}
+          />
+        );
       case "settings": {
-        const heading = activeSection === "subscription" ? "Abonnement" : "Innstillinger";
         return (
           <div className="profile-card profile-card--placeholder" role="status">
             <div className="profile-placeholder-content">
-              <h2>{heading}</h2>
+              <h2>Innstillinger</h2>
               <p>Dette området blir tilgjengelig snart.</p>
             </div>
           </div>
@@ -377,13 +495,13 @@ export default function ProfilePage() {
             <div className="profile-breadcrumb" aria-label="Brødsmule">
               <span>Mine sider</span>
               <span className="profile-breadcrumb-separator">/</span>
-              <span>Min profil</span>
+              <span>{activeMeta?.title ?? "Min profil"}</span>
             </div>
             <div className="profile-title-group">
-              <h1>Min profil</h1>
-              <p className="profile-subtitle">
-                Oppdater informasjonen din og administrer tilgang til Techdom.ai.
-              </p>
+              <h1>{activeMeta?.title ?? "Min profil"}</h1>
+              {activeMeta?.subtitle ? (
+                <p className="profile-subtitle">{activeMeta.subtitle}</p>
+              ) : null}
             </div>
           </header>
 
@@ -418,6 +536,14 @@ export default function ProfilePage() {
                         onClick={() => {
                           if (!isDisabled) {
                             setActiveSection(section.id);
+                            const params = new URLSearchParams(searchParams.toString());
+                            if (section.id === "profile") {
+                              params.delete("section");
+                            } else {
+                              params.set("section", section.id);
+                            }
+                            const query = params.toString();
+                            router.replace(query ? `/profile?${query}` : "/profile", { scroll: false });
                           }
                         }}
                         disabled={isDisabled}
@@ -439,5 +565,372 @@ export default function ProfilePage() {
         <SiteFooter />
       </PageContainer>
     </main>
+  );
+}
+
+interface SubscriptionSectionProps {
+  user: AuthUser | null;
+  onRequestSignup: () => void;
+}
+
+function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps) {
+  const [billingInterval, setBillingInterval] = useState<BillingInterval>("monthly");
+  const [openAccordion, setOpenAccordion] = useState<string | null>(
+    FEATURE_COMPARISON[0]?.id ?? null,
+  );
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [downgradeTooltip, setDowngradeTooltip] = useState(false);
+  const [stickyVisible, setStickyVisible] = useState(false);
+
+  const isLoggedIn = Boolean(user);
+  const isPlusUser = user ? isPlusRole(user.role) : false;
+  const isFreeUser = user ? !isPlusUser : false;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (isPlusUser) {
+      setStickyVisible(false);
+      return;
+    }
+
+    const handleScroll = () => {
+      const doc = document.documentElement;
+      const scrollTop = doc.scrollTop || document.body.scrollTop;
+      const scrollHeight = doc.scrollHeight || document.body.scrollHeight;
+      const clientHeight = doc.clientHeight || window.innerHeight;
+      const progress = scrollHeight <= clientHeight ? 1 : scrollTop / (scrollHeight - clientHeight);
+      const isMobile = window.innerWidth <= 768;
+      setStickyVisible(!isPlusUser && isMobile && progress >= 0.6);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [isPlusUser]);
+
+  useEffect(() => {
+    if (!upgradeModalOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setUpgradeModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [upgradeModalOpen]);
+
+  useEffect(() => {
+    if (!isPlusUser) {
+      setDowngradeTooltip(false);
+    }
+  }, [isPlusUser]);
+
+  const planOrder: PlanId[] = ["free", "plus"];
+
+  const renderFeatureValue = useCallback(
+    (value: string | boolean, variant: "table" | "accordion") => {
+      const baseClass =
+        variant === "table" ? "subscription-table-value" : "subscription-accordion-value";
+      if (typeof value === "boolean") {
+        if (value) {
+          return (
+            <span className={`${baseClass} is-available`}>
+              <Check size={16} aria-hidden="true" />
+              <span className="sr-only">Inkludert</span>
+            </span>
+          );
+        }
+        return (
+          <span className={`${baseClass} is-missing`}>
+            <span aria-hidden="true">–</span>
+            <span className="sr-only">Ikke inkludert</span>
+          </span>
+        );
+      }
+      return <span className={baseClass}>{value}</span>;
+    },
+    [],
+  );
+
+  const handlePlusCta = useCallback(() => {
+    if (!isLoggedIn) {
+      onRequestSignup();
+      return;
+    }
+    if (isFreeUser) {
+      setUpgradeModalOpen(true);
+    }
+  }, [isFreeUser, isLoggedIn, onRequestSignup]);
+
+  const handleFreeCta = useCallback(() => {
+    if (!isLoggedIn) {
+      onRequestSignup();
+      return;
+    }
+    if (isPlusUser) {
+      setDowngradeTooltip(true);
+    }
+  }, [isLoggedIn, isPlusUser, onRequestSignup]);
+
+  const stickyCtaLabel = isLoggedIn ? "Oppgrader til Pluss" : "Lag gratis konto";
+
+  return (
+    <div className="subscription-card">
+      <section className="subscription-hero">
+        <h2>Velg abonnementet som passer deg</h2>
+        <p>Bygg tryggere beslutninger med riktig analysepakke.</p>
+        <div className="subscription-billing-toggle" role="group" aria-label="Frekvens">
+          <button
+            type="button"
+            className={billingInterval === "monthly" ? "is-active" : ""}
+            onClick={() => setBillingInterval("monthly")}
+          >
+            Månedlig
+          </button>
+          <button
+            type="button"
+            className={billingInterval === "yearly" ? "is-active" : ""}
+            onClick={() => setBillingInterval("yearly")}
+          >
+            Årlig – 2 mnd gratis
+          </button>
+        </div>
+      </section>
+
+      <section className="subscription-plan-grid" aria-label="Abonnementskort">
+        {planOrder.map((planId) => {
+          const config = PLAN_CARDS[planId];
+          const isCurrentPlan =
+            (planId === "plus" && isPlusUser) || (planId === "free" && isFreeUser);
+          const cardClassName = [
+            "subscription-plan",
+            config.isFeatured ? "is-featured" : "",
+            isCurrentPlan ? "is-current" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+
+          const priceSuffix = billingInterval === "monthly" ? "per måned" : "per år";
+
+          const planAction = (() => {
+            if (planId === "free") {
+              if (!isLoggedIn) {
+                return (
+                  <button type="button" className="subscription-plan-cta" onClick={handleFreeCta}>
+                    Lag gratis konto
+                  </button>
+                );
+              }
+              if (isFreeUser) {
+                return <span className="subscription-plan-current">Nåværende plan</span>;
+              }
+              return (
+                <div className="subscription-plan-downgrade">
+                  <button
+                    type="button"
+                    className="subscription-plan-cta subscription-plan-cta--secondary"
+                    onClick={handleFreeCta}
+                    onMouseEnter={() => setDowngradeTooltip(true)}
+                    onMouseLeave={() => setDowngradeTooltip(false)}
+                    onFocus={() => setDowngradeTooltip(true)}
+                    onBlur={() => setDowngradeTooltip(false)}
+                    aria-describedby="subscription-downgrade-tooltip"
+                  >
+                    Bytt til Gratis
+                  </button>
+                  <div
+                    id="subscription-downgrade-tooltip"
+                    role="tooltip"
+                    className={
+                      downgradeTooltip
+                        ? "subscription-tooltip is-visible"
+                        : "subscription-tooltip"
+                    }
+                  >
+                    <AlertTriangle size={16} aria-hidden="true" />
+                    <span>Du mister Pluss-funksjoner og historikk.</span>
+                  </div>
+                </div>
+              );
+            }
+
+            if (planId === "plus") {
+              if (isPlusUser) {
+                return <span className="subscription-plan-current">Nåværende plan</span>;
+              }
+              return (
+                <button
+                  type="button"
+                  className="subscription-plan-cta"
+                  onClick={handlePlusCta}
+                >
+                  Oppgrader til Pluss
+                </button>
+              );
+            }
+
+            return null;
+          })();
+
+          return (
+            <article key={planId} className={cardClassName} aria-label={config.name}>
+              {config.isFeatured ? (
+                <div className="subscription-plan-badge">Mest populær</div>
+              ) : null}
+              <header className="subscription-plan-header">
+                <h3>{config.name}</h3>
+                <p>{config.subtitle}</p>
+                <div className="subscription-plan-price">
+                  <span>{config.pricing[billingInterval]}</span>
+                  <span className="subscription-plan-period">{priceSuffix}</span>
+                </div>
+              </header>
+              <ul className="subscription-plan-features">
+                {config.bullets.map((bullet) => (
+                  <li key={bullet}>
+                    <Check size={16} aria-hidden="true" />
+                    <span>{bullet}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="subscription-plan-action">{planAction}</div>
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="subscription-compare" aria-label="Funksjonstabell">
+        <div className="subscription-compare-header">
+          <h3>Funksjonssammenligning</h3>
+          <p>Se hva som følger med i hver plan.</p>
+        </div>
+        <div className="subscription-table-wrapper">
+          <table className="subscription-table">
+            <thead>
+              <tr>
+                <th scope="col">Funksjon</th>
+                <th scope="col">Gratis</th>
+                <th scope="col">Pluss</th>
+              </tr>
+            </thead>
+            <tbody>
+              {FEATURE_COMPARISON.map((row) => (
+                <tr key={row.id}>
+                  <th scope="row">{row.label}</th>
+                  <td>{renderFeatureValue(row.free, "table")}</td>
+                  <td>{renderFeatureValue(row.plus, "table")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="subscription-accordion">
+          {FEATURE_COMPARISON.map((row) => {
+            const isOpen = openAccordion === row.id;
+            return (
+              <div
+                key={row.id}
+                className={isOpen ? "subscription-accordion-item is-open" : "subscription-accordion-item"}
+              >
+                <button
+                  type="button"
+                  className="subscription-accordion-trigger"
+                  aria-expanded={isOpen}
+                  onClick={() => setOpenAccordion(isOpen ? null : row.id)}
+                >
+                  <span>{row.label}</span>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </button>
+                <div className="subscription-accordion-panel" role="region" aria-hidden={!isOpen}>
+                  <div className="subscription-accordion-plan">
+                    <span className="subscription-accordion-plan-name">Gratis</span>
+                    {renderFeatureValue(row.free, "accordion")}
+                  </div>
+                  <div className="subscription-accordion-plan">
+                    <span className="subscription-accordion-plan-name">Pluss</span>
+                    {renderFeatureValue(row.plus, "accordion")}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <p className="subscription-trust">{TRUST_TEXT}</p>
+
+      {stickyVisible && (isFreeUser || !isLoggedIn) ? (
+        <div
+          className="subscription-mobile-cta"
+          role="region"
+          aria-live="polite"
+          aria-label="Oppgraderingspåminnelse"
+        >
+          <div className="subscription-mobile-cta-text">
+            <span>Gjør analysene dine ubegrensede med Pluss.</span>
+          </div>
+          <button
+            type="button"
+            className="subscription-mobile-cta-button"
+            onClick={handlePlusCta}
+          >
+            {stickyCtaLabel}
+          </button>
+        </div>
+      ) : null}
+
+      {upgradeModalOpen ? (
+        <div
+          className="subscription-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="subscription-upgrade-title"
+          onClick={() => setUpgradeModalOpen(false)}
+        >
+          <div
+            className="subscription-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="subscription-modal-header">
+              <h3 id="subscription-upgrade-title">Oppgrader til Pluss</h3>
+              <button
+                type="button"
+                className="subscription-modal-close"
+                onClick={() => setUpgradeModalOpen(false)}
+                aria-label="Lukk oppgraderingsmodal"
+              >
+                ×
+              </button>
+            </div>
+            <p className="subscription-modal-body">
+              Få ubegrenset analysekapasitet, avansert innsikt og prioritert støtte fra Techdom.ai-teamet.
+            </p>
+            <ul className="subscription-modal-list">
+              <li>Ubegrensede analyser og historikk</li>
+              <li>Scenario-simulering og eksport av data</li>
+              <li>Prioritert kundestøtte fra spesialistene våre</li>
+            </ul>
+            <a
+              className="subscription-modal-primary"
+              href="mailto:support@techdom.ai?subject=Oppgradering%20til%20Techdom%20Pluss"
+            >
+              Send forespørsel
+            </a>
+            <button
+              type="button"
+              className="subscription-modal-secondary"
+              onClick={() => setUpgradeModalOpen(false)}
+            >
+              Avbryt
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
