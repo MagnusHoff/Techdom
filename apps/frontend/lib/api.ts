@@ -129,6 +129,16 @@ export interface UpdateUserAvatarPayload {
   avatarColor: string | null;
 }
 
+export type BillingInterval = "monthly" | "yearly";
+
+export interface SubscriptionCheckoutResponse {
+  checkout_url: string;
+}
+
+export interface SubscriptionPortalResponse {
+  portal_url: string;
+}
+
 export async function requestPasswordReset(
   payload: PasswordResetRequestPayload,
 ): Promise<void> {
@@ -145,6 +155,29 @@ export async function requestPasswordReset(
     return;
   }
   await handleResponse<unknown>(res);
+}
+
+export async function createSubscriptionCheckoutSession(
+  billingInterval: BillingInterval,
+): Promise<string> {
+  const res = await apiFetch("/auth/me/subscription/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ billing_interval: billingInterval }),
+  });
+
+  const data = await handleResponse<SubscriptionCheckoutResponse>(res);
+  return data.checkout_url;
+}
+
+export async function createSubscriptionPortalSession(): Promise<string> {
+  const res = await apiFetch("/auth/me/subscription/portal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  const data = await handleResponse<SubscriptionPortalResponse>(res);
+  return data.portal_url;
 }
 
 export async function confirmPasswordReset(

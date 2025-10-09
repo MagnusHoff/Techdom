@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 import re
+from datetime import datetime
+from typing import Literal
 
 try:
     from pydantic import BaseModel, EmailStr, Field, field_validator  # type: ignore
@@ -52,6 +53,12 @@ class UserRead(UserBase):
     role: UserRole
     is_active: bool
     is_email_verified: bool
+    stripe_customer_id: str | None = None
+    stripe_subscription_id: str | None = None
+    subscription_status: str | None = None
+    subscription_price_id: str | None = None
+    subscription_current_period_end: datetime | None = None
+    subscription_cancel_at_period_end: bool = False
     created_at: datetime
     updated_at: datetime
     total_analyses: int = 0
@@ -197,6 +204,18 @@ class PasswordResetConfirm(BaseModel):
 
 class EmailVerificationConfirm(BaseModel):
     token: str = Field(min_length=1)
+
+
+class SubscriptionCheckoutRequest(BaseModel):
+    billing_interval: Literal["monthly", "yearly"]
+
+
+class SubscriptionCheckoutResponse(BaseModel):
+    checkout_url: str = Field(min_length=1)
+
+
+class SubscriptionPortalResponse(BaseModel):
+    portal_url: str = Field(min_length=1)
 
 
 class EmailVerificationResend(BaseModel):

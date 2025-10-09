@@ -24,7 +24,7 @@ from apps.api import runtime
 _bootstrap = runtime.ensure_bootstrap()
 runtime.load_environment()
 
-from apps.api.routes import analyses_router, auth_router
+from apps.api.routes import analyses_router, auth_router, stripe_router
 from techdom.services.feedback import (
     FeedbackConfigError,
     FeedbackDeliveryError,
@@ -105,6 +105,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(analyses_router)
+app.include_router(stripe_router)
 
 
 class ProspectusManualReq(BaseModel):

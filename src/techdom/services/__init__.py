@@ -7,4 +7,5 @@ __all__ = [
     "prospect_pipeline",
     "salgsoppgave",
     "saved_analyses",
+    "subscriptions",
 ]
