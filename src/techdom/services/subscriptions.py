@@ -343,13 +343,13 @@ async def _apply_subscription_update(
         current_role = user.role
         if isinstance(current_role, str):
             try:
-                current_role = UserRole[current_role]
-            except KeyError:
+                current_role = UserRole(current_role.lower())
+            except (KeyError, ValueError):
                 current_role = UserRole.USER
         if _should_have_plus_role(status):
-            user.role = UserRole.PLUS
+            user.role = UserRole.PLUS.value
         else:
-            user.role = UserRole.USER
+            user.role = UserRole.USER.value
 
     session.add(user)
     await session.commit()
