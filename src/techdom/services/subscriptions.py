@@ -340,10 +340,16 @@ async def _apply_subscription_update(
     user.subscription_cancel_at_period_end = bool(cancel_at_period_end)
 
     if user.role != UserRole.ADMIN:
+        current_role = user.role
+        if isinstance(current_role, str):
+            try:
+                current_role = UserRole(current_role)
+            except ValueError:
+                current_role = UserRole.USER
         if _should_have_plus_role(status):
-            user.role = UserRole.PLUS.value
+            user.role = UserRole.PLUS
         else:
-            user.role = UserRole.USER.value
+            user.role = UserRole.USER
 
     session.add(user)
     await session.commit()
