@@ -31,7 +31,7 @@ class User(Base):
         Enum(
             UserRole,
             name="user_role",
-            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            values_callable=lambda enum_cls: [member.name for member in enum_cls],
         ),
         default=UserRole.USER,
         nullable=False,

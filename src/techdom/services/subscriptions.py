@@ -343,8 +343,8 @@ async def _apply_subscription_update(
         current_role = user.role
         if isinstance(current_role, str):
             try:
-                current_role = UserRole(current_role)
-            except ValueError:
+                current_role = UserRole[current_role]
+            except KeyError:
                 current_role = UserRole.USER
         if _should_have_plus_role(status):
             user.role = UserRole.PLUS
