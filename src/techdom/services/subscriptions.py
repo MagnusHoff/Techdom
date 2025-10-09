@@ -11,14 +11,17 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_STRIPE_IMPORT_ERROR: Exception | None = None
+
 try:
     from stripe import StripeClient, Webhook
     from stripe.error import SignatureVerificationError, StripeError
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError as exc:  # pragma: no cover - optional dependency
     StripeClient = None  # type: ignore[assignment]
     Webhook = None  # type: ignore[assignment]
     SignatureVerificationError = Exception  # type: ignore[assignment]
     StripeError = Exception  # type: ignore[assignment]
+    _STRIPE_IMPORT_ERROR = exc
 
 from techdom.domain.auth.models import User, UserRole
 from techdom.services.auth import UserNotFoundError
@@ -109,9 +112,10 @@ def get_stripe_settings() -> StripeSettings:
 @lru_cache(maxsize=1)
 def get_stripe_client() -> StripeClient:
     if StripeClient is None:  # pragma: no cover - defensive guard when dependency missing
-        raise StripeConfigurationError(
-            "stripe-biblioteket er ikke installert. Legg til 'stripe' i requirements."
-        )
+        message = "stripe-biblioteket er ikke installert. Legg til 'stripe' i requirements."
+        if _STRIPE_IMPORT_ERROR:
+            message = f"{message} ({_STRIPE_IMPORT_ERROR})"
+        raise StripeConfigurationError(message)
     settings = get_stripe_settings()
     return StripeClient(api_key=settings.api_key)
 
