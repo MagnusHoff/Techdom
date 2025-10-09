@@ -164,7 +164,7 @@ async def create_checkout_session(
             customer=customer_id,
             mode="subscription",
             billing_address_collection="auto",
-            automatic_tax={"enabled": True},
+            automatic_tax={"enabled": False},
             success_url=settings.success_url,
             cancel_url=settings.cancel_url,
             line_items=[{"price": price_id, "quantity": 1}],
