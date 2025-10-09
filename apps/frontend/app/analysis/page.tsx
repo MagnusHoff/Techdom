@@ -2251,7 +2251,7 @@ function AnalysisPageContent() {
       if (file) {
         const type = (file.type || "").toLowerCase();
         const name = file.name.toLowerCase();
-        if (!(type.includes("pdf") || name.endswith(".pdf"))) {
+        if (!(type.includes("pdf") || name.endsWith(".pdf"))) {
           setManualProspectusFile(null);
           setManualProspectusSuccess(false);
           setManualProspectusError("Filen må være en PDF.");
