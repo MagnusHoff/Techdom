@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import { AUTH_MODAL_EVENT, PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
 import UserEmojiAvatar from "../components/user-avatar";
@@ -117,7 +117,7 @@ const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
   },
 };
 
-export default function ProfilePage() {
+function ProfilePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -932,5 +932,27 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ProfilePageFallback() {
+  return (
+    <main className="page-gradient">
+      <PageContainer>
+        <SiteHeader showAction actionHref="/analysis" actionLabel="Ny analyse" />
+        <section className="profile-page">
+          <div className="profile-placeholder">Laster profil…</div>
+        </section>
+        <SiteFooter />
+      </PageContainer>
+    </main>
+  );
+}
+
+export default function ProfilePage() {
+  return (
+    <Suspense fallback={<ProfilePageFallback />}>
+      <ProfilePageContent />
+    </Suspense>
   );
 }
