@@ -24,13 +24,25 @@ def _require_env(name: str, *, context: str) -> str:
     return value
 
 
-def _build_key(prefix: str, finnkode: str) -> str:
+def _build_key(prefix: str, finnkode: str, sha256: str | None = None) -> str:
     prefix = prefix.strip().strip('/')
+    if sha256:
+        stem = sha256.strip().lower()
+        filename = f"{stem}.pdf"
+        if prefix:
+            return f"{prefix}/{finnkode}/{filename}"
+        return f"{finnkode}/{filename}"
     filename = f"{finnkode}.pdf"
     return f"{prefix}/{filename}" if prefix else filename
 
 
-def upload_prospekt(local_path: str | Path, finnkode: str, url_expire: int = 3600):
+def upload_prospekt(
+    local_path: str | Path,
+    finnkode: str,
+    *,
+    sha256: str | None = None,
+    url_expire: int = 3600,
+):
     """
     Laster opp et prospekt-PDF til S3 og returnerer en presigned URL.
 
@@ -59,6 +71,11 @@ def upload_prospekt(local_path: str | Path, finnkode: str, url_expire: int = 360
     region = os.getenv("AWS_PROSPEKT_REGION", "eu-north-1") or "eu-north-1"
     access_key = _require_env("AWS_PROSPEKT_ACCESS_KEY_ID", context="prospekt-opplasting")
     secret_key = _require_env("AWS_PROSPEKT_SECRET_ACCESS_KEY", context="prospekt-opplasting")
+    cdn_base = (
+        os.getenv("SALGSOPPGAVE_CDN_BASE_URL")
+        or os.getenv("PROSPEKT_CDN_BASE_URL")
+        or ""
+    ).strip()
 
     try:
         s3 = boto3.client(
@@ -70,22 +87,30 @@ def upload_prospekt(local_path: str | Path, finnkode: str, url_expire: int = 360
     except (_BotoCoreError, _ClientError, Exception) as exc:  # pragma: no cover
         raise RuntimeError(f"Kunne ikke opprette S3-klient for prospekt-opplasting: {exc}") from exc
 
-    key = _build_key(prefix, finnkode)
+    key = _build_key(prefix, finnkode, sha256)
 
     try:
         s3.upload_file(
             str(local_path),
             bucket,
             key,
-            ExtraArgs={"ContentType": "application/pdf"},
+            ExtraArgs={
+                "ContentType": "application/pdf",
+                "ACL": "public-read",
+            },
         )
     except (_BotoCoreError, _ClientError, Exception) as exc:
         raise RuntimeError(f"Kunne ikke laste opp prospekt til s3://{bucket}/{key}: {exc}") from exc
 
     print(f"✅ Lastet opp prospekt: s3://{bucket}/{key}")
 
+    def _build_stable_url() -> str:
+        if cdn_base:
+            return f"{cdn_base.rstrip('/')}/{key}"
+        return f"https://{bucket}.s3.amazonaws.com/{key}"
+
     try:
-        url = s3.generate_presigned_url(
+        presigned_url = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": bucket, "Key": key},
             ExpiresIn=url_expire,
@@ -95,7 +120,8 @@ def upload_prospekt(local_path: str | Path, finnkode: str, url_expire: int = 360
 
     return {
         "s3_uri": f"s3://{bucket}/{key}",
-        "url": url,
+        "url": presigned_url,
+        "cdn_url": _build_stable_url(),
         "bucket": bucket,
         "key": key,
     }

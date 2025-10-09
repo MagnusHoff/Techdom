@@ -2365,6 +2365,12 @@ main {
   border-style: dashed;
 }
 
+.resource-chip.uncertain {
+  border-color: rgba(250, 204, 21, 0.6);
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+}
+
 
 .job-label {
   text-transform: uppercase;

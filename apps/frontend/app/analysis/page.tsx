@@ -51,20 +51,20 @@ const DEFAULT_FORM: AnalysisPayload = {
 };
 
 const FORM_FIELD_TOOLTIPS: Record<string, string> = {
-  Kjøpesum: "Den totale prisen du betaler for selve boligen.",
-  Egenkapital: "Beløpet du finansierer selv før banklånet tas opp.",
-  "Rente % p.a.": "Årlig nominell rente på boliglånet, oppgitt i prosent.",
-  "Lånetid (år)": "Antall år du planlegger å bruke på å nedbetale lånet.",
-  "Leie (mnd)": "Forventet månedlig husleie som leietakerne betaler.",
-  "Felleskost (mnd)": "Månedlige felleskostnader til borettslag eller sameie.",
-  "Vedlikehold % av leie": "Andel av husleien du setter av til vedlikehold hver måned.",
-  "Andre kost (mnd)": "Andre faste månedlige kostnader knyttet til eiendommen.",
-  "Ledighet %": "Forventet del av året boligen står tom uten leietaker.",
+  Kjøpesum: "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  Egenkapital: "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  "Rente % p.a.": "Hvor mye du betaler i renter til banken hvert år. For eksempel betyr 5 % rente at du betaler 5 % av lånet i renter årlig.",
+  "Lånetid (år)": "Hvor mange år du skal bruke på å betale ned hele lånet. Lengre tid gir lavere månedsbeløp, men mer renter totalt.",
+  "Leie (mnd)": "Summen du får inn fra leietaker hver måned før utgifter. Dette er hovedinntekten fra utleien.",
+  "Felleskost (mnd)": "Faste månedlige kostnader til sameiet, for eksempel vaktmester, felles forsikring og bygningsvedlikehold.",
+  "Vedlikehold % av leie": "En prosentandel av leien du setter av til vedlikehold. Dette dekker ting som maling, reparasjoner eller utskiftning av hvitevarer.",
+  "Andre kost (mnd)": "Andre faste utgifter du må regne med hver måned, som strøm, internett eller forsikring.",
+  "Ledighet %": "Hvor mye av året boligen står tom uten leietaker. For eksempel 10 % betyr at den er tom 1,2 måneder i året.",
 };
 
 const PROSPECTUS_CARD_TOOLTIPS: Record<string, string> = {
-  "⚠️ TG2": "Tilstandsgrad 2: merkbare avvik som bør følges opp eller utbedres på sikt.",
-  "🛑 TG3": "Tilstandsgrad 3: alvorlige avvik som krever rask utbedring eller nærmere undersøkelser.",
+  "⚠️ TG2": "Tilstandsgrad 2 betyr at det er slitasje eller feil som bør følges opp, men som ikke er akutt. Det kan for eksempel være eldre bad, vinduer eller tekniske løsninger som nærmer seg slutten av levetiden.",
+  "🛑 TG3": "Tilstandsgrad 3 betyr at det er alvorlige feil, skader eller behov for utbedring, ofte med høy kostnad. Dette gjelder typisk råte, lekkasjer eller ulovlige installasjoner som må fikses raskt.",
 };
 
 const JOB_POLL_INTERVAL = 2_500;
@@ -1458,12 +1458,12 @@ function scoreFillColor(percent: number | null): string {
 }
 
 const KEY_FIGURE_TOOLTIPS: Record<string, string> = {
-  "Månedlig overskudd": "Hvor mye kontantstrøm som står igjen hver måned etter renter, avdrag og driftskostnader.",
-  "Leie for å gå i null": "Minimum husleie som dekker alle kostnader (break-even-nivået).",
-  "Årlig nettoinntekt": "Netto driftsinntekt (NOI) per år etter alle driftskostnader.",
-  "Årlig nedbetaling på lån": "Beløpet av lånet som betales ned i løpet av ett år.",
-  "Månedlig lånekostnader": "Summen du betaler på lånet hver måned, inkludert renter og avdrag.",
-  "Avkastning på egenkapital": "Forventet årlig avkastning på investert egenkapital uttrykt i prosent.",
+  "Månedlig overskudd": "Summen du sitter igjen med hver måned etter at alle kostnader (renter, vedlikehold, felleskostnader osv.) er trukket fra leieinntekten. Dette er netto fortjeneste per måned.",
+  "Leie for å gå i null": "Den leien du minst må ta for å dekke alle kostnader slik at du verken taper eller tjener penger. Alt over dette blir overskudd.",
+  "Årlig nettoinntekt": "Den totale inntekten du sitter igjen med etter utgifter i løpet av et år. Dette viser hvor lønnsom boligen er per år.",
+  "Årlig nedbetaling på lån": "Hvor mye av lånet du faktisk betaler ned hvert år (ikke renter, men selve lånet du skylder).",
+  "Månedlig lånekostnader": "Totalt beløp du betaler til banken hver måned, som består av både renter (kostnad) og avdrag (nedbetaling av lån som bygger egenkapital).",
+  "Avkastning på egenkapital": "Viser hvor mye verdien av din eierandel øker totalt i prosent - både fra leieoverskudd (pengene du faktisk tjener) og økt egenkapital gjennom nedbetaling av lån.",
 };
 
 function AnalysisPageContent() {
@@ -1881,9 +1881,32 @@ function AnalysisPageContent() {
     if (candidate) {
       return candidate;
     }
-    const fallback = normaliseExternalUrl(jobStatus?.pdf_url);
-    return fallback ?? null;
-  }, [effectiveLinks, jobStatus]);
+    const jobPdf = normaliseExternalUrl(jobStatus?.pdf_url);
+    if (jobPdf) {
+      return jobPdf;
+    }
+    const artifacts = jobStatus?.artifacts && typeof jobStatus.artifacts === "object"
+      ? (jobStatus.artifacts as Record<string, unknown>)
+      : null;
+    const pdfMeta = artifacts && typeof artifacts.pdf_meta === "object" && artifacts.pdf_meta !== null
+      ? (artifacts.pdf_meta as { path?: unknown })
+      : null;
+    const pdfPath = typeof pdfMeta?.path === "string" ? pdfMeta.path.trim() : "";
+    if (pdfPath) {
+      const jobFinnkode =
+        typeof jobStatus?.finnkode === "string" && jobStatus.finnkode.trim()
+          ? jobStatus.finnkode.trim()
+          : null;
+      const listingFinnkode =
+        typeof listingUrl === "string" && listingUrl.trim() ? extractFinnkode(listingUrl) : null;
+      const pathFinnkode = extractFinnkode(pdfPath);
+      const fallbackFinnkode = jobFinnkode ?? listingFinnkode ?? pathFinnkode;
+      if (fallbackFinnkode) {
+        return `/files/${fallbackFinnkode}.pdf`;
+      }
+    }
+    return null;
+  }, [effectiveLinks, jobStatus, listingUrl]);
   const resourceListingUrl = useMemo(() => {
     const candidate = stringOrNull(listingUrl);
     if (!candidate) {
@@ -2931,7 +2954,7 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
     let cancelled = false;
     const controller = new AbortController();
     setDiscoveringPdf(true);
-     setSalgsoppgaveFetchResult(null);
+    setSalgsoppgaveFetchResult(null);
     const params = new URLSearchParams({ listing: listingUrl });
     fetch(`/api/finn-prospect?${params.toString()}`, {
       cache: "no-store",

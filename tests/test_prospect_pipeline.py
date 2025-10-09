@@ -118,6 +118,8 @@ def test_pipeline_updates_job(monkeypatch):
     assert data["pdf_url"] == "https://example.org/prospect.pdf"
     assert data["result"]["analysis"]["metrics"]
     assert data["artifacts"]["analysis_params"]["price"] == 2_500_000
+
+
     tg2_points = data["result"]["ai_extract"]["tg2"]
     tg3_points = data["result"]["ai_extract"]["tg3"]
     assert "TG2 punkt" in tg2_points
@@ -133,6 +135,32 @@ def test_pipeline_updates_job(monkeypatch):
     assert data["result"]["links"]["salgsoppgave_pdf"] == "https://example.org/prospect.pdf"
     assert data["result"]["links"]["confidence"] == pytest.approx(0.95)
     assert data["artifacts"]["tg_extract"]["json"]["TG2"][0]["komponent"] == "Tak"
+
+
+def test_build_links_returns_local_copy_when_protected(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "430845084.pdf"
+    pdf_path.write_bytes(b"%PDF-dummy")
+
+    monkeypatch.setenv("PUBLIC_API_BASE_URL", "")
+    monkeypatch.setattr(
+        "techdom.services.prospect_pipeline._verify_pdf_head",
+        lambda url, referer=None: (False, None, 0.0, True),
+    )
+
+    from techdom.services.prospect_pipeline import _build_salgsoppgave_links
+
+    result = _build_salgsoppgave_links(
+        finnkode="430845084",
+        finn_url="https://www.finn.no/realestate/homes/ad.html?finnkode=430845084",
+        fetch_debug={"pdf_url": "https://dnbeiendom.no/document.pdf"},
+        pdf_url="https://dnbeiendom.no/document.pdf",
+        pdf_path=str(pdf_path),
+    )
+
+    assert result["salgsoppgave_pdf"] == f"/files/{pdf_path.stem}.pdf"
+    assert result["salgsoppgave_pdf"] == "/files/430845084.pdf"
+    assert result["confidence"] == pytest.approx(0.5)
+    assert "beskyttet" in (result.get("message") or "").lower()
 
 
 def test_pipeline_handles_protected_pdf(monkeypatch):
@@ -197,9 +225,9 @@ def test_pipeline_handles_protected_pdf(monkeypatch):
     data = service.get(job.id)
     assert data is not None
     assert data["status"] == "done"
-    assert data["pdf_url"] is None
-    assert data["result"]["links"]["salgsoppgave_pdf"] is None
-    assert data["result"]["links"]["confidence"] == pytest.approx(0.0)
+    assert data["pdf_url"] == "/files/123456.pdf"
+    assert data["result"]["links"]["salgsoppgave_pdf"] == "/files/123456.pdf"
+    assert data["result"]["links"]["confidence"] == pytest.approx(0.5)
     assert data["result"]["links"]["message"] == "Beskyttet – last ned lokalt."
     assert not data["result"]["ai_extract"].get("tg2_details")
     assert not data["result"]["ai_extract"].get("tg3_details")
