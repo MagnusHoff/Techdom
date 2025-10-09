@@ -36,6 +36,16 @@ export interface ProspectusLinks {
   message?: string | null;
 }
 
+export interface SalgsoppgaveFetchResult {
+  status: "found" | "not_found" | "uncertain";
+  original_pdf_url?: string | null;
+  stable_pdf_url?: string | null;
+  filesize_bytes?: number | null;
+  sha256?: string | null;
+  confidence?: number | null;
+  log?: string[];
+}
+
 export type KeyFactRaw = {
   label: string;
   value: string;

@@ -5,7 +5,11 @@ import os
 import re
 import json
 from typing import Dict, Any, Iterable, List, Sequence, TypedDict
-from openai import OpenAI
+
+try:
+    from openai import OpenAI  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    OpenAI = None  # type: ignore[misc, assignment]
 
 
 class Inputs(TypedDict, total=False):
@@ -113,7 +117,7 @@ def _generate_follow_up_questions(
 
 def ai_explain(inputs: Inputs, m: Metrics) -> str:
     key = _get_key()
-    if not key:
+    if not key or OpenAI is None:
         return _local_explain(inputs, m)
     try:
         client = OpenAI(api_key=key)
@@ -561,7 +565,7 @@ def analyze_prospectus(text: str) -> Dict[str, Any]:
     result: Dict[str, Any] | None = None
 
     key = _get_key()
-    if key:
+    if key and OpenAI is not None:
         try:
             client = OpenAI(api_key=key)
             system = (

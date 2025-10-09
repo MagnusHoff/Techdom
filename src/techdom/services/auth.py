@@ -11,7 +11,11 @@ from urllib.parse import urlencode
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+try:
+    from jose import JWTError  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    class JWTError(Exception):  # type: ignore
+        pass
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession

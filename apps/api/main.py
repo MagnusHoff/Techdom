@@ -4,14 +4,15 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
 import base64
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 import requests
 try:
     from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -38,6 +39,7 @@ from techdom.domain.analysis_service import (
 )
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
+from techdom.services.salgsoppgave import retrieve_salgsoppgave
 from techdom.infrastructure.db import ensure_auth_schema, init_models
 from techdom.ingestion.fetch import extract_pdf_text_from_bytes
 from techdom.processing.ai import analyze_prospectus
@@ -54,6 +56,13 @@ from techdom.processing.tg_extract import (
 app = FastAPI(title="Boliganalyse API (MVP)")
 job_service = ProspectJobService()
 LOGGER = logging.getLogger(__name__)
+
+_PROSPEKT_DIR = Path("data/cache/prospekt")
+app.mount(
+    "/files",
+    StaticFiles(directory=str(_PROSPEKT_DIR), check_dir=False),
+    name="files",
+)
 
 
 @app.on_event("startup")
@@ -191,6 +200,16 @@ class FinnKeyNumbersReq(BaseModel):
 
 class StatsResp(BaseModel):
     total_analyses: int
+
+
+class SalgsoppgaveResp(BaseModel):
+    status: Literal["found", "not_found", "uncertain"]
+    original_pdf_url: Optional[str] = None
+    stable_pdf_url: Optional[str] = None
+    filesize_bytes: Optional[int] = None
+    sha256: Optional[str] = None
+    confidence: float = 0.0
+    log: List[str] = Field(default_factory=list)
 
 
 class FeedbackCategory(str, Enum):
@@ -571,6 +590,23 @@ def download_prospect(finnkode: str):
         media_type="application/pdf",
         filename=f"{finnkode}.pdf",
     )
+
+
+@app.get("/salgsoppgave", response_model=SalgsoppgaveResp)
+async def salgsoppgave_lookup(
+    finn: str = Query(..., alias="finn"),
+    extra: List[str] = Query(default=[]),
+) -> SalgsoppgaveResp:
+    try:
+        result = await retrieve_salgsoppgave(finn, extra_terms=extra)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    payload = result.to_dict()
+    payload.setdefault("log", [])
+    return SalgsoppgaveResp(**payload)
 
 
 @app.get("/stats", response_model=StatsResp)

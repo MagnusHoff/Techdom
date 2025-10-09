@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 import re
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+try:
+    from pydantic import BaseModel, EmailStr, Field, field_validator  # type: ignore
+except ImportError:  # pragma: no cover - compatibility with Pydantic v1
+    from pydantic import BaseModel, EmailStr, Field, validator as field_validator  # type: ignore
 
 from techdom.domain.auth.models import UserRole
 from techdom.domain.auth.constants import normalise_avatar_emoji, normalise_avatar_color

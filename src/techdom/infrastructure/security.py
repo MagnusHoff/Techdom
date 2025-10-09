@@ -5,7 +5,10 @@ import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
-from jose import jwt
+try:
+    from jose import jwt  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    jwt = None  # type: ignore
 from passlib.context import CryptContext
 
 
@@ -46,8 +49,12 @@ def create_access_token(*, data: Dict[str, Any], expires_delta: timedelta | None
         expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})
+    if jwt is None:
+        raise RuntimeError("python-jose er ikke installert. Kan ikke generere JWT.")
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_access_token(token: str) -> Dict[str, Any]:
+    if jwt is None:
+        raise RuntimeError("python-jose er ikke installert. Kan ikke dekode JWT.")
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

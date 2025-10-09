@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 import unicodedata
 from typing import Optional, Tuple, Dict, Any, List
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    sync_playwright = None  # type: ignore
+
+    class PWTimeoutError(Exception):  # type: ignore
+        pass
 
 from techdom.infrastructure.config import SETTINGS  # ✅ UA, timeouts, HTTP proxy
 
@@ -787,6 +793,8 @@ def fetch_pdf_with_browser(
     pdf_url: Optional[str] = None
 
     try:
+        if sync_playwright is None:
+            raise RuntimeError("Playwright er ikke installert. Kjør 'pip install playwright'.")
         with sync_playwright() as p:
             # Proxy-støtte via SETTINGS.HTTP_PROXY (hvis satt)
             launch_kwargs: Dict[str, Any] = {"headless": True}
@@ -1115,6 +1123,8 @@ def fetch_pdf_with_browser_filtered(
     pdf_url: str | None = None
 
     try:
+        if sync_playwright is None:
+            raise RuntimeError("Playwright er ikke installert. Kjør 'pip install playwright'.")
         with sync_playwright() as p:
             # Proxy-støtte via SETTINGS.HTTP_PROXY
             launch_kwargs: Dict[str, Any] = {"headless": True}

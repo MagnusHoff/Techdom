@@ -71,21 +71,38 @@ class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
 
 
-engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,
-    echo=_should_echo_sql(),
-    connect_args=CONNECT_ARGS,
-)
-SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+_DB_IMPORT_ERROR: Exception | None = None
+
+try:
+    engine: AsyncEngine = create_async_engine(
+        DATABASE_URL,
+        echo=_should_echo_sql(),
+        connect_args=CONNECT_ARGS,
+    )
+    SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    engine = None  # type: ignore[assignment]
+    SessionMaker = None  # type: ignore[assignment]
+    _DB_IMPORT_ERROR = exc
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    if SessionMaker is None:
+        raise RuntimeError(
+            "Asynkron database-driver er ikke installert. "
+            "Installer f.eks. 'aiosqlite' eller sett DATABASE_URL til en støttet driver."
+        ) from _DB_IMPORT_ERROR
     async with SessionMaker() as session:
         yield session
 
 
 async def init_models() -> None:
     """Create database tables if they do not already exist."""
+    if engine is None:
+        raise RuntimeError(
+            "Kan ikke initialisere databasen uten asynkron driver. "
+            "Installer nødvendig avhengighet først."
+        ) from _DB_IMPORT_ERROR
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
@@ -145,6 +162,10 @@ def _ensure_users_schema(sync_conn) -> None:
 
 async def ensure_auth_schema() -> None:
     """Ensure backward compatible auth schema (e.g. username column)."""
+    if engine is None:
+        raise RuntimeError(
+            "Kan ikke oppdatere auth-skjema uten asynkron database-driver."
+        ) from _DB_IMPORT_ERROR
     async with engine.begin() as connection:
         await connection.run_sync(_ensure_users_schema)
 
@@ -152,6 +173,10 @@ async def ensure_auth_schema() -> None:
 @asynccontextmanager
 async def session_scope() -> AsyncGenerator[AsyncSession, None]:
     """Provide a transactional scope around a series of operations."""
+    if SessionMaker is None:
+        raise RuntimeError(
+            "Kan ikke opprette database-session uten asynkron driver."
+        ) from _DB_IMPORT_ERROR
     async with SessionMaker() as session:
         try:
             yield session
