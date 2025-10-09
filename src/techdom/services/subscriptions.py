@@ -341,9 +341,9 @@ async def _apply_subscription_update(
 
     if user.role != UserRole.ADMIN:
         if _should_have_plus_role(status):
-            user.role = UserRole.PLUS
+            user.role = UserRole.PLUS.value
         else:
-            user.role = UserRole.USER
+            user.role = UserRole.USER.value
 
     session.add(user)
     await session.commit()
