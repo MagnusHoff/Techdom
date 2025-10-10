@@ -13,6 +13,7 @@ from techdom.domain.auth.models import User, UserRole
 from techdom.infrastructure.db import get_session
 from techdom.infrastructure.security import create_access_token
 from techdom.services import auth as auth_service
+from techdom.services import subscriptions as subscription_service
 from techdom.services.auth import (
     DuplicateUsernameError,
     EmailVerificationRateLimitedError,
@@ -268,6 +269,66 @@ async def read_my_status(
         total_last_7_days=summary.last_7_days,
         last_run_at=summary.last_run_at,
     )
+
+
+@router.post(
+    "/me/subscription/checkout",
+    response_model=schemas.SubscriptionCheckoutResponse,
+    summary="Opprett Stripe Checkout for Pluss-abonnement",
+)
+async def create_subscription_checkout(
+    payload: schemas.SubscriptionCheckoutRequest,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.SubscriptionCheckoutResponse:
+    try:
+        checkout_url = await subscription_service.create_checkout_session(
+            session,
+            user_id=current_user.id,
+            billing_interval=payload.billing_interval,
+        )
+    except subscription_service.StripeConfigurationError as exc:
+        logger.exception("Stripe-konfigurasjon mangler for bruker %s", current_user.email)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except subscription_service.StripeOperationError as exc:
+        logger.exception(
+            "Klarte ikke å opprette Stripe Checkout for bruker %s", current_user.email
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return schemas.SubscriptionCheckoutResponse(checkout_url=checkout_url)
+
+
+@router.post(
+    "/me/subscription/portal",
+    response_model=schemas.SubscriptionPortalResponse,
+    summary="Åpne Stripe Billing Portal",
+)
+async def create_subscription_portal(
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> schemas.SubscriptionPortalResponse:
+    try:
+        portal_url = await subscription_service.create_billing_portal_session(
+            session,
+            user_id=current_user.id,
+        )
+    except subscription_service.StripeConfigurationError as exc:
+        logger.exception("Stripe-konfigurasjon mangler for bruker %s", current_user.email)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except subscription_service.StripeOperationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return schemas.SubscriptionPortalResponse(portal_url=portal_url)
 
 
 @router.post(

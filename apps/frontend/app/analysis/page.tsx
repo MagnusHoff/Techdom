@@ -21,8 +21,20 @@ import {
   type SyntheticEvent,
 } from "react";
 
+import { Heart } from "lucide-react";
+
 import { PageContainer, SiteFooter, SiteHeader } from "../components/chrome";
-import { analyzeProspectusPdf, getJobStatus, incrementUserAnalyses, runAnalysis, startAnalysisJob } from "@/lib/api";
+import {
+  analyzeProspectusPdf,
+  analyzeProspectusText,
+  deleteSavedAnalysis,
+  fetchSavedAnalyses,
+  getJobStatus,
+  incrementUserAnalyses,
+  runAnalysis,
+  saveAnalysis,
+  startAnalysisJob,
+} from "@/lib/api";
 import type {
   AnalysisPayload,
   AnalysisResponse,
@@ -33,6 +45,7 @@ import type {
   ProspectusExtract,
   ProspectusLinks,
   ProspectusDetail,
+  SalgsoppgaveFetchResult,
 } from "@/lib/types";
 
 const USER_UPDATED_EVENT = "techdom:user-updated";
@@ -50,20 +63,29 @@ const DEFAULT_FORM: AnalysisPayload = {
 };
 
 const FORM_FIELD_TOOLTIPS: Record<string, string> = {
-  Kjøpesum: "Totalpris for eiendommen, inkludert omkostninger du betaler ved kjøp.",
-  Egenkapital: "Beløpet du finansierer selv før banklånet tas opp.",
-  "Rente % p.a.": "Årlig nominell rente på boliglånet, oppgitt i prosent.",
-  "Lånetid (år)": "Antall år du planlegger å bruke på å nedbetale lånet.",
-  "Leie (mnd)": "Forventet månedlig husleie som leietakerne betaler.",
-  "Felleskost (mnd)": "Månedlige felleskostnader til borettslag eller sameie.",
-  "Vedlikehold % av leie": "Andel av husleien du setter av til vedlikehold hver måned.",
-  "Andre kost (mnd)": "Andre faste månedlige kostnader knyttet til eiendommen.",
-  "Ledighet %": "Forventet del av året boligen står tom uten leietaker.",
+  Kjøpesum:
+    "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  Egenkapital:
+    "Pengene du legger inn selv uten å låne. Jo høyere egenkapital, jo mindre lån og lavere renteutgifter.",
+  "Rente % p.a.":
+    "Hvor mye du betaler i renter til banken hvert år. For eksempel betyr 5 % rente at du betaler 5 % av lånet i renter årlig.",
+  "Lånetid (år)":
+    "Hvor mange år du skal bruke på å betale ned hele lånet. Lengre tid gir lavere månedsbeløp, men mer renter totalt.",
+  "Leie (mnd)":
+    "Summen du får inn fra leietaker hver måned før utgifter. Dette er hovedinntekten fra utleien.",
+  "Felleskost (mnd)":
+    "Faste månedlige kostnader til sameiet, for eksempel vaktmester, felles forsikring og bygningsvedlikehold.",
+  "Vedlikehold % av leie":
+    "En prosentandel av leien du setter av til vedlikehold. Dette dekker ting som maling, reparasjoner eller utskiftning av hvitevarer.",
+  "Andre kost (mnd)":
+    "Andre faste utgifter du må regne med hver måned, som strøm, internett eller forsikring.",
+  "Ledighet %":
+    "Hvor mye av året boligen står tom uten leietaker. For eksempel 10 % betyr at den er tom 1,2 måneder i året.",
 };
 
 const PROSPECTUS_CARD_TOOLTIPS: Record<string, string> = {
-  "⚠️ TG2": "Tilstandsgrad 2: merkbare avvik som bør følges opp eller utbedres på sikt.",
-  "🛑 TG3": "Tilstandsgrad 3: alvorlige avvik som krever rask utbedring eller nærmere undersøkelser.",
+  "⚠️ TG2": "Tilstandsgrad 2 betyr at det er slitasje eller feil som bør følges opp, men som ikke er akutt. Det kan for eksempel være eldre bad, vinduer eller tekniske løsninger som nærmer seg slutten av levetiden.",
+  "🛑 TG3": "Tilstandsgrad 3 betyr at det er alvorlige feil, skader eller behov for utbedring, ofte med høy kostnad. Dette gjelder typisk råte, lekkasjer eller ulovlige installasjoner som må fikses raskt.",
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
@@ -425,6 +447,39 @@ function parseNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function clampScore(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const bounded = Math.max(0, Math.min(100, Math.round(value)));
+  return bounded;
+}
+
+function buildSavedAnalysisSummary(
+  economyScore: number | null,
+  conditionScore: number | null,
+  statusSentence: string | null,
+): string | null {
+  const parts: string[] = [];
+  const econ = clampScore(economyScore);
+  if (econ !== null) {
+    parts.push(`Økonomi ${econ}`);
+  }
+  const condition = clampScore(conditionScore);
+  if (condition !== null) {
+    parts.push(`Tilstandsgrad ${condition}`);
+  }
+  const status = statusSentence?.trim();
+  if (status) {
+    parts.push(status);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  const summary = parts.join(". ");
+  return summary.endsWith(".") ? summary : `${summary}.`;
 }
 
 function formatNumberWithSpaces(value: number): string {
@@ -1462,12 +1517,12 @@ function scoreFillColor(percent: number | null): string {
 }
 
 const KEY_FIGURE_TOOLTIPS: Record<string, string> = {
-  "Månedlig overskudd": "Hvor mye kontantstrøm som står igjen hver måned etter renter, avdrag og driftskostnader.",
-  "Leie for å gå i null": "Minimum husleie som dekker alle kostnader (break-even-nivået).",
-  "Årlig nettoinntekt": "Netto driftsinntekt (NOI) per år etter alle driftskostnader.",
-  "Årlig nedbetaling på lån": "Beløpet av lånet som betales ned i løpet av ett år.",
-  "Månedlig lånekostnader": "Summen du betaler på lånet hver måned, inkludert renter og avdrag.",
-  "Avkastning på egenkapital": "Forventet årlig avkastning på investert egenkapital uttrykt i prosent.",
+  "Månedlig overskudd": "Summen du sitter igjen med hver måned etter at alle kostnader (renter, vedlikehold, felleskostnader osv.) er trukket fra leieinntekten. Dette er netto fortjeneste per måned.",
+  "Leie for å gå i null": "Den leien du minst må ta for å dekke alle kostnader slik at du verken taper eller tjener penger. Alt over dette blir overskudd.",
+  "Årlig nettoinntekt": "Den totale inntekten du sitter igjen med etter utgifter i løpet av et år. Dette viser hvor lønnsom boligen er per år.",
+  "Årlig nedbetaling på lån": "Hvor mye av lånet du faktisk betaler ned hvert år (ikke renter, men selve lånet du skylder).",
+  "Månedlig lånekostnader": "Totalt beløp du betaler til banken hver måned, som består av både renter (kostnad) og avdrag (nedbetaling av lån som bygger egenkapital).",
+  "Avkastning på egenkapital": "Viser hvor mye verdien av din eierandel øker totalt i prosent - både fra leieoverskudd (pengene du faktisk tjener) og økt egenkapital gjennom nedbetaling av lån.",
 };
 
 function AnalysisPageContent() {
@@ -1512,9 +1567,14 @@ function AnalysisPageContent() {
   const [listingKeyFactsSource, setListingKeyFactsSource] = useState<"job" | "finn" | null>(null);
   const [listingKeyFactsLoading, setListingKeyFactsLoading] = useState(false);
   const [listingKeyFactsError, setListingKeyFactsError] = useState<string | null>(null);
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const jobListingRef = useRef<string | null>(null);
   const jobAppliedRef = useRef<string | null>(null);
   const skipJobInitRef = useRef(process.env.NODE_ENV !== "production");
+  const saveFeedbackTimerRef = useRef<number | null>(null);
 
   const registerAnalysisCompletion = useCallback(() => {
     void incrementUserAnalyses()
@@ -1531,13 +1591,76 @@ function AnalysisPageContent() {
       });
   }, [incrementUserAnalyses]);
 
+  const showSaveMessage = useCallback((message: string | null) => {
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current);
+      saveFeedbackTimerRef.current = null;
+    }
+    setSaveMessage(message);
+    if (message) {
+      saveFeedbackTimerRef.current = window.setTimeout(() => {
+        setSaveMessage(null);
+        saveFeedbackTimerRef.current = null;
+      }, 4000);
+    }
+  }, []);
+
   const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
+  const listingFinnkode = useMemo(() => (listingUrl ? extractFinnkode(listingUrl) : null), [listingUrl]);
+  const analysisKey = useMemo(() => {
+    if (listingFinnkode) {
+      return listingFinnkode;
+    }
+    if (listingUrl) {
+      return listingUrl.slice(0, 255);
+    }
+    return null;
+  }, [listingFinnkode, listingUrl]);
   const derivedListingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
     if (!listingDetails) {
       setDetailsOpen(false);
     }
   }, [listingDetails]);
+
+  useEffect(() => {
+    if (saveFeedbackTimerRef.current !== null) {
+      window.clearTimeout(saveFeedbackTimerRef.current);
+      saveFeedbackTimerRef.current = null;
+    }
+    return () => {
+      if (saveFeedbackTimerRef.current !== null) {
+        window.clearTimeout(saveFeedbackTimerRef.current);
+        saveFeedbackTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!analysisKey) {
+      setSavedAnalysisId(null);
+      setSaveMessage(null);
+      setSaveError(null);
+      return;
+    }
+    let cancelled = false;
+    fetchSavedAnalyses({ analysisKey })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const first = response.items?.[0] ?? null;
+        setSavedAnalysisId(first?.id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSavedAnalysisId(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisKey]);
 
   useEffect(() => {
     setListingKeyFacts([]);
@@ -1663,6 +1786,41 @@ function AnalysisPageContent() {
     return null;
   }, [decisionUi, scoreValue]);
 
+  const scoreBreakdown = useMemo(() => {
+    const fallback = { economy: null as number | null, condition: null as number | null };
+    if (!decisionUi || !Array.isArray(decisionUi.score_breakdown)) {
+      return fallback;
+    }
+    const entries = decisionUi.score_breakdown;
+    const findScore = (predicate: (entry: { id?: string | null; label?: string | null }) => boolean) => {
+      const match = entries.find((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        return predicate(entry);
+      });
+      const rawValue = match?.value;
+      return typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue : null;
+    };
+    const economyScore = findScore((entry) => {
+      const id = entry.id?.toLowerCase() ?? "";
+      if (id === "econ" || id === "økonomi" || id === "okonomi") {
+        return true;
+      }
+      const label = entry.label?.toLowerCase() ?? "";
+      return label.includes("økonomi") || label.includes("okonomi") || label.includes("economy");
+    });
+    const conditionScore = findScore((entry) => {
+      const id = entry.id?.toLowerCase() ?? "";
+      if (id === "tr" || id === "tilstand" || id === "tg") {
+        return true;
+      }
+      const label = entry.label?.toLowerCase() ?? "";
+      return label.includes("tilstand") || label.includes("tg") || label.includes("tilstandsgrad");
+    });
+    return { economy: economyScore, condition: conditionScore };
+  }, [decisionUi]);
+
   const scoreColor = colorClass(decisionUi?.scorelinjal?.farge);
   const domLabel = decisionUi?.status?.dom ?? "";
   const statusSentence = decisionUi?.status?.setning ?? "";
@@ -1671,6 +1829,96 @@ function AnalysisPageContent() {
   const tg2Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg2_details), [prospectus]);
   const tg3Details = useMemo(() => normaliseProspectusDetails(prospectus?.tg3_details), [prospectus]);
   const watchoutItems = useMemo(() => prospectus?.watchouts ?? [], [prospectus]);
+
+  const handleToggleSave = useCallback(async () => {
+    if (saveBusy) {
+      return;
+    }
+    if (!analysisKey) {
+      setSaveError("Legg inn FINN-annonsen for å lagre analysen.");
+      return;
+    }
+
+    if (savedAnalysisId) {
+      setSaveBusy(true);
+      setSaveError(null);
+      showSaveMessage(null);
+      try {
+        await deleteSavedAnalysis(savedAnalysisId);
+        setSavedAnalysisId(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Kunne ikke fjerne analysen.";
+        setSaveError(message || "Kunne ikke fjerne analysen.");
+      } finally {
+        setSaveBusy(false);
+      }
+      return;
+    }
+
+    if (!result) {
+      setSaveError("Kjør analysen før du kan lagre.");
+      return;
+    }
+
+    setSaveBusy(true);
+    setSaveError(null);
+    showSaveMessage(null);
+
+    const priceRaw = result.normalised_params?.price;
+    const priceValue = typeof priceRaw === "number" && Number.isFinite(priceRaw) ? priceRaw : null;
+    const summary = buildSavedAnalysisSummary(
+      scoreBreakdown.economy,
+      scoreBreakdown.condition,
+      statusSentence || null,
+    );
+    const payload = {
+      analysisKey,
+      title: previewTitle ?? previewAddress ?? null,
+      address: previewAddress ?? previewTitle ?? null,
+      imageUrl: previewImages.length > 0 ? previewImages[0] : null,
+      totalScore: scorePercent,
+      riskLevel: domLabel || null,
+      price: priceValue,
+      finnkode: listingFinnkode,
+      summary,
+      sourceUrl: listingUrl ?? null,
+    } as const;
+
+    try {
+      const saved = await saveAnalysis(payload);
+      setSavedAnalysisId(saved.id);
+      showSaveMessage("Denne analysen er nå lagret");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kunne ikke lagre analysen.";
+      const lower = typeof message === "string" ? message.toLowerCase() : "";
+      if (lower.includes("401") || lower.includes("unauth") || lower.includes("forbidden")) {
+        setSaveError("Logg inn for å lagre analyser.");
+      } else {
+        setSaveError(message || "Kunne ikke lagre analysen.");
+      }
+    } finally {
+      setSaveBusy(false);
+    }
+  }, [
+    analysisKey,
+    deleteSavedAnalysis,
+    domLabel,
+    listingFinnkode,
+    listingUrl,
+    previewAddress,
+    previewImages,
+    previewTitle,
+    result,
+    saveAnalysis,
+    saveBusy,
+    savedAnalysisId,
+    scoreBreakdown.economy,
+    scoreBreakdown.condition,
+    scorePercent,
+    showSaveMessage,
+    statusSentence,
+  ]);
+
   const prospectusLinks = useMemo(() => prospectus?.links ?? null, [prospectus]);
   const jobLinkInfo = useMemo(() => {
     if (!jobStatus) {
@@ -1884,9 +2132,32 @@ function AnalysisPageContent() {
     if (candidate) {
       return candidate;
     }
-    const fallback = normaliseExternalUrl(jobStatus?.pdf_url);
-    return fallback ?? null;
-  }, [effectiveLinks, jobStatus]);
+    const jobPdf = normaliseExternalUrl(jobStatus?.pdf_url);
+    if (jobPdf) {
+      return jobPdf;
+    }
+    const artifacts = jobStatus?.artifacts && typeof jobStatus.artifacts === "object"
+      ? (jobStatus.artifacts as Record<string, unknown>)
+      : null;
+    const pdfMeta = artifacts && typeof artifacts.pdf_meta === "object" && artifacts.pdf_meta !== null
+      ? (artifacts.pdf_meta as { path?: unknown })
+      : null;
+    const pdfPath = typeof pdfMeta?.path === "string" ? pdfMeta.path.trim() : "";
+    if (pdfPath) {
+      const jobFinnkode =
+        typeof jobStatus?.finnkode === "string" && jobStatus.finnkode.trim()
+          ? jobStatus.finnkode.trim()
+          : null;
+      const listingFinnkode =
+        typeof listingUrl === "string" && listingUrl.trim() ? extractFinnkode(listingUrl) : null;
+      const pathFinnkode = extractFinnkode(pdfPath);
+      const fallbackFinnkode = jobFinnkode ?? listingFinnkode ?? pathFinnkode;
+      if (fallbackFinnkode) {
+        return `/files/${fallbackFinnkode}.pdf`;
+      }
+    }
+    return null;
+  }, [effectiveLinks, jobStatus, listingUrl]);
   const resourceListingUrl = useMemo(() => {
     const candidate = stringOrNull(listingUrl);
     if (!candidate) {
@@ -1905,6 +2176,8 @@ function AnalysisPageContent() {
     };
 
   const jobCompleted = useMemo(() => Boolean(result), [result]);
+  const showSaveControl = Boolean(analysisKey || savedAnalysisId);
+  const saveToggleDisabled = (!result && !savedAnalysisId) || !analysisKey;
 
   const previewImageTotal = previewImages.length;
   const safePreviewIndex = previewImageTotal > 0 ? Math.max(0, Math.min(previewImageIndex, previewImageTotal - 1)) : 0;
@@ -1982,7 +2255,7 @@ function AnalysisPageContent() {
       if (file) {
         const type = (file.type || "").toLowerCase();
         const name = file.name.toLowerCase();
-        if (!(type.includes("pdf") || name.endswith(".pdf"))) {
+        if (!(type.includes("pdf") || name.endsWith(".pdf"))) {
           setManualProspectusFile(null);
           setManualProspectusSuccess(false);
           setManualProspectusError("Filen må være en PDF.");
@@ -2496,6 +2769,12 @@ function AnalysisPageContent() {
           listingAddress={previewAddress}
           loading={previewLoading}
           error={previewError}
+          onToggleSave={showSaveControl ? handleToggleSave : undefined}
+          saved={Boolean(savedAnalysisId)}
+          saveDisabled={saveToggleDisabled}
+          saveBusy={saveBusy}
+          saveMessage={saveMessage}
+          saveError={saveError}
           statusCard={
             analyzing ? (
               <AnalysisUpdateCard />
@@ -2820,6 +3099,12 @@ interface ListingPreviewCardProps {
   loading: boolean;
   error: string | null;
   statusCard?: ReactNode;
+  onToggleSave?: (() => void) | null;
+  saved?: boolean;
+  saveDisabled?: boolean;
+  saveBusy?: boolean;
+  saveMessage?: string | null;
+  saveError?: string | null;
 }
 
 interface JobStatusCardProps {
@@ -2905,6 +3190,7 @@ interface ResourceLinkGroupProps {
 function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: ResourceLinkGroupProps) {
   const [discoveredPdfUrl, setDiscoveredPdfUrl] = useState<string | null>(null);
   const [discoveringPdf, setDiscoveringPdf] = useState(false);
+  const [salgsoppgaveFetchResult, setSalgsoppgaveFetchResult] = useState<SalgsoppgaveFetchResult | null>(null);
   const primaryPdfUrl = normaliseExternalUrl(linkInfo?.salgsoppgave_pdf) ?? normaliseExternalUrl(pdfUrl);
   const linkProtected = useMemo(() => {
     const message = linkInfo?.message?.toLowerCase() ?? "";
@@ -2919,11 +3205,13 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
 
   useEffect(() => {
     if (primaryPdfUrl) {
+      setSalgsoppgaveFetchResult(null);
       setDiscoveredPdfUrl(null);
       setDiscoveringPdf(false);
       return;
     }
     if (!listingUrl || linkProtected) {
+      setSalgsoppgaveFetchResult(null);
       setDiscoveredPdfUrl(null);
       setDiscoveringPdf(false);
       return;
@@ -2931,6 +3219,7 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
     let cancelled = false;
     const controller = new AbortController();
     setDiscoveringPdf(true);
+    setSalgsoppgaveFetchResult(null);
     const params = new URLSearchParams({ listing: listingUrl });
     fetch(`/api/finn-prospect?${params.toString()}`, {
       cache: "no-store",
@@ -2941,20 +3230,35 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
           return null;
         }
         try {
-          const data = (await res.json()) as { url?: string | null };
-          return typeof data.url === "string" && data.url ? data.url : null;
+          const data = (await res.json()) as SalgsoppgaveFetchResult | null;
+          if (!data || typeof data.status !== "string") {
+            return null;
+          }
+          return data;
         } catch {
           return null;
         }
       })
-      .then((nextUrl) => {
+      .then((payload) => {
         if (cancelled) {
           return;
         }
-        setDiscoveredPdfUrl(normaliseExternalUrl(nextUrl));
+        setSalgsoppgaveFetchResult(payload);
+        if (!payload) {
+          setDiscoveredPdfUrl(null);
+          return;
+        }
+        const candidateUrl =
+          payload.status === "found"
+            ? payload.stable_pdf_url ?? payload.original_pdf_url ?? null
+            : payload.status === "uncertain"
+              ? payload.original_pdf_url ?? payload.stable_pdf_url ?? null
+              : null;
+        setDiscoveredPdfUrl(normaliseExternalUrl(candidateUrl));
       })
       .catch(() => {
         if (!cancelled) {
+          setSalgsoppgaveFetchResult(null);
           setDiscoveredPdfUrl(null);
         }
       })
@@ -2970,15 +3274,22 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
   }, [listingUrl, primaryPdfUrl, linkProtected]);
 
   const fallbackProspectLink = buildFinnProspectLink(listingUrl);
+  const effectiveFetchStatus = linkProtected ? null : salgsoppgaveFetchResult?.status ?? null;
+  const fetchConfidencePct =
+    typeof salgsoppgaveFetchResult?.confidence === "number"
+      ? Math.round(salgsoppgaveFetchResult.confidence * 100)
+      : undefined;
   const effectiveDiscoveredUrl = linkProtected ? null : discoveredPdfUrl;
   const salgsoppgaveHref = primaryPdfUrl ?? effectiveDiscoveredUrl ?? fallbackProspectLink;
   const salgsoppgaveState = primaryPdfUrl
     ? "primary"
-    : effectiveDiscoveredUrl
+    : effectiveFetchStatus === "found" && effectiveDiscoveredUrl
       ? "discovered"
-      : fallbackProspectLink
-        ? "fallback"
-        : null;
+      : effectiveFetchStatus === "uncertain" && effectiveDiscoveredUrl
+        ? "uncertain"
+        : fallbackProspectLink
+          ? "fallback"
+          : null;
   const proxiedSalgsoppgaveHref = useMemo(() => {
     if (!salgsoppgaveHref) {
       return null;
@@ -2999,14 +3310,24 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
   }, [salgsoppgaveHref, salgsoppgaveState]);
   const salgsoppgaveLabel =
     salgsoppgaveState === "discovered"
-      ? "Åpne salgsoppgaven (direkte PDF fra FINN)"
-      : salgsoppgaveState === "fallback"
-        ? "Åpne salgsoppgaven i FINN-annonsen"
-        : undefined;
-  const disabledTitle = linkInfo?.message ?? "Ikke funnet";
+      ? "Åpne salgsoppgaven (stabil kopi)"
+      : salgsoppgaveState === "uncertain"
+        ? "Usikker – åpne likevel"
+        : salgsoppgaveState === "fallback"
+          ? "Åpne salgsoppgaven i FINN-annonsen"
+          : undefined;
+  const disabledTitle =
+    linkInfo?.message ??
+    (salgsoppgaveFetchResult?.status === "not_found" ? "Fant ikke salgsoppgaven (prøv igjen)" : "Ikke funnet");
   const anchorTitle =
     linkInfo?.message ??
-    (typeof linkInfo?.confidence === "number" ? `Konfidens ${Math.round(linkInfo.confidence * 100)}%` : undefined);
+    (salgsoppgaveState === "uncertain"
+      ? "Usikker salgsoppgave – åpne manuelt"
+      : typeof linkInfo?.confidence === "number"
+        ? `Konfidens ${Math.round(linkInfo.confidence * 100)}%`
+        : fetchConfidencePct !== undefined
+          ? `Konfidens ${fetchConfidencePct}%`
+          : undefined);
   return (
     <div className="resource-links" aria-label="Ressurser">
       {salgsoppgaveHref ? (
@@ -3396,6 +3717,12 @@ function ListingPreviewCard({
   loading,
   error,
   statusCard,
+  onToggleSave = null,
+  saved = false,
+  saveDisabled = false,
+  saveBusy = false,
+  saveMessage = null,
+  saveError = null,
 }: ListingPreviewCardProps) {
   const hasListing = Boolean(listingUrl);
   const imageCount = Array.isArray(imageUrls) ? imageUrls.length : 0;
@@ -3567,11 +3894,30 @@ function ListingPreviewCard({
     return imageCount > 1 ? `${baseDescription} (${safeIndex + 1} av ${imageCount})` : baseDescription;
   })();
   const navigationDisabled = imageCount < 2;
+  const showSaveToggle = typeof onToggleSave === "function";
+  const disableSaveButton = Boolean(saveDisabled) || Boolean(saveBusy);
+  const saveButtonLabel = saved ? "Fjern fra lagrede analyser" : "Lagre denne analysen";
+  const feedbackText = saveError ?? saveMessage ?? null;
+  const feedbackClassName = saveError ? "preview-save-feedback has-error" : "preview-save-feedback";
 
   return (
     <aside className="listing-preview-card">
       {heading ? <h2 className="preview-heading">{heading}</h2> : null}
       <div className="preview-frame">
+        {showSaveToggle ? (
+          <button
+            type="button"
+            className={`preview-save-toggle${saved ? " is-active" : ""}${saveBusy ? " is-busy" : ""}`}
+            onClick={onToggleSave ?? undefined}
+            aria-pressed={saved ? "true" : "false"}
+            aria-label={saveButtonLabel}
+            disabled={disableSaveButton}
+            aria-busy={saveBusy ? "true" : undefined}
+          >
+            <Heart aria-hidden="true" />
+            <span className="sr-only">{saveButtonLabel}</span>
+          </button>
+        ) : null}
         {currentImage ? (
           <>
             <img
@@ -3613,6 +3959,11 @@ function ListingPreviewCard({
         )}
       </div>
       {currentImage ? <span className="sr-only">{srStatus}</span> : null}
+      {showSaveToggle && feedbackText ? (
+        <p className={feedbackClassName} role="status" aria-live="polite">
+          {feedbackText}
+        </p>
+      ) : null}
       {statusCard ? <div className="listing-status-card">{statusCard}</div> : null}
     </aside>
   );

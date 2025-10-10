@@ -519,12 +519,14 @@ def _persist_to_s3_and_mirror(
     tmp_path = _mirror_tmp_write(finnkode, pdf_bytes)
     up: Dict[str, Any] = {}
     presigned_url: str | None = None
+    stable_url: str | None = None
 
     if prospekt_s3_enabled():
         try:
             up = upload_prospekt(
                 local_path=tmp_path,
                 finnkode=finnkode,
+                sha256=new_hash,
                 url_expire=3600,
             )
         except Exception as exc:
@@ -535,6 +537,9 @@ def _persist_to_s3_and_mirror(
             out_dbg["s3_key"] = up.get("key")
             presigned_url = up.get("url")
             out_dbg["presigned_url"] = presigned_url
+            stable_url = up.get("cdn_url") or presigned_url
+            if stable_url:
+                out_dbg["stable_url"] = stable_url
             out_dbg["pdf_uploaded"] = True
     else:
         out_dbg["s3_disabled"] = True
@@ -563,12 +568,14 @@ def _persist_to_s3_and_mirror(
                 "bucket": up.get("bucket"),
                 "key": up.get("key"),
                 "s3_uri": up.get("s3_uri"),
+                "cdn_url": up.get("cdn_url"),
             },
+            "pdf_uploaded": out_dbg.get("pdf_uploaded"),
         }
     )
     _save_meta(finnkode, meta)
 
-    return pdf_bytes, presigned_url or up.get("url"), out_dbg
+    return pdf_bytes, stable_url or presigned_url or up.get("url"), out_dbg
 
 
 def _mirror_tmp_write(finnkode: str, pdf_bytes: bytes) -> Path:
@@ -643,6 +650,7 @@ def fetch_prospectus_from_finn(
     finn_url: str,
     *,
     save_dir: str = "data/cache/prospekt",  # beholdt for kompatibilitet (speil)
+    persist: bool = True,
 ) -> Tuple[bytes | None, str | None, dict]:
     dbg: Dict[str, Any] = {
         "step": "start",
@@ -664,11 +672,16 @@ def fetch_prospectus_from_finn(
     def _postprocess_and_return(
         pdf_bytes: bytes, source_url: Optional[str]
     ) -> tuple[bytes, Optional[str], dict]:
-        used_bytes, presigned_url, meta = _persist_to_s3_and_mirror(
-            pdf_bytes=pdf_bytes, pdf_url=source_url, finnkode=finnkode
-        )
-        dbg.update(meta)
-        return used_bytes, presigned_url, dbg
+        if persist:
+            used_bytes, stable_url, meta = _persist_to_s3_and_mirror(
+                pdf_bytes=pdf_bytes, pdf_url=source_url, finnkode=finnkode
+            )
+            dbg.update(meta)
+            return used_bytes, stable_url, dbg
+        dbg["pdf_hash"] = sha256_bytes(pdf_bytes)
+        dbg["pdf_uploaded"] = False
+        dbg["used_return"] = "bytes_only"
+        return pdf_bytes, source_url, dbg
 
     try:
         sess: requests.Session = new_session()

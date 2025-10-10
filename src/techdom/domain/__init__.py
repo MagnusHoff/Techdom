@@ -5,5 +5,7 @@ __all__ = [
     "geo",
     "geo_registry",
     "history",
+    "salgsoppgave",
+    "saved_analyses",
     "schemas",
 ]

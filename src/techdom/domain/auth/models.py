@@ -28,10 +28,26 @@ class User(Base):
     avatar_color: Mapped[str | None] = mapped_column(String(16), nullable=True)
     hashed_password: Mapped[str] = mapped_column(String(1024), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name="user_role"), default=UserRole.USER, nullable=False
+        Enum(
+            UserRole,
+            name="user_role",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        default=UserRole.USER,
+        nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subscription_price_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscription_current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    subscription_cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -42,6 +58,12 @@ class User(Base):
         nullable=False,
     )
     total_analyses: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    saved_analyses: Mapped[list["SavedAnalysis"]] = relationship(
+        "SavedAnalysis",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"User(id={self.id!r}, email={self.email!r}, role={self.role!r})"

@@ -6,15 +6,24 @@ import os
 from decimal import Decimal
 from typing import Optional
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+try:
+    import boto3  # type: ignore
+    from botocore.exceptions import BotoCoreError, ClientError  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    boto3 = None  # type: ignore
+
+    class BotoCoreError(Exception):  # type: ignore
+        pass
+
+    class ClientError(Exception):  # type: ignore
+        pass
 
 
 _TABLE_NAME = os.getenv("DYNAMODB_TABLE", "").strip()
 
 
 def _get_table():
-    if not _TABLE_NAME:
+    if not _TABLE_NAME or boto3 is None:
         raise RuntimeError("DYNAMODB_TABLE er ikke satt")
     dynamodb = boto3.resource("dynamodb")
     return dynamodb.Table(_TABLE_NAME)
@@ -22,7 +31,7 @@ def _get_table():
 
 def fetch_total_count(default: int = 0) -> int:
     """Hent totalt antall analyser. Faller tilbake til default ved feil."""
-    if not _TABLE_NAME:
+    if not _TABLE_NAME or boto3 is None:
         return default
     try:
         table = _get_table()
@@ -47,7 +56,7 @@ def fetch_total_count(default: int = 0) -> int:
 
 def increment_total_count() -> Optional[int]:
     """Øk telleren i DynamoDB. Returnerer ny verdi eller None ved feil."""
-    if not _TABLE_NAME:
+    if not _TABLE_NAME or boto3 is None:
         return None
     try:
         table = _get_table()
@@ -70,4 +79,3 @@ def increment_total_count() -> Optional[int]:
         return int(value) if value is not None else None
     except (ClientError, BotoCoreError, RuntimeError, ValueError, TypeError):
         return None
-

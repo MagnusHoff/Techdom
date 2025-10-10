@@ -36,6 +36,16 @@ export interface ProspectusLinks {
   message?: string | null;
 }
 
+export interface SalgsoppgaveFetchResult {
+  status: "found" | "not_found" | "uncertain";
+  original_pdf_url?: string | null;
+  stable_pdf_url?: string | null;
+  filesize_bytes?: number | null;
+  sha256?: string | null;
+  confidence?: number | null;
+  log?: string[];
+}
+
 export type KeyFactRaw = {
   label: string;
   value: string;
@@ -104,6 +114,7 @@ export interface StoredAnalysis {
   finnkode: string | null;
   summary: string | null;
   sourceUrl: string | null;
+  analysisKey?: string | null;
 }
 
 export interface StoredAnalysesResponse {
@@ -161,6 +172,12 @@ export interface AuthUser {
   role: "user" | "plus" | "admin";
   is_active: boolean;
   is_email_verified: boolean;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+  subscription_status?: string | null;
+  subscription_price_id?: string | null;
+  subscription_current_period_end?: string | null;
+  subscription_cancel_at_period_end?: boolean;
   created_at: string;
   updated_at: string;
   total_analyses: number;

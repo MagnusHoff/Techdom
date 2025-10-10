@@ -46,6 +46,16 @@ LOGGER = logging.getLogger(__name__)
 _PDF_HEAD_TIMEOUT = 12
 
 
+def _local_pdf_url(finnkode: str, pdf_path: Optional[str]) -> Optional[str]:
+    if not pdf_path:
+        return None
+    stem = Path(pdf_path).stem or finnkode
+    base = os.getenv("PUBLIC_API_BASE_URL") or os.getenv("NEXT_PUBLIC_API_BASE_URL")
+    if base:
+        return f"{base.rstrip('/')}/files/{stem}.pdf"
+    return f"/files/{stem}.pdf"
+
+
 def _verify_pdf_head(url: str, *, referer: Optional[str] = None) -> Tuple[bool, Optional[str], float, bool]:
     """
     Returnerer (ok, final_url, confidence, protected)
@@ -112,6 +122,7 @@ def _build_salgsoppgave_links(
     dbg = fetch_debug or {}
     _add(dbg.get("pdf_url"), dbg.get("finn_url") or finn_url, 0.95)
     _add(dbg.get("presigned_url"), None, 0.8)
+    _add(dbg.get("stable_url"), None, 0.98)
     _add(pdf_url, None, 0.95)
 
     for url, referer, base_conf in candidates:
@@ -128,21 +139,30 @@ def _build_salgsoppgave_links(
             links["message"] = message
         return links
 
+    if pdf_path:
+        local_url = _local_pdf_url(finnkode, pdf_path)
+        if local_url:
+            links["salgsoppgave_pdf"] = local_url
+            # Keep moderate confidence so the local copy is offered even for protected sources.
+            links["confidence"] = 0.6 if not protected else 0.5
+            if message:
+                links["message"] = message
+            return links
+
     if protected:
         links["confidence"] = 0.0
         links["salgsoppgave_pdf"] = None
         links["message"] = message or "Beskyttet – last ned lokalt."
         return links
 
-    if pdf_path:
-        stem = Path(pdf_path).stem or finnkode
-        base = os.getenv("PUBLIC_API_BASE_URL") or os.getenv("NEXT_PUBLIC_API_BASE_URL")
-        local_url = f"{base.rstrip('/')}/files/{stem}.pdf" if base else f"/files/{stem}.pdf"
-        links["salgsoppgave_pdf"] = local_url
-        links["confidence"] = 0.6
-        if message:
-            links["message"] = message
-        return links
+    if pdf_path and not links.get("salgsoppgave_pdf"):
+        fallback_url = _local_pdf_url(finnkode, pdf_path)
+        if fallback_url:
+            links["salgsoppgave_pdf"] = fallback_url
+            links["confidence"] = max(links.get("confidence", 0.0), 0.5)
+            if message:
+                links["message"] = message
+            return links
 
     if message:
         links["message"] = message
@@ -590,12 +610,17 @@ class ProspectAnalysisPipeline:
                 "decision_ui": analysis_result.decision_ui,
                 "ai_text": analysis_result.ai_text,
             }
+
             self.job_service.store_artifact(job_id, "analysis", analysis_payload)
 
             self.job_service.mark_done(
                 job_id,
                 pdf_path=pdf_path,
-                pdf_url=links_payload.get("salgsoppgave_pdf") if isinstance(links_payload, dict) else pdf_url,
+                pdf_url=(
+                    links_payload.get("salgsoppgave_pdf")
+                    if isinstance(links_payload, dict) and links_payload.get("salgsoppgave_pdf")
+                    else _local_pdf_url(finnkode, pdf_path)
+                ),
                 result={
                     "analysis": analysis_payload,
                     "listing": listing_info,

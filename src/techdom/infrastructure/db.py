@@ -34,6 +34,14 @@ def _normalise_database_url(raw: str) -> Tuple[str, Dict[str, Any]]:
 
     if driver in {"postgres", "postgresql", "postgresql+psycopg", "postgresql+psycopg2", "postgresql+asyncpg"}:
         url = url.set(drivername="postgresql+psycopg_async")
+    elif driver and driver.startswith("sqlite"):
+        database = url.database or ""
+        if database:
+            db_path = Path(database)
+            if not db_path.is_absolute():
+                project_root = Path(__file__).resolve().parents[3]
+                db_path = (project_root / db_path).resolve()
+                url = url.set(database=str(db_path))
 
     return url.render_as_string(hide_password=False), {}
 
@@ -43,7 +51,12 @@ def _resolve_database_url() -> Tuple[str, Dict[str, Any]]:
     if url:
         return _normalise_database_url(url)
 
-    sqlite_path = Path(os.getenv("LOCAL_SQLITE_PATH", "data/local.db")).resolve()
+    sqlite_raw = os.getenv("LOCAL_SQLITE_PATH", "data/local.db")
+    sqlite_path = Path(sqlite_raw)
+    if not sqlite_path.is_absolute():
+        project_root = Path(__file__).resolve().parents[3]
+        sqlite_path = project_root / sqlite_path
+    sqlite_path = sqlite_path.resolve()
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     logger.warning(
         "DATABASE_URL is not set. Falling back to local SQLite database at %s", sqlite_path
@@ -58,21 +71,38 @@ class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
 
 
-engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,
-    echo=_should_echo_sql(),
-    connect_args=CONNECT_ARGS,
-)
-SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+_DB_IMPORT_ERROR: Exception | None = None
+
+try:
+    engine: AsyncEngine = create_async_engine(
+        DATABASE_URL,
+        echo=_should_echo_sql(),
+        connect_args=CONNECT_ARGS,
+    )
+    SessionMaker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+    engine = None  # type: ignore[assignment]
+    SessionMaker = None  # type: ignore[assignment]
+    _DB_IMPORT_ERROR = exc
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    if SessionMaker is None:
+        raise RuntimeError(
+            "Asynkron database-driver er ikke installert. "
+            "Installer f.eks. 'aiosqlite' eller sett DATABASE_URL til en støttet driver."
+        ) from _DB_IMPORT_ERROR
     async with SessionMaker() as session:
         yield session
 
 
 async def init_models() -> None:
     """Create database tables if they do not already exist."""
+    if engine is None:
+        raise RuntimeError(
+            "Kan ikke initialisere databasen uten asynkron driver. "
+            "Installer nødvendig avhengighet først."
+        ) from _DB_IMPORT_ERROR
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
 
@@ -129,9 +159,59 @@ def _ensure_users_schema(sync_conn) -> None:
         )
         columns.add("total_analyses")
 
+    if "stripe_customer_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(255);"))
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_stripe_customer_id "
+                "ON users (stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;"
+            )
+        )
+        columns.add("stripe_customer_id")
+
+    if "stripe_subscription_id" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE users ADD COLUMN stripe_subscription_id VARCHAR(255);")
+        )
+        sync_conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_stripe_subscription_id "
+                "ON users (stripe_subscription_id) WHERE stripe_subscription_id IS NOT NULL;"
+            )
+        )
+        columns.add("stripe_subscription_id")
+
+    if "subscription_status" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN subscription_status VARCHAR(64);"))
+        columns.add("subscription_status")
+
+    if "subscription_price_id" not in columns:
+        sync_conn.execute(text("ALTER TABLE users ADD COLUMN subscription_price_id VARCHAR(255);"))
+        columns.add("subscription_price_id")
+
+    if "subscription_current_period_end" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN subscription_current_period_end TIMESTAMPTZ;"
+            )
+        )
+        columns.add("subscription_current_period_end")
+
+    if "subscription_cancel_at_period_end" not in columns:
+        sync_conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN subscription_cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE;"
+            )
+        )
+        columns.add("subscription_cancel_at_period_end")
+
 
 async def ensure_auth_schema() -> None:
     """Ensure backward compatible auth schema (e.g. username column)."""
+    if engine is None:
+        raise RuntimeError(
+            "Kan ikke oppdatere auth-skjema uten asynkron database-driver."
+        ) from _DB_IMPORT_ERROR
     async with engine.begin() as connection:
         await connection.run_sync(_ensure_users_schema)
 
@@ -139,6 +219,10 @@ async def ensure_auth_schema() -> None:
 @asynccontextmanager
 async def session_scope() -> AsyncGenerator[AsyncSession, None]:
     """Provide a transactional scope around a series of operations."""
+    if SessionMaker is None:
+        raise RuntimeError(
+            "Kan ikke opprette database-session uten asynkron driver."
+        ) from _DB_IMPORT_ERROR
     async with SessionMaker() as session:
         try:
             yield session

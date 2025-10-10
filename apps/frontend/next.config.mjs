@@ -17,6 +17,10 @@ const nextConfig = {
         source: "/api/:path*",
         destination: `${apiBase}/:path*`,
       },
+      {
+        source: "/files/:path*",
+        destination: `${apiBase}/files/:path*`,
+      },
     ];
   },
 };
