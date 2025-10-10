@@ -23,6 +23,8 @@ from techdom.processing.rates import get_interest_estimate
 from techdom.processing.rent.logic import get_rent_by_csv
 from techdom.processing.tg_extract import (
     ExtractionError as TGExtractionError,
+    build_v2_details,
+    build_v2_details_from_strings,
     coerce_tg_strings,
     extract_tg_from_pdf_bytes,
     format_tg_entries,
@@ -401,8 +403,8 @@ class ProspectAnalysisPipeline:
             tg_markdown: Optional[str] = None
             tg2_from_extract: List[str] = []
             tg3_from_extract: List[str] = []
-            tg2_detail_entries: List[Dict[str, str]] = []
-            tg3_detail_entries: List[Dict[str, str]] = []
+            tg2_detail_entries: List[Dict[str, Any]] = []
+            tg3_detail_entries: List[Dict[str, Any]] = []
 
             if pdf_bytes:
                 try:
@@ -468,12 +470,10 @@ class ProspectAnalysisPipeline:
                             tg2_data = candidate_json.get("TG2") or []
                             tg3_data = candidate_json.get("TG3") or []
                             if isinstance(tg2_data, Iterable):
-                                tg2_detail_entries = summarize_tg_entries(
+                                tg2_detail_entries = build_v2_details(
                                     tg2_data,
                                     level=2,
-                                    include_source=True,
-                                    limit=8,
-                                )
+                                )[:8]
                                 tg2_from_extract = format_tg_entries(
                                     tg2_data,
                                     level=2,
@@ -546,7 +546,10 @@ class ProspectAnalysisPipeline:
                 if tg2_detail_entries:
                     ai_extract["tg2_details"] = tg2_detail_entries
                 elif existing_tg2:
-                    ai_extract["tg2_details"] = summarize_tg_strings(existing_tg2, level=2)
+                    ai_extract["tg2_details"] = build_v2_details_from_strings(
+                        existing_tg2,
+                        level=2,
+                    )[:8]
 
                 if tg3_detail_entries:
                     ai_extract["tg3_details"] = tg3_detail_entries

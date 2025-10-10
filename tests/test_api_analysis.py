@@ -6,6 +6,8 @@ from techdom.domain.analysis_service import (
     compute_analysis,
     normalise_params,
 )
+from techdom.domain.tg_cache import ExtractionResult
+from techdom.infrastructure.db import get_session
 
 
 def test_analysis_endpoint_returns_expected(monkeypatch):
@@ -59,3 +61,39 @@ def test_analyze_endpoint_returns_job(monkeypatch):
     assert status_resp.status_code == 200
     job_status = status_resp.json()
     assert job_status["status"] == "queued"
+
+
+def test_get_analysis_tg_details(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    async def _fake_session():
+        yield None
+
+    async def _fake_loader(analysis_id: str, session, *, force: bool) -> ExtractionResult:
+        return ExtractionResult(
+            analysis_id=analysis_id,
+            tg2_details=[
+                {
+                    "label": "Tak",
+                    "short": "Tak må fikses",
+                    "hover": "TG2 Tak: Tak må fikses.",
+                    "tg": 2,
+                }
+            ],
+            tg_version=2,
+            updated_at="2024-01-01T00:00:00+00:00",
+            pdf_url="https://example.org/prospect.pdf",
+        )
+
+    app.dependency_overrides[get_session] = _fake_session
+    monkeypatch.setattr("apps.api.main._load_or_extract_tg_details", _fake_loader)
+
+    client = TestClient(app)
+    response = client.get("/analysis/654321")
+    app.dependency_overrides.pop(get_session, None)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tg_version"] == 2
+    assert isinstance(payload["tg2_details"], list)
+    assert payload["tg2_details"][0]["short"] == "Tak må fikses"

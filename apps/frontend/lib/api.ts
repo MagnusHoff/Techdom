@@ -17,6 +17,7 @@ import type {
   StoredAnalysis,
   StoredAnalysesResponse,
   ProspectusExtract,
+  AnalysisTgDetailResponse,
   AdminChangeUserPasswordPayload,
   AdminUpdateUserPayload,
   UserStatusResponse,
@@ -367,6 +368,24 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
     cache: "no-store",
   });
   return handleResponse<JobStatus>(res);
+}
+
+export async function fetchAnalysisTgDetails(analysisId: string): Promise<AnalysisTgDetailResponse> {
+  const res = await apiFetch(`/analysis/${analysisId}`, {
+    cache: "no-store",
+  });
+  return handleResponse<AnalysisTgDetailResponse>(res);
+}
+
+export async function reextractAnalysisTgDetails(
+  analysisId: string,
+): Promise<AnalysisTgDetailResponse> {
+  const res = await apiFetch(`/analysis/${analysisId}/reextract?force=1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+  });
+  return handleResponse<AnalysisTgDetailResponse>(res);
 }
 
 export async function fetchStats(): Promise<StatsResponse> {

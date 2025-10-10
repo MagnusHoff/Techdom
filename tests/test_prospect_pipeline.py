@@ -123,13 +123,14 @@ def test_pipeline_updates_job(monkeypatch):
     tg2_points = data["result"]["ai_extract"]["tg2"]
     tg3_points = data["result"]["ai_extract"]["tg3"]
     assert "TG2 punkt" in tg2_points
-    assert "TG2 Tak: Tak må fikses. (Side 12)" in tg2_points
+    assert "TG2 Tak: Tak må fikses. (Tilstandsrapport side 12)" in tg2_points
     assert "TG3 funn" in tg3_points
-    assert "TG3 Bad: Bad må fikses. (Side 14)" in tg3_points
+    assert "TG3 Bad: Bad må fikses. (Tilstandsrapport side 14)" in tg3_points
     tg2_details = data["result"]["ai_extract"].get("tg2_details")
     tg3_details = data["result"]["ai_extract"].get("tg3_details")
-    assert tg2_details and tg2_details[0]["label"].startswith("Tak")
-    assert tg2_details[0]["detail"].startswith("TG2 Tak")
+    assert tg2_details and tg2_details[0]["short"].lower().startswith("tak")
+    assert tg2_details[0]["hover"].startswith("TG2 Tak")
+    assert tg2_details[0]["tg"] == 2
     assert tg3_details and tg3_details[0]["label"].startswith("Bad")
     assert tg3_details[0]["detail"].startswith("TG3 Bad")
     assert data["result"]["links"]["salgsoppgave_pdf"] == "https://example.org/prospect.pdf"
