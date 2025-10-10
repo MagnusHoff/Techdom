@@ -24,6 +24,9 @@ BLOCK_RX = re.compile(
 
 MIN_BYTES = 300_000
 MIN_PAGES = 4
+API_ROOT = "https://www.nordvikbolig.no"
+API_DOCUMENTS = f"{API_ROOT}/api/documents"
+API_DOWNLOAD = f"{API_ROOT}/api/documents/download"
 
 
 def _pdf_pages(b: bytes | None) -> int:
@@ -94,6 +97,159 @@ def _get(
         extra_headers=extra,
         allow_redirects=True,
     )
+
+
+def _estate_id_from_url(url: str) -> str | None:
+    """Return Nordvik estate UUID from /boliger/{estateId} path."""
+    try:
+        path = urlparse(url or "").path or ""
+    except Exception:
+        path = ""
+    if not path:
+        return None
+    parts = [p for p in path.split("/") if p]
+    for idx, part in enumerate(parts):
+        if part.lower() == "boliger" and idx + 1 < len(parts):
+            candidate = parts[idx + 1]
+            if re.fullmatch(r"[0-9a-fA-F-]{10,}", candidate):
+                return candidate.upper()
+            return candidate or None
+    if parts and re.fullmatch(r"[0-9a-fA-F-]{10,}", parts[-1]):
+        return parts[-1].upper()
+    return None
+
+
+def _api_headers(referer: str | None, *, accept: str = "application/json") -> Dict[str, str]:
+    headers: Dict[str, str] = {"User-Agent": SETTINGS.USER_AGENT}
+    if accept:
+        headers["Accept"] = accept
+    if referer:
+        headers["Referer"] = referer
+        try:
+            pr = urlparse(referer)
+            if pr.scheme and pr.netloc:
+                headers["Origin"] = f"{pr.scheme}://{pr.netloc}"
+        except Exception:
+            headers.setdefault("Origin", API_ROOT)
+    return headers
+
+
+def _fetch_via_api(
+    sess: requests.Session, referer: str, estate_id: str
+) -> Tuple[bytes | None, str | None, Dict[str, Any], Dict[str, Any]]:
+    """
+    Fetch prospectus using Nordvik's JSON API.
+    Returns (pdf_bytes, final_url, meta, driver_meta).
+    """
+    meta: Dict[str, Any] = {
+        "api_estate_id": estate_id,
+    }
+    driver_meta: Dict[str, Any] = {}
+
+    docs_url = f"{API_DOCUMENTS}/{estate_id}"
+    headers = _api_headers(referer)
+    try:
+        resp = sess.get(docs_url, headers=headers, timeout=SETTINGS.REQ_TIMEOUT)
+        meta["api_documents_status"] = resp.status_code
+        resp.raise_for_status()
+    except Exception as exc:
+        meta["api_documents_error"] = f"{type(exc).__name__}:{exc}"
+        return None, None, meta, driver_meta
+
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        meta["api_documents_json_error"] = f"{type(exc).__name__}:{exc}"
+        return None, None, meta, driver_meta
+
+    estate_doc = payload.get("estateDocument") if isinstance(payload, dict) else None
+    meta["api_has_estate_document"] = bool(estate_doc)
+    if not estate_doc:
+        return None, None, meta, driver_meta
+
+    doc_id = estate_doc.get("documentId")
+    doc_type = estate_doc.get("docType")
+    last_changed = estate_doc.get("lastChanged")
+    meta.update(
+        {
+            "api_doc_id": doc_id,
+            "api_doc_type": doc_type,
+            "api_doc_last_changed": last_changed,
+        }
+    )
+
+    if not doc_id:
+        meta["api_doc_missing_id"] = True
+        return None, None, meta, driver_meta
+
+    download_payload = {
+        "estateId": estate_id,
+        "docId": doc_id,
+        "docType": doc_type,
+        "lastChanged": last_changed,
+    }
+    post_headers = _api_headers(referer)
+    post_headers["Content-Type"] = "application/json"
+
+    try:
+        resp_dl = sess.post(
+            API_DOWNLOAD,
+            json=download_payload,
+            headers=post_headers,
+            timeout=SETTINGS.REQ_TIMEOUT,
+        )
+        meta["api_download_status"] = resp_dl.status_code
+        resp_dl.raise_for_status()
+    except Exception as exc:
+        meta["api_download_error"] = f"{type(exc).__name__}:{exc}"
+        return None, None, meta, driver_meta
+
+    try:
+        dl_json = resp_dl.json()
+    except Exception as exc:
+        meta["api_download_json_error"] = f"{type(exc).__name__}:{exc}"
+        return None, None, meta, driver_meta
+
+    download_url = (dl_json or {}).get("url")
+    meta["api_download_success"] = bool((dl_json or {}).get("success"))
+    if not download_url:
+        meta["api_download_error_msg"] = (dl_json or {}).get("error")
+        return None, None, meta, driver_meta
+
+    meta["api_download_url"] = download_url
+
+    try:
+        rr = _get(sess, download_url, referer, SETTINGS.REQ_TIMEOUT)
+    except requests.RequestException as exc:
+        meta["api_pdf_error"] = f"{type(exc).__name__}:{exc}"
+        return None, None, meta, driver_meta
+
+    driver_meta["api_pdf_fetch"] = {
+        "status": rr.status_code,
+        "content_type": rr.headers.get("Content-Type"),
+        "content_length": rr.headers.get("Content-Length"),
+        "bytes": len(rr.content or b""),
+        "final_url": str(rr.url),
+    }
+
+    meta["api_pdf_status"] = rr.status_code
+    meta["api_pdf_content_type"] = rr.headers.get("Content-Type")
+    meta["api_pdf_bytes"] = len(rr.content or b"")
+
+    if not rr.ok:
+        meta["api_pdf_not_ok"] = True
+        return None, None, meta, driver_meta
+
+    if not _is_salgsoppgave(str(rr.url), rr.headers, "api"):
+        meta["api_pdf_filtered"] = True
+        return None, None, meta, driver_meta
+
+    if not _pdf_quality_ok(rr.content):
+        meta["api_pdf_quality"] = "insufficient"
+        return None, None, meta, driver_meta
+
+    meta["api_pdf_quality"] = "ok"
+    return rr.content, str(rr.url), meta, driver_meta
 
 
 def _gather_salgsoppgave_candidates(
@@ -178,6 +334,20 @@ class NordvikDriver(Driver):
         dbg: Dict[str, Any] = {"driver": self.name, "step": "start", "meta": {}}
 
         referer = page_url.rstrip("/")
+
+        estate_id = _estate_id_from_url(referer)
+        if estate_id:
+            dbg["meta"]["api_estate_id"] = estate_id
+            pdf_api, url_api, api_meta, api_driver_meta = _fetch_via_api(
+                sess, referer, estate_id
+            )
+            if api_meta:
+                dbg["meta"].update(api_meta)
+            if api_driver_meta:
+                dbg.setdefault("driver_meta", {}).update(api_driver_meta)
+            if pdf_api:
+                dbg["step"] = "ok_api"
+                return pdf_api, url_api, dbg
 
         # 1) Hent siden
         try:

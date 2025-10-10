@@ -88,6 +88,8 @@ const PROSPECTUS_CARD_TOOLTIPS: Record<string, string> = {
   "🛑 TG3": "Tilstandsgrad 3 betyr at det er alvorlige feil, skader eller behov for utbedring, ofte med høy kostnad. Dette gjelder typisk råte, lekkasjer eller ulovlige installasjoner som må fikses raskt.",
 };
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+
 const JOB_POLL_INTERVAL = 2_500;
 const STRONG_RED_HEX = "#c1121f";
 const IMAGE_IDENTITY_SEGMENT_IGNORE = new Set([
@@ -1455,6 +1457,9 @@ function normaliseExternalUrl(value: string | null | undefined): string | null {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
     return trimmed;
   }
+  if (trimmed.startsWith("/") && API_BASE_URL) {
+    return `${API_BASE_URL}${trimmed}`;
+  }
   const looksLikeDomain = /^[\w.-]+\.[a-z]{2,}/i.test(trimmed);
   if (looksLikeDomain && (!/\.pdf$/i.test(trimmed) || trimmed.includes("/"))) {
     return `https://${trimmed}`;
@@ -1956,9 +1961,8 @@ function AnalysisPageContent() {
   const tgDataAvailable =
     tg2Items.length > 0 || tg3Items.length > 0 || tg2Details.length > 0 || tg3Details.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
-  const manualProspectusHasSuccess = manualProspectusSuccess;
   const manualProspectusShowResults =
-    manualProspectusHasSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
+    manualProspectusSuccess || tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
   const missingProspectus = useMemo(() => {
     if (effectiveLinks?.salgsoppgave_pdf) {
       return false;
@@ -3286,6 +3290,24 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
         : fallbackProspectLink
           ? "fallback"
           : null;
+  const proxiedSalgsoppgaveHref = useMemo(() => {
+    if (!salgsoppgaveHref) {
+      return null;
+    }
+    if (!salgsoppgaveState || salgsoppgaveState === "fallback") {
+      return salgsoppgaveHref;
+    }
+    try {
+      const target = new URL(salgsoppgaveHref);
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        return salgsoppgaveHref;
+      }
+      const params = new URLSearchParams({ url: target.toString() });
+      return `/api/prospectus/pdf?${params.toString()}`;
+    } catch {
+      return salgsoppgaveHref;
+    }
+  }, [salgsoppgaveHref, salgsoppgaveState]);
   const salgsoppgaveLabel =
     salgsoppgaveState === "discovered"
       ? "Åpne salgsoppgaven (stabil kopi)"
@@ -3311,12 +3333,13 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
       {salgsoppgaveHref ? (
         <a
           className={`resource-chip${salgsoppgaveState ? ` ${salgsoppgaveState}` : ""}`}
-          href={salgsoppgaveHref}
+          href={proxiedSalgsoppgaveHref ?? salgsoppgaveHref}
           target="_blank"
           rel="noopener noreferrer"
           aria-label={salgsoppgaveLabel}
           title={anchorTitle}
           aria-busy={salgsoppgaveState !== "primary" && discoveringPdf ? "true" : undefined}
+          data-original-href={salgsoppgaveHref}
         >
           Salgsoppgave (PDF)
         </a>
