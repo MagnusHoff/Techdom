@@ -17,6 +17,8 @@ Legg til en lokal `.env` basert på `.env.example` med URL til FastAPI-backenden
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
+For Next.js sitt build-system: bruk `.env.development.local` (eller sett variabelen i shell) for lokal utvikling. Ikke lag en `.env.local` i repoet – den lastes også i produksjonsbuilds og kan overstyre `NEXT_PUBLIC_API_BASE_URL` slik at prod peker mot `http://127.0.0.1:8000` igjen.
+
 ## Scripts
 
 - `npm run dev` – starter utviklingsserveren på `http://localhost:3000`
