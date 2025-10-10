@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { resolveApiBase } from "../_lib/api-base";
+import { resolveApiBase } from "../../_lib/api-base";
 
 function buildUpstreamHeaders(request: NextRequest, accessToken: string | undefined): HeadersInit {
   const headers: Record<string, string> = {
@@ -18,7 +18,10 @@ function buildUpstreamHeaders(request: NextRequest, accessToken: string | undefi
   return headers;
 }
 
-async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse> {
+async function proxyAnalysesDetail(
+  request: NextRequest,
+  analysisId: string,
+): Promise<NextResponse> {
   const apiBase = resolveApiBase();
   if (!apiBase) {
     return NextResponse.json(
@@ -29,7 +32,7 @@ async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse>
 
   const token = cookies().get("access_token")?.value;
   const search = request.nextUrl.search;
-  const targetUrl = `${apiBase}/analyses${search}`;
+  const targetUrl = `${apiBase}/analyses/${encodeURIComponent(analysisId)}${search}`;
 
   const headers = buildUpstreamHeaders(request, token);
   const method = request.method.toUpperCase();
@@ -48,7 +51,7 @@ async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse>
       cache: "no-store",
     });
   } catch (error) {
-    console.error("analyses proxy failed", error);
+    console.error("analyses detail proxy failed", error);
     return NextResponse.json(
       { error: "Kunne ikke kontakte API-et for analyser" },
       { status: 502 },
@@ -79,10 +82,23 @@ async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse>
   return downstream;
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  return proxyAnalysesRequest(request);
+export async function GET(
+  request: NextRequest,
+  context: { params: { analysisId: string } },
+): Promise<NextResponse> {
+  return proxyAnalysesDetail(request, context.params.analysisId);
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  return proxyAnalysesRequest(request);
+export async function DELETE(
+  request: NextRequest,
+  context: { params: { analysisId: string } },
+): Promise<NextResponse> {
+  return proxyAnalysesDetail(request, context.params.analysisId);
+}
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: { analysisId: string } },
+): Promise<NextResponse> {
+  return proxyAnalysesDetail(request, context.params.analysisId);
 }
