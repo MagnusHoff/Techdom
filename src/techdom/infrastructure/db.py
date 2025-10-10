@@ -212,14 +212,15 @@ def _ensure_users_schema(sync_conn) -> None:
 def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
     """Normalise legacy uppercase enum labels and stored role values."""
 
-    try:
-        next(
-            enum
-            for enum in inspector.get_enums()
-            if enum.get("name") == "user_role"
-        )
-    except (StopIteration, NotImplementedError):
-        return
+    enum_names = {enum.get("name") for enum in inspector.get_enums()}
+
+    # Recover from a previous partial migration where the type temporarily
+    # existed under an alternate name.
+    if "user_role" not in enum_names:
+        if "user_role_old" in enum_names:
+            sync_conn.execute(text("ALTER TYPE user_role_old RENAME TO user_role"))
+        else:
+            return
 
     target_labels = {"user", "plus", "admin"}
 
@@ -235,33 +236,101 @@ def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
         return {row[0] for row in result}
 
     labels = _current_labels()
+    lowercased = {label.lower() for label in labels}
+    all_lowercase = all(label == label.lower() for label in labels)
 
-    # Rename legacy uppercase enum variants (USER -> user, etc.) when lowercase is missing.
-    for label in list(labels):
-        lowered = label.lower()
-        if label != lowered and lowered in target_labels and lowered not in labels:
-            safe_old = label.replace("'", "''")
-            safe_new = lowered.replace("'", "''")
-            sync_conn.execute(
-                text(
-                    f"ALTER TYPE user_role RENAME VALUE '{safe_old}' TO '{safe_new}'"
-                )
+    if lowercased != target_labels or not all_lowercase:
+        _rebuild_user_role_enum(sync_conn)
+    else:
+        _normalize_user_roles(sync_conn)
+
+
+def _quote_identifier(identifier: str) -> str:
+    return f'"{identifier.replace("\"", "\"\"")}"'
+
+
+def _qualified_table(schema: str, table: str) -> str:
+    table_ident = _quote_identifier(table)
+    if not schema or schema == "public":
+        return table_ident
+    return f"{_quote_identifier(schema)}.{table_ident}"
+
+
+def _rebuild_user_role_enum(sync_conn) -> None:
+    """Replace legacy uppercase enum with a lowercase-only variant."""
+
+    legacy_type_name = "user_role_legacy"
+
+    # Clean up a stale legacy type left behind by an earlier run.
+    existing_legacy = sync_conn.execute(
+        text(
+            "SELECT 1 FROM pg_type WHERE typname = :name"
+        ),
+        {"name": legacy_type_name},
+    ).fetchone()
+    if existing_legacy:
+        # If the legacy type is still referenced somewhere we cannot drop it,
+        # but the subsequent queries will target the active type anyway.
+        dependencies = sync_conn.execute(
+            text(
+                "SELECT 1 "
+                "FROM information_schema.columns "
+                "WHERE udt_name = :name"
+            ),
+            {"name": legacy_type_name},
+        ).fetchone()
+        if not dependencies:
+            sync_conn.execute(text(f"DROP TYPE {_quote_identifier(legacy_type_name)}"))
+
+    sync_conn.execute(text(f"ALTER TYPE user_role RENAME TO {_quote_identifier(legacy_type_name)}"))
+    sync_conn.execute(
+        text("CREATE TYPE user_role AS ENUM ('user', 'plus', 'admin')")
+    )
+
+    columns = sync_conn.execute(
+        text(
+            "SELECT table_schema, table_name, column_name "
+            "FROM information_schema.columns "
+            "WHERE udt_name = :name"
+        ),
+        {"name": legacy_type_name},
+    ).fetchall()
+
+    for schema, table, column in columns:
+        table_ident = _qualified_table(schema, table)
+        column_ident = _quote_identifier(column)
+
+        sync_conn.execute(
+            text(
+                f"ALTER TABLE {table_ident} "
+                f"ALTER COLUMN {column_ident} DROP DEFAULT"
             )
-
-    labels = _current_labels()
-
-    # Coerce stored values that still reference uppercase enum labels to the lowercase variant.
-    for label in labels:
-        lowered = label.lower()
-        if label != lowered and lowered in target_labels:
-            sync_conn.execute(
-                text(
-                    "UPDATE users "
-                    "SET role = CAST(:lowered AS user_role) "
-                    "WHERE role = :original"
-                ),
-                {"lowered": lowered, "original": label},
+        )
+        sync_conn.execute(
+            text(
+                f"ALTER TABLE {table_ident} "
+                f"ALTER COLUMN {column_ident} TYPE user_role "
+                f"USING lower({column_ident}::text)::user_role"
             )
+        )
+
+    sync_conn.execute(text(f"DROP TYPE {_quote_identifier(legacy_type_name)}"))
+    _normalize_user_roles(sync_conn)
+
+
+def _normalize_user_roles(sync_conn) -> None:
+    """Ensure stored values and defaults use lowercase enum labels."""
+
+    sync_conn.execute(
+        text(
+            "UPDATE users "
+            "SET role = CAST(lower(role::text) AS user_role) "
+            "WHERE role::text != lower(role::text)"
+        )
+    )
+    sync_conn.execute(
+        text("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'user'")
+    )
 
 
 async def ensure_auth_schema() -> None:
