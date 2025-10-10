@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from techdom.infrastructure.db import Base
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from techdom.domain.saved_analyses.models import SavedAnalysis
 
 
 class UserRole(str, enum.Enum):

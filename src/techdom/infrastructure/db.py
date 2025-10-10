@@ -246,7 +246,8 @@ def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
 
 
 def _quote_identifier(identifier: str) -> str:
-    return f'"{identifier.replace("\"", "\"\"")}"'
+    escaped = identifier.replace("\"", "\"\"")
+    return "\"" + escaped + "\""
 
 
 def _qualified_table(schema: str, table: str) -> str:
