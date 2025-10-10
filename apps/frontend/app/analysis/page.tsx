@@ -2051,16 +2051,24 @@ function AnalysisPageContent() {
     if (!source.length) {
       return [];
     }
-    const items: Array<{ label: string; detail: string }> = [];
+    const items: ProspectusDetail[] = [];
     const seen = new Set<string>();
     const keywords = ["bygge", "oppuss", "renover", "rehab", "modernis", "oppgrad"];
     const labelMaxLength = 60;
+    const detailMaxLength = 160;
     const limitLabelLength = (value: string) => {
       const trimmed = value.trim();
       if (trimmed.length <= labelMaxLength) {
         return trimmed;
       }
       return `${trimmed.slice(0, labelMaxLength - 1).trimEnd()}…`;
+    };
+    const limitDetailLength = (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed.length <= detailMaxLength) {
+        return trimmed;
+      }
+      return `${trimmed.slice(0, detailMaxLength - 1).trimEnd()}…`;
     };
     const capitalizeWord = (word: string) => {
       if (!word) {
@@ -2116,7 +2124,7 @@ function AnalysisPageContent() {
         continue;
       }
       seen.add(dedupeKey);
-      items.push({ label: displayLabel, detail: rawValue });
+      items.push({ label: displayLabel, short: limitDetailLength(rawValue), hover: rawValue });
       if (items.length >= 5) {
         break;
       }
