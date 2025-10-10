@@ -6,21 +6,38 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING, Protocol, cast
+
+from types import ModuleType
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _STRIPE_IMPORT_ERROR: Exception | None = None
 
+stripe: ModuleType | None
+
 try:
-    import stripe
-    from stripe.error import SignatureVerificationError, StripeError
+    import stripe as _stripe_module  # type: ignore[import-not-found]
+    from stripe.error import SignatureVerificationError, StripeError  # type: ignore[import-not-found]
+    stripe = cast(ModuleType, _stripe_module)
 except ImportError as exc:  # pragma: no cover - optional dependency
-    stripe = None  # type: ignore[assignment]
+    stripe = None
     SignatureVerificationError = Exception  # type: ignore[assignment]
     StripeError = Exception  # type: ignore[assignment]
     _STRIPE_IMPORT_ERROR = exc
+
+class StripeLike(Protocol):
+    api_key: str
+    Customer: Any
+    checkout: Any
+    billing_portal: Any
+    Subscription: Any
+    Webhook: Any
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    import stripe as _stripe_types
 
 from techdom.domain.auth.models import User, UserRole
 from techdom.services.auth import UserNotFoundError
@@ -109,26 +126,29 @@ def get_stripe_settings() -> StripeSettings:
 
 
 @lru_cache(maxsize=1)
-def _ensure_stripe_module(settings: StripeSettings) -> None:
+def _ensure_stripe_module(settings: StripeSettings) -> StripeLike:
     if stripe is None:  # pragma: no cover - defensive guard when dependency missing
         message = "stripe-biblioteket er ikke installert. Legg til 'stripe' i requirements."
         if _STRIPE_IMPORT_ERROR:
             message = f"{message} ({_STRIPE_IMPORT_ERROR})"
         raise StripeConfigurationError(message)
-    stripe.api_key = settings.api_key
+    stripe_module = cast(StripeLike, stripe)
+    stripe_module.api_key = settings.api_key
+    return stripe_module
 
 
 async def _ensure_customer(
     session: AsyncSession,
     *,
     user: User,
+    stripe_module: StripeLike,
 ) -> str:
     if user.stripe_customer_id:
         return user.stripe_customer_id
 
     metadata: dict[str, str] = {"user_id": str(user.id)}
     customer = await asyncio.to_thread(
-        stripe.Customer.create,
+        stripe_module.Customer.create,
         email=user.email,
         name=user.username or None,
         metadata=metadata,
@@ -147,20 +167,20 @@ async def create_checkout_session(
     billing_interval: BillingInterval,
 ) -> str:
     settings = get_stripe_settings()
-    _ensure_stripe_module(settings)
+    stripe_module = _ensure_stripe_module(settings)
 
     user = await session.get(User, user_id)
     if not user:
         raise UserNotFoundError(user_id)
 
-    customer_id = await _ensure_customer(session, user=user)
+    customer_id = await _ensure_customer(session, user=user, stripe_module=stripe_module)
 
     price_id = settings.price_for(billing_interval)
     metadata = {"user_id": str(user.id), "billing_interval": billing_interval}
 
     try:
         checkout = await asyncio.to_thread(
-            stripe.checkout.Session.create,
+            stripe_module.checkout.Session.create,
             customer=customer_id,
             mode="subscription",
             billing_address_collection="auto",
@@ -188,7 +208,7 @@ async def create_billing_portal_session(
     user_id: int,
 ) -> str:
     settings = get_stripe_settings()
-    _ensure_stripe_module(settings)
+    stripe_module = _ensure_stripe_module(settings)
 
     user = await session.get(User, user_id)
     if not user:
@@ -199,7 +219,7 @@ async def create_billing_portal_session(
 
     try:
         portal = await asyncio.to_thread(
-            stripe.billing_portal.Session.create,
+            stripe_module.billing_portal.Session.create,
             customer=user.stripe_customer_id,
             return_url=settings.portal_return_url,
         )
@@ -221,12 +241,11 @@ def construct_event(payload: bytes, signature: str | None) -> Any:
     settings = get_stripe_settings()
     if not settings.webhook_secret:
         raise StripeConfigurationError("STRIPE_WEBHOOK_SECRET er ikke konfigurert")
-    if stripe is None:  # pragma: no cover - defensive guard
-        raise StripeConfigurationError("stripe-biblioteket er ikke installert")
+    stripe_module = _ensure_stripe_module(settings)
     if not signature:
         raise StripeSignatureError("Mangler Stripe-signatur i header")
     try:
-        return stripe.Webhook.construct_event(payload, signature, settings.webhook_secret)
+        return stripe_module.Webhook.construct_event(payload, signature, settings.webhook_secret)
     except SignatureVerificationError as exc:
         raise StripeSignatureError("Verifisering av webhook-signatur mislyktes") from exc
 
@@ -347,9 +366,9 @@ async def _apply_subscription_update(
             except (KeyError, ValueError):
                 current_role = UserRole.USER
         if _should_have_plus_role(status):
-            user.role = UserRole.PLUS.value
+            user.role = UserRole.PLUS
         else:
-            user.role = UserRole.USER.value
+            user.role = UserRole.USER
 
     session.add(user)
     await session.commit()
@@ -379,10 +398,10 @@ async def handle_event(session: AsyncSession, event: Any) -> None:
             logger.warning("Checkout-event mangler subscription-id")
             return
 
-        _ensure_stripe_module(settings)
+        stripe_module = _ensure_stripe_module(settings)
         try:
             subscription = await asyncio.to_thread(
-                stripe.Subscription.retrieve,
+                stripe_module.Subscription.retrieve,
                 subscription_id,
                 expand=["items.data.price"],
             )
