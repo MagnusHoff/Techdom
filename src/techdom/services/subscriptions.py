@@ -68,6 +68,7 @@ class StripeSettings:
     success_url: str
     cancel_url: str
     portal_return_url: str
+    portal_configuration_id: str | None
     webhook_secret: str | None
 
     def price_for(self, interval: BillingInterval) -> str:
@@ -112,6 +113,7 @@ def get_stripe_settings() -> StripeSettings:
     portal_return_url = _clean_env_value(os.getenv("STRIPE_PORTAL_RETURN_URL")) or (
         f"{base_url}/profile?section=subscription"
     )
+    portal_configuration_id = _clean_env_value(os.getenv("STRIPE_PORTAL_CONFIGURATION_ID"))
     webhook_secret = _clean_env_value(os.getenv("STRIPE_WEBHOOK_SECRET"))
 
     return StripeSettings(
@@ -121,6 +123,7 @@ def get_stripe_settings() -> StripeSettings:
         success_url=success_url,
         cancel_url=cancel_url,
         portal_return_url=portal_return_url,
+        portal_configuration_id=portal_configuration_id,
         webhook_secret=webhook_secret,
     )
 
@@ -218,10 +221,15 @@ async def create_billing_portal_session(
         raise StripeOperationError("Ingen Stripe-kunde er knyttet til brukeren.")
 
     try:
+        portal_payload: dict[str, Any] = {
+            "customer": user.stripe_customer_id,
+            "return_url": settings.portal_return_url,
+        }
+        if settings.portal_configuration_id:
+            portal_payload["configuration"] = settings.portal_configuration_id
         portal = await asyncio.to_thread(
             stripe_module.billing_portal.Session.create,
-            customer=user.stripe_customer_id,
-            return_url=settings.portal_return_url,
+            **portal_payload,
         )
     except StripeError as exc:  # pragma: no cover - integration error path
         logger.exception(
