@@ -282,7 +282,7 @@ def _rebuild_user_role_enum(sync_conn) -> None:
         if not dependencies:
             sync_conn.execute(text(f"DROP TYPE {_quote_identifier(legacy_type_name)}"))
 
-    sync_conn.execute(text(f"ALTER TYPE user_role RENAME TO {legacy_type_name}"))
+    sync_conn.execute(text(f"ALTER TYPE user_role RENAME TO {_quote_identifier(legacy_type_name)}"))
     sync_conn.execute(
         text("CREATE TYPE user_role AS ENUM ('user', 'plus', 'admin')")
     )
@@ -292,8 +292,8 @@ def _rebuild_user_role_enum(sync_conn) -> None:
             "SELECT table_schema, table_name, column_name "
             "FROM information_schema.columns "
             "WHERE udt_name = :name"
-        )
-    , {"name": legacy_type_name}
+        ),
+        {"name": legacy_type_name},
     ).fetchall()
 
     for schema, table, column in columns:
