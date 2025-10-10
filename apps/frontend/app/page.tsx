@@ -238,9 +238,14 @@ export default function LandingPage() {
       <PageContainer variant="narrow">
         <SiteHeader />
 
+        <div className="landing-heading">
+          <h1>AI drevet hjelp med boliginvestering</h1>
+          <p>Vi hjelper deg finne de beste eiendommene.</p>
+        </div>
+
         <section className="landing-section">
           <div className="landing-intro">
-            <h1>Lim inn FINN-lenken din</h1>
+            <h2>Lim inn FINN-lenken din</h2>
           </div>
 
           <form className="landing-form" onSubmit={handleSubmit}>

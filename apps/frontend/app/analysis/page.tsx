@@ -29,11 +29,13 @@ import {
   analyzeProspectusText,
   deleteSavedAnalysis,
   fetchSavedAnalyses,
+  fetchAnalysisTgDetails,
   getJobStatus,
   incrementUserAnalyses,
   runAnalysis,
   saveAnalysis,
   startAnalysisJob,
+  reextractAnalysisTgDetails,
 } from "@/lib/api";
 import type {
   AnalysisPayload,
@@ -1538,6 +1540,13 @@ function AnalysisPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResponse | null>(null);
   const [prospectus, setProspectus] = useState<ProspectusExtract | null>(null);
+  const [tgApiDetails, setTgApiDetails] = useState<ProspectusDetail[]>([]);
+  const [tgApiLoading, setTgApiLoading] = useState(false);
+  const [tgApiError, setTgApiError] = useState<string | null>(null);
+  const [tgReextracting, setTgReextracting] = useState(false);
+  const [prospectusReanalyzing, setProspectusReanalyzing] = useState(false);
+  const [prospectusReanalyzeError, setProspectusReanalyzeError] = useState<string | null>(null);
+  const [prospectusReanalyzeSuccess, setProspectusReanalyzeSuccess] = useState(false);
   const [manualProspectusFile, setManualProspectusFile] = useState<File | null>(null);
   const [manualProspectusLoading, setManualProspectusLoading] = useState(false);
   const [manualProspectusError, setManualProspectusError] = useState<string | null>(null);
@@ -1616,6 +1625,91 @@ function AnalysisPageContent() {
     }
     return null;
   }, [listingFinnkode, listingUrl]);
+  const tgAutoRefreshRef = useRef<string | null>(null);
+  const tgReextractingRef = useRef(false);
+  const triggerTgReextract = useCallback(
+    async (options: { auto?: boolean } = {}) => {
+      if (!listingFinnkode) {
+        return;
+      }
+      if (tgReextractingRef.current) {
+        return;
+      }
+      const { auto = false } = options;
+      if (!auto) {
+        tgAutoRefreshRef.current = listingFinnkode;
+      }
+      tgReextractingRef.current = true;
+      setTgReextracting(true);
+      setTgApiLoading(true);
+      setTgApiError(null);
+      try {
+        const response = await reextractAnalysisTgDetails(listingFinnkode);
+        const normalized = normaliseProspectusDetails(response.tg2_details).slice(0, 8);
+        setTgApiDetails(normalized);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Kunne ikke oppdatere TG-data. Prøv igjen senere.";
+        setTgApiError(message);
+      } finally {
+        setTgReextracting(false);
+        setTgApiLoading(false);
+        tgReextractingRef.current = false;
+      }
+    },
+    [listingFinnkode],
+  );
+
+  useEffect(() => {
+    if (!listingFinnkode) {
+      setTgApiDetails([]);
+      setTgApiLoading(false);
+      setTgApiError(null);
+      if (tgAutoRefreshRef.current) {
+        tgAutoRefreshRef.current = null;
+      }
+      return;
+    }
+
+    if (tgAutoRefreshRef.current && tgAutoRefreshRef.current !== listingFinnkode) {
+      tgAutoRefreshRef.current = null;
+    }
+
+    let cancelled = false;
+    setTgApiLoading(true);
+    setTgApiError(null);
+
+    fetchAnalysisTgDetails(listingFinnkode)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        const normalized = normaliseProspectusDetails(response.tg2_details).slice(0, 8);
+        setTgApiDetails(normalized);
+        if (response.tg_version !== 2 && tgAutoRefreshRef.current !== listingFinnkode) {
+          tgAutoRefreshRef.current = listingFinnkode;
+          void triggerTgReextract({ auto: true });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        const message =
+          error instanceof Error ? error.message : "Kunne ikke hente TG-data for salgsoppgaven.";
+        setTgApiError(message);
+        setTgApiDetails([]);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTgApiLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [listingFinnkode, triggerTgReextract]);
   const derivedListingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
     if (!listingDetails) {
@@ -1938,26 +2032,97 @@ function AnalysisPageContent() {
     return null;
   }, [jobStatus]);
   const effectiveLinks = prospectusLinks ?? jobLinkInfo;
-  const tg2FallbackItems = useMemo(
-    () => sanitizeProspectusItems(tg2Items, { preserveLabels: true }),
-    [tg2Items],
-  );
   const tg3FallbackItems = useMemo(
     () => sanitizeProspectusItems(tg3Items, { preserveLabels: true }),
     [tg3Items],
   );
-  const watchoutDisplayItems = useMemo(
-    () => sanitizeProspectusItems(watchoutItems),
-    [watchoutItems],
-  );
-  const tg2DisplayItems = useMemo(
-    () => buildProspectusDisplayItems(tg2Details, tg2FallbackItems, watchoutDisplayItems, 5),
-    [tg2Details, tg2FallbackItems, watchoutDisplayItems],
-  );
+  const tg2DisplayItems = useMemo(() => {
+    const source = listingFinnkode ? tgApiDetails : tg2Details;
+    return source.slice(0, 5);
+  }, [listingFinnkode, tgApiDetails, tg2Details]);
   const tg3DisplayItems = useMemo(
-    () => buildProspectusDisplayItems(tg3Details, tg3FallbackItems, [], 5),
+    () => buildProspectusDisplayItems(tg3Details, tg3FallbackItems, [], 5, 3),
     [tg3Details, tg3FallbackItems],
   );
+  const canTriggerTgExtraction = Boolean(listingFinnkode);
+  const tgExtractionBusy = tgReextracting || tgApiLoading;
+  const byggOgOppussingItems = useMemo(() => {
+    const source = listingKeyFacts.length > 0 ? listingKeyFacts : derivedListingKeyFacts;
+    if (!source.length) {
+      return [];
+    }
+    const items: Array<{ label: string; detail: string }> = [];
+    const seen = new Set<string>();
+    const keywords = ["bygge", "oppuss", "renover", "rehab", "modernis", "oppgrad"];
+    const labelMaxLength = 60;
+    const limitLabelLength = (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed.length <= labelMaxLength) {
+        return trimmed;
+      }
+      return `${trimmed.slice(0, labelMaxLength - 1).trimEnd()}…`;
+    };
+    const capitalizeWord = (word: string) => {
+      if (!word) {
+        return word;
+      }
+      const lower = word.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    };
+    const deriveLabelFromValue = (value: string, fallback: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return limitLabelLength(fallback);
+      }
+      const area = fallback.trim().toLowerCase();
+      const renovationKeyword = [
+        { matcher: /\boppusset\b/i, label: "Oppusset" },
+        { matcher: /\boppgradert\b/i, label: "Oppgradert" },
+        { matcher: /\brenover(?:t|ing)\b/i, label: "Renoverte" },
+        { matcher: /\brehabilitert\b/i, label: "Rehabilitert" },
+        { matcher: /\bmodernisert\b/i, label: "Modernisert" },
+      ].find((entry) => entry.matcher.test(trimmed));
+      if (renovationKeyword) {
+        if (area) {
+          return limitLabelLength(`${renovationKeyword.label} ${area}`);
+        }
+        return renovationKeyword.label;
+      }
+      const sentences = trimmed.split(/[\n.]/);
+      for (const part of sentences) {
+        const candidate = part.trim();
+        if (candidate) {
+          return limitLabelLength(capitalizeWord(candidate));
+        }
+      }
+      return limitLabelLength(capitalizeWord(trimmed));
+    };
+    for (const fact of source) {
+      const rawLabel = typeof fact.label === "string" ? fact.label.trim() : "";
+      const rawValue = typeof fact.value === "string" ? fact.value.trim() : "";
+      if (!rawLabel || !rawValue) {
+        continue;
+      }
+      const normalisedLabel = rawLabel.toLowerCase();
+      const normalisedValue = rawValue.toLowerCase();
+      if (!keywords.some((keyword) => normalisedLabel.includes(keyword) || normalisedValue.includes(keyword))) {
+        continue;
+      }
+      const displayLabel = keywords.some((keyword) => normalisedLabel.includes(keyword))
+        ? limitLabelLength(rawLabel)
+        : deriveLabelFromValue(rawValue, rawLabel);
+      const dedupeKey = `${displayLabel.toLowerCase()}__${normalisedValue}`;
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      items.push({ label: displayLabel, detail: rawValue });
+      if (items.length >= 5) {
+        break;
+      }
+    }
+    return items;
+  }, [listingKeyFacts, derivedListingKeyFacts]);
   const tgDataAvailable =
     tg2Items.length > 0 || tg3Items.length > 0 || tg2Details.length > 0 || tg3Details.length > 0;
   const hasProspectusSignals = tg2DisplayItems.length > 0 || tg3DisplayItems.length > 0;
@@ -2082,7 +2247,7 @@ function AnalysisPageContent() {
       }
     }
 
-    if (roePct !== null && roePct > 0) {
+    if (roePct !== null && roePct >= 5) {
       const roeText = stripApproxPrefix(formatApproxPercent(roePct, 1, { includeSign: true }));
       if (roeText) {
         points.push(`Avkastning på egenkapital ${roeText} (positiv) og indikerer lønnsom kapitalbruk.`);
@@ -2110,10 +2275,14 @@ function AnalysisPageContent() {
       }
     }
 
-    if (roePct !== null && roePct < 0) {
+    if (roePct !== null && roePct < 5) {
       const roeText = stripApproxPrefix(formatApproxPercent(roePct, 1, { includeSign: true }));
       if (roeText) {
-        points.push(`Negativ avkastning på egenkapital: ${roeText} betyr at kapitalen taper verdi.`);
+        if (roePct < 0) {
+          points.push(`Negativ avkastning på egenkapital: ${roeText} betyr at kapitalen taper verdi.`);
+        } else {
+          points.push(`Avkastning på egenkapital ${roeText} er dårlig avkastning og gir svak lønnsomhet.`);
+        }
       }
     }
 
@@ -2796,6 +2965,8 @@ function AnalysisPageContent() {
               listingUrl={resourceListingUrl}
               linkInfo={effectiveLinks}
               onShowDetails={handleShowDetails}
+              canTriggerTgExtraction={canTriggerTgExtraction}
+              tgExtractionBusy={tgExtractionBusy}
             />
           </div>
           {jobFailed && !jobCompleted ? (
@@ -3026,7 +3197,7 @@ function AnalysisPageContent() {
                           badge={{ label: "Middels risiko", tone: "warn" }}
                           tooltip={PROSPECTUS_CARD_TOOLTIPS["⚠️ TG2"]}
                           items={tg2DisplayItems}
-                          empty="Ingen TG2- eller observasjonspunkter funnet ennå."
+                          empty="Ingen TG2-punkter funnet ennå."
                           className="manual-prospectus-result-card"
                         />
                         <ProspectusCard
@@ -3036,6 +3207,12 @@ function AnalysisPageContent() {
                           items={tg3DisplayItems}
                           empty="Ingen TG3-punkter funnet ennå."
                           className="manual-prospectus-result-card"
+                        />
+                        <ProspectusCard
+                          title="Byggeår og oppussing"
+                          items={byggOgOppussingItems}
+                          empty="Ingen opplysninger om byggeår eller oppussing ennå."
+                          className="manual-prospectus-result-card prospectus-card-secondary"
                         />
                       </>
                     ) : null}
@@ -3047,7 +3224,21 @@ function AnalysisPageContent() {
                       badge={{ label: "Middels risiko", tone: "warn" }}
                       tooltip={PROSPECTUS_CARD_TOOLTIPS["⚠️ TG2"]}
                       items={tg2DisplayItems}
-                      empty="Ingen TG2- eller observasjonspunkter funnet ennå."
+                      empty="Ingen TG2-punkter funnet ennå."
+                      loading={canTriggerTgExtraction ? tgExtractionBusy : false}
+                      error={canTriggerTgExtraction ? tgApiError : null}
+                      cta={
+                        canTriggerTgExtraction && tg2DisplayItems.length === 0 ? (
+                          <button
+                            type="button"
+                            className="prospectus-action primary"
+                            onClick={() => void triggerTgReextract()}
+                            disabled={tgExtractionBusy}
+                          >
+                            {tgExtractionBusy ? "Analyserer…" : "Kjør analyse for TG"}
+                          </button>
+                        ) : null
+                      }
                     />
                     <ProspectusCard
                       title="🛑 TG3"
@@ -3055,6 +3246,12 @@ function AnalysisPageContent() {
                       tooltip={PROSPECTUS_CARD_TOOLTIPS["🛑 TG3"]}
                       items={tg3DisplayItems}
                       empty="Ingen TG3-punkter funnet ennå."
+                    />
+                    <ProspectusCard
+                      title="Byggeår og oppussing"
+                      items={byggOgOppussingItems}
+                      empty="Ingen opplysninger om byggeår eller oppussing ennå."
+                      className="prospectus-card-secondary"
                     />
                   </>
                 )}
@@ -3185,9 +3382,18 @@ interface ResourceLinkGroupProps {
   listingUrl: string | null;
   linkInfo?: ProspectusLinks | null;
   onShowDetails: () => void;
+  canTriggerTgExtraction: boolean;
+  tgExtractionBusy: boolean;
 }
 
-function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: ResourceLinkGroupProps) {
+function ResourceLinkGroup({
+  pdfUrl,
+  listingUrl,
+  linkInfo,
+  onShowDetails,
+  canTriggerTgExtraction,
+  tgExtractionBusy,
+}: ResourceLinkGroupProps) {
   const [discoveredPdfUrl, setDiscoveredPdfUrl] = useState<string | null>(null);
   const [discoveringPdf, setDiscoveringPdf] = useState(false);
   const [salgsoppgaveFetchResult, setSalgsoppgaveFetchResult] = useState<SalgsoppgaveFetchResult | null>(null);
@@ -3328,9 +3534,10 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
         : fetchConfidencePct !== undefined
           ? `Konfidens ${fetchConfidencePct}%`
           : undefined);
+  const disableSalgsoppgaveLink = canTriggerTgExtraction && tgExtractionBusy;
   return (
     <div className="resource-links" aria-label="Ressurser">
-      {salgsoppgaveHref ? (
+      {salgsoppgaveHref && !disableSalgsoppgaveLink ? (
         <a
           className={`resource-chip${salgsoppgaveState ? ` ${salgsoppgaveState}` : ""}`}
           href={proxiedSalgsoppgaveHref ?? salgsoppgaveHref}
@@ -3344,7 +3551,11 @@ function ResourceLinkGroup({ pdfUrl, listingUrl, linkInfo, onShowDetails }: Reso
           Salgsoppgave (PDF)
         </a>
       ) : (
-        <span className="resource-chip disabled" aria-disabled="true" title={disabledTitle}>
+        <span
+          className="resource-chip disabled"
+          aria-disabled="true"
+          title={disableSalgsoppgaveLink ? "TG-analyse oppdateres" : disabledTitle}
+        >
           Salgsoppgave (PDF)
         </span>
       )}
@@ -4202,7 +4413,7 @@ function ManualProspectusCard({
   );
 }
 
-type ProspectusDisplayItem = { label: string; detail: string };
+type ProspectusDisplayItem = ProspectusDetail;
 
 interface ProspectusCardProps {
   title: string;
@@ -4211,9 +4422,22 @@ interface ProspectusCardProps {
   badge?: { label: string; tone: "danger" | "warn" | "info" };
   className?: string;
   tooltip?: string;
+  loading?: boolean;
+  error?: string | null;
+  cta?: ReactNode;
 }
 
-function ProspectusCard({ title, items, empty, badge, className, tooltip }: ProspectusCardProps) {
+function ProspectusCard({
+  title,
+  items,
+  empty,
+  badge,
+  className,
+  tooltip,
+  loading = false,
+  error = null,
+  cta,
+}: ProspectusCardProps) {
   const hasItems = items.length > 0;
   const cardClass = className ? `prospectus-card ${className}` : "prospectus-card";
   const reactId = useId();
@@ -4229,18 +4453,22 @@ function ProspectusCard({ title, items, empty, badge, className, tooltip }: Pros
         </h3>
         {badge ? <span className={`prospectus-badge ${badge.tone}`}>{badge.label}</span> : null}
       </div>
-      {hasItems ? (
+      {loading ? (
+        <p className="placeholder">Oppdaterer TG-punkter…</p>
+      ) : hasItems ? (
         <ul className="prospectus-card-list">
           {items.slice(0, 5).map((item, index) => (
             <li key={`${reactId}-${index}`}>
               <span
                 className="prospectus-card-list-item"
-                data-tooltip={item.detail}
-                title={item.detail}
-                aria-label={item.detail}
+                data-tooltip={item.hover}
+                title={item.hover}
+                aria-label={item.hover}
                 tabIndex={0}
               >
-                <span className="prospectus-card-list-label">{item.label}</span>
+                <span className="prospectus-card-list-label">
+                  {item.label && item.label !== item.short ? `${item.label}: ${item.short}` : item.short}
+                </span>
                 <span className="prospectus-card-list-arrow" aria-hidden="true">
                   &rarr;
                 </span>
@@ -4249,7 +4477,10 @@ function ProspectusCard({ title, items, empty, badge, className, tooltip }: Pros
           ))}
         </ul>
       ) : (
-        <p className="placeholder">{empty}</p>
+        <>
+          {error ? <p className="placeholder">{error}</p> : <p className="placeholder">{empty}</p>}
+          {cta ? <div className="prospectus-card-cta">{cta}</div> : null}
+        </>
       )}
     </div>
   );
@@ -4690,14 +4921,29 @@ function normaliseProspectusDetails(value: unknown): ProspectusDetail[] {
       continue;
     }
     const record = entry as Record<string, unknown>;
-    const label = typeof record.label === "string" ? record.label.trim() : "";
-    const detail = typeof record.detail === "string" ? record.detail.trim() : "";
-    if (!label || !detail) {
+    const labelRaw = typeof record.label === "string" ? record.label : "";
+    const shortRaw =
+      typeof record.short === "string"
+        ? record.short
+        : typeof record.detail === "string"
+          ? record.detail
+          : "";
+    const hoverRaw =
+      typeof record.hover === "string"
+        ? record.hover
+        : typeof record.detail === "string"
+          ? record.detail
+          : typeof record.short === "string"
+            ? record.short
+            : "";
+    const label = normaliseProspectusDetailText(labelRaw);
+    const short = normaliseProspectusDetailText(shortRaw) || label;
+    const hover = normaliseProspectusDetailText(hoverRaw) || short || label;
+    if (!short && !hover) {
       continue;
     }
-    const source = typeof record.source === "string" ? record.source.trim() : undefined;
-    const level = typeof record.level === "number" ? record.level : undefined;
-    details.push({ label, detail, source, level });
+    const tgValue = typeof record.tg === "number" ? record.tg : undefined;
+    details.push({ label: label || short || hover, short: short || hover, hover, tg: tgValue });
   }
   return details;
 }
@@ -4707,29 +4953,33 @@ function buildProspectusDisplayItems(
   fallbackStrings: readonly string[],
   extraStrings: readonly string[] = [],
   limit = 5,
+  tgLevel = 2,
 ): ProspectusDisplayItem[] {
   const items: ProspectusDisplayItem[] = [];
   const seen = new Set<string>();
 
-  const pushItem = (label: string, detail: string) => {
-    const cleanLabel = label.trim();
-    const cleanDetail = normaliseProspectusDetailText(detail);
-    if (!cleanLabel || !cleanDetail) {
+  const pushItem = (label: string, short: string, hover: string, tg: number) => {
+    const cleanLabel = normaliseProspectusDetailText(label) || normaliseProspectusDetailText(short) || hover;
+    const cleanShort = normaliseProspectusDetailText(short) || normaliseProspectusDetailText(hover) || cleanLabel;
+    const cleanHover = normaliseProspectusDetailText(hover) || cleanShort;
+    if (!cleanShort && !cleanHover) {
       return;
     }
-    const key = `${cleanLabel.toLowerCase()}__${cleanDetail.toLowerCase()}`;
+    const key = `${cleanLabel.toLowerCase()}__${cleanShort.toLowerCase()}__${cleanHover.toLowerCase()}`;
     if (seen.has(key)) {
       return;
     }
     seen.add(key);
-    items.push({ label: cleanLabel, detail: cleanDetail });
+    items.push({ label: cleanLabel || cleanShort || cleanHover, short: cleanShort || cleanHover, hover: cleanHover, tg });
   };
 
   for (const entry of detailItems) {
-    const label = deriveProspectusLabel(entry.label, entry.detail);
-    pushItem(label, entry.detail);
+    const label = entry.label ?? "";
+    const short = entry.short ?? "";
+    const hover = entry.hover ?? entry.short ?? "";
+    pushItem(label, short, hover, entry.tg ?? tgLevel);
     if (typeof limit === "number" && limit > 0 && items.length >= limit) {
-      return items;
+      return items.slice(0, limit);
     }
   }
 
@@ -4739,7 +4989,7 @@ function buildProspectusDisplayItems(
       continue;
     }
     const label = deriveProspectusLabel(value, detail);
-    pushItem(label, detail);
+    pushItem(label, detail, detail, tgLevel);
     if (typeof limit === "number" && limit > 0 && items.length >= limit) {
       return items.slice(0, limit);
     }
@@ -4751,7 +5001,7 @@ function buildProspectusDisplayItems(
       continue;
     }
     const label = deriveProspectusLabel(detail);
-    pushItem(label, detail);
+    pushItem(label, detail, detail, tgLevel);
     if (typeof limit === "number" && limit > 0 && items.length >= limit) {
       return items.slice(0, limit);
     }

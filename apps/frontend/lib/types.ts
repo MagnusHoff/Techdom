@@ -11,9 +11,9 @@ export interface ScoreGauge {
 
 export interface ProspectusDetail {
   label: string;
-  detail: string;
-  source?: string | null;
-  level?: number | null;
+  short: string;
+  hover: string;
+  tg?: number | null;
 }
 
 export interface ProspectusExtract {
@@ -28,6 +28,12 @@ export interface ProspectusExtract {
   tg2_details?: ProspectusDetail[];
   tg_markdown?: string;
   tg_missing_components?: string[];
+}
+
+export interface AnalysisTgDetailResponse {
+  tg_version: number;
+  updated_at?: string | null;
+  tg2_details: ProspectusDetail[];
 }
 
 export interface ProspectusLinks {

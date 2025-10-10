@@ -94,7 +94,7 @@ def test_format_tg_entries_adds_prefix_and_source() -> None:
         {"komponent": "Tak", "grunn": "Taktekking - Slitasje.", "kilde_side": "10"}
     ]
     formatted = format_tg_entries(entries, level=2)
-    assert formatted == ["TG2 Tak: Taktekking - Slitasje. (Side 10)"]
+    assert formatted == ["TG2 Tak: Taktekking - Slitasje. (Tilstandsrapport side 10)"]
 
 
 def test_merge_tg_lists_preserves_order_and_deduplicates() -> None:
@@ -117,9 +117,10 @@ def test_summarize_tg_entries_builds_label_and_detail() -> None:
     ]
     summary = summarize_tg_entries(entries, level=2)
     assert summary
-    assert summary[0]["label"].startswith("Taktekking")
+    assert "Taktekking" in summary[0]["label"]
+    assert "brukstid" in summary[0]["label"].lower()
     assert "TG2" in summary[0]["detail"]
-    assert summary[0]["detail"].endswith("(Side 5)")
+    assert summary[0]["detail"].endswith("(Tilstandsrapport side 5)")
 
 
 def test_summarize_tg_strings_parses_freetext() -> None:

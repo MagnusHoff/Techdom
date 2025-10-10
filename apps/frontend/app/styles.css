@@ -522,9 +522,27 @@ main {
   margin: 0 auto;
 }
 
-.landing-intro h1 {
+.landing-heading {
+  text-align: center;
+  margin-bottom: 1.6rem;
+}
+
+.landing-heading h1 {
   margin: 0;
-  font-size: clamp(2.1rem, 5vw, 2.8rem);
+  font-size: clamp(2.4rem, 6vw, 3.2rem);
+  letter-spacing: -0.015em;
+  font-weight: 700;
+}
+
+.landing-heading p {
+  margin: 0.6rem 0 0;
+  font-size: clamp(1.28rem, 3vw, 1.45rem);
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.landing-intro h2 {
+  margin: 0;
+  font-size: clamp(1.45rem, 3.5vw, 1.9rem);
   letter-spacing: -0.01em;
 }
 
@@ -1674,6 +1692,7 @@ main {
   flex-direction: column;
   gap: clamp(1.4rem, 3vw, 2.4rem);
   margin-top: clamp(2.4rem, 6vw, 3.2rem);
+  padding-bottom: clamp(2.8rem, 6vw, 4.8rem);
 }
 
 .analysis-score-block {
@@ -1725,6 +1744,7 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
+  align-items: stretch;
 }
 
 .prospectus-card {
@@ -1735,6 +1755,11 @@ main {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  height: 100%;
+}
+
+.prospectus-card-secondary {
+  margin-top: clamp(1.2rem, 4vh, 2.2rem);
 }
 
 .manual-prospectus-card {

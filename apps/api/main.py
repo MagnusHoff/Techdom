@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 import base64
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,17 +40,31 @@ from techdom.domain.analysis_service import (
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
 from techdom.services.salgsoppgave import retrieve_salgsoppgave
-from techdom.infrastructure.db import ensure_auth_schema, init_models
+from techdom.infrastructure.db import ensure_auth_schema, get_session, init_models
 from techdom.ingestion.fetch import extract_pdf_text_from_bytes
 from techdom.processing.ai import analyze_prospectus
 from techdom.processing.tg_extract import (
     ExtractionError as TGExtractionError,
+    build_v2_details,
+    build_v2_details_from_strings,
     coerce_tg_strings,
     extract_tg_from_pdf_bytes,
     format_tg_entries,
     merge_tg_lists,
     summarize_tg_entries,
     summarize_tg_strings,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from techdom.domain.salgsoppgave.models import SalgsoppgaveCache
+from techdom.domain.tg_cache import (
+    ExtractionFailed,
+    ExtractionResult,
+    PdfSourceMissing,
+    cache_is_v2,
+    cache_to_result,
+    extract_details,
+    load_cache,
 )
 
 app = FastAPI(title="Boliganalyse API (MVP)")
@@ -119,8 +133,8 @@ class ProspectusManualResp(BaseModel):
     upgrades: List[str]
     watchouts: List[str]
     questions: List[str]
-    tg3_details: List[Dict[str, str]] = Field(default_factory=list)
-    tg2_details: List[Dict[str, str]] = Field(default_factory=list)
+    tg3_details: List[Dict[str, Any]] = Field(default_factory=list)
+    tg2_details: List[Dict[str, Any]] = Field(default_factory=list)
     tg_markdown: Optional[str] = None
     tg_missing_components: List[str] = Field(default_factory=list)
 
@@ -214,6 +228,19 @@ class SalgsoppgaveResp(BaseModel):
     log: List[str] = Field(default_factory=list)
 
 
+class TGDetailV2(BaseModel):
+    label: str
+    short: str
+    hover: str
+    tg: Literal[2, 3] = 2
+
+
+class AnalysisTGResp(BaseModel):
+    tg_version: int = Field(default=2)
+    updated_at: Optional[str] = None
+    tg2_details: List[TGDetailV2] = Field(default_factory=list)
+
+
 class FeedbackCategory(str, Enum):
     IDEA = "idea"
     PROBLEM = "problem"
@@ -252,25 +279,40 @@ def prospectus_manual(payload: ProspectusManualReq) -> ProspectusManualResp:
 
     return _build_prospectus_manual_response(result)
 
-
-
-
-def _coerce_detail_list(value: Any) -> List[Dict[str, str]]:
+def _coerce_detail_list(value: Any) -> List[Dict[str, Any]]:
     if not isinstance(value, Iterable):
         return []
-    details: List[Dict[str, str]] = []
+    details: List[Dict[str, Any]] = []
     for item in value:
         if not isinstance(item, Mapping):
             continue
         label = str(item.get("label") or "").strip()
-        detail = str(item.get("detail") or "").strip()
+        short = str(item.get("short") or item.get("detail") or "").strip()
+        hover = str(item.get("hover") or item.get("detail") or "").strip()
         source = str(item.get("source") or "").strip()
-        if not label or not detail:
-            continue
-        payload: Dict[str, str] = {"label": label, "detail": detail}
+        tg_value = item.get("tg")
+        tg = tg_value if isinstance(tg_value, int) and tg_value in (2, 3) else 2
+
+        if not short and label:
+            short = label
+        if not label and short:
+            label = short
+        if not hover:
+            hover = short or label
         if source:
-            payload["source"] = source
-        details.append(payload)
+            source_label = source if source.lower().startswith("tg") else source
+            if hover and source_label not in hover:
+                hover = f"{hover} ({source_label})"
+        if not (label or short or hover):
+            continue
+        details.append(
+            {
+                "label": label or short or hover,
+                "short": short or label or hover,
+                "hover": hover or short or label,
+                "tg": tg,
+            }
+        )
     return details
 
 def _build_prospectus_manual_response(result: Dict[str, Any]) -> ProspectusManualResp:
@@ -292,7 +334,7 @@ def _build_prospectus_manual_response(result: Dict[str, Any]) -> ProspectusManua
     missing_components = coerce_tg_strings(result.get("tg_missing_components"))
 
     if not tg2_details and tg2:
-        tg2_details = summarize_tg_strings(tg2, level=2)
+        tg2_details = build_v2_details_from_strings(tg2, level=2)[:8]
     if not tg3_details and tg3:
         tg3_details = summarize_tg_strings(tg3, level=3)
 
@@ -434,7 +476,10 @@ def prospectus_manual_upload(payload: ProspectusManualUploadReq) -> ProspectusMa
         if tg2_detail_entries:
             result_dict["tg2_details"] = tg2_detail_entries
         elif existing_tg2:
-            result_dict["tg2_details"] = summarize_tg_strings(existing_tg2, level=2)
+            result_dict["tg2_details"] = build_v2_details_from_strings(
+                existing_tg2,
+                level=2,
+            )[:8]
 
         if tg3_detail_entries:
             result_dict["tg3_details"] = tg3_detail_entries
@@ -453,7 +498,10 @@ def prospectus_manual_upload(payload: ProspectusManualUploadReq) -> ProspectusMa
     if "tg2_details" not in result_dict:
         fallback_tg2 = coerce_tg_strings(result_dict.get("tg2"))
         if fallback_tg2:
-            result_dict["tg2_details"] = summarize_tg_strings(fallback_tg2, level=2)
+            result_dict["tg2_details"] = build_v2_details_from_strings(
+                fallback_tg2,
+                level=2,
+            )[:8]
 
     if "tg3_details" not in result_dict:
         fallback_tg3 = coerce_tg_strings(result_dict.get("tg3"))
@@ -477,6 +525,52 @@ def analysis(req: AnalysisReq) -> AnalysisResp:
         decision_ui=analysis_result.decision_ui,
         ai_text=analysis_result.ai_text,
     )
+
+
+@app.get("/analysis/{analysis_id}", response_model=AnalysisTGResp)
+async def get_analysis_tg_details(
+    analysis_id: str,
+    force: bool = Query(False),
+    session: AsyncSession = Depends(get_session),
+) -> AnalysisTGResp:
+    candidate = (analysis_id or "").strip()
+    if not candidate:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "analysis_id må være satt.")
+
+    try:
+        result = await _load_or_extract_tg_details(candidate, session, force=force)
+    except (PdfSourceMissing, ExtractionFailed):
+        raise
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        LOGGER.exception("Uventet feil ved henting av TG-detaljer for %s", candidate)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke hente TG-detaljer.",
+        ) from exc
+    return _result_to_response(result)
+
+
+@app.post("/analysis/{analysis_id}/reextract", response_model=AnalysisTGResp)
+async def reextract_analysis_tg_details(
+    analysis_id: str,
+    force: bool = Query(True),
+    session: AsyncSession = Depends(get_session),
+) -> AnalysisTGResp:
+    candidate = (analysis_id or "").strip()
+    if not candidate:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "analysis_id må være satt.")
+
+    try:
+        result = await _load_or_extract_tg_details(candidate, session, force=True if force else False)
+    except (PdfSourceMissing, ExtractionFailed):
+        raise
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        LOGGER.exception("Uventet feil ved re-ekstraksjon av TG-detaljer for %s", candidate)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Kunne ikke oppdatere TG-detaljer.",
+        ) from exc
+    return _result_to_response(result)
 
 
 @app.post("/analyze")
@@ -512,6 +606,70 @@ def _has_key_number_values(data: Dict[str, Any]) -> bool:
         if value not in (None, "", [], {}):
             return True
     return False
+
+
+async def _resolve_pdf_inputs(
+    analysis_id: str,
+    session: AsyncSession,
+    cache_payload: Optional[Dict[str, Any]],
+) -> tuple[str, Optional[str]]:
+    if cache_payload:
+        cached_url = cache_payload.get("pdf_url")
+        if isinstance(cached_url, str) and cached_url.strip():
+            cleaned = cached_url.strip()
+            return cleaned, cleaned
+
+    local_path = (_PROSPEKT_DIR / f"{analysis_id}.pdf").resolve()
+    remote_url: Optional[str] = None
+
+    if analysis_id.isdigit():
+        record = await session.get(SalgsoppgaveCache, analysis_id)
+        if record:
+            candidate = (record.stable_pdf_url or record.original_pdf_url or "").strip()
+            if candidate:
+                remote_url = candidate
+
+    if local_path.exists():
+        return str(local_path), remote_url
+
+    if remote_url:
+        return remote_url, remote_url
+
+    raise PdfSourceMissing(analysis_id)
+
+
+def _result_to_response(result: ExtractionResult) -> AnalysisTGResp:
+    details: List[TGDetailV2] = []
+    for item in result.tg2_details:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            details.append(TGDetailV2(**item))
+        except Exception:
+            continue
+    return AnalysisTGResp(
+        tg_version=result.tg_version,
+        updated_at=result.updated_at or None,
+        tg2_details=details,
+    )
+
+
+async def _load_or_extract_tg_details(
+    analysis_id: str,
+    session: AsyncSession,
+    *,
+    force: bool,
+) -> ExtractionResult:
+    cache_payload = load_cache(analysis_id)
+    if not force and cache_is_v2(cache_payload):
+        return cache_to_result(analysis_id, cache_payload or {})
+
+    source, pdf_url = await _resolve_pdf_inputs(analysis_id, session, cache_payload or {})
+    return extract_details(
+        analysis_id,
+        source=source,
+        pdf_url=pdf_url,
+    )
 
 
 @app.post("/finn/key-numbers")

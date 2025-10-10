@@ -49,6 +49,7 @@ COMPONENT_PREFIXES: List[Tuple[str, Tuple[str, ...]]] = [
     ("Elektro/Sikringsskap", ("elektr", "sikring", "elanlegg", "jordfeil", "sikringsskap", "kursfort")),
     ("Bereder", ("bereder", "varmtvann", "vvb")),
     ("Radon", ("radon",)),
+    ("Trapp", ("trapp", "handlop", "handloper", "håndløp", "håndløper")),
     ("Pipe/ildsted", ("pipe", "ildsted", "skorstein", "pipelop", "pipeløp", "peis", "skorste")),
 ]
 
@@ -60,7 +61,9 @@ IMPORTANT_COMPONENT_TOKENS = (
     "vatrom",
     "membran",
     "drener",
+    "taknedløp",
     "grunnmur",
+    "taknedløp",
     "kjeller",
     "tak",
     "taktek",
@@ -94,11 +97,13 @@ IMPORTANT_REASON_KEYWORDS = (
     "lekkasje",
     "vann",
     "drener",
+    "taknedløp",
     "grunnmur",
     "kjeller",
     "membran",
     "sluk",
     "fall mot sluk",
+    "fall til sluk",
     "bakfall",
     "avløp",
     "avlop",
@@ -126,6 +131,10 @@ IMPORTANT_REASON_KEYWORDS = (
     "utett",
     "teknisk rom",
     "varmtvann",
+    "mangler",
+    "handløper",
+    "håndløper",
+    "bom",
 )
 
 COSMETIC_SKIP_KEYWORDS = (
@@ -150,6 +159,101 @@ NEGATIVE_SKIP_PHRASES = (
     "ingen registrert",
     "ingen synlige skader",
     "normal slitasje",
+)
+
+LABEL_STOPWORDS = {
+    "er",
+    "som",
+    "den",
+    "det",
+    "de",
+    "til",
+    "for",
+    "med",
+    "mot",
+    "fra",
+    "over",
+    "under",
+    "mellom",
+    "innen",
+    "innenfor",
+    "utenfor",
+    "og",
+    "men",
+    "eller",
+    "at",
+    "på",
+    "i",
+    "å",
+    "har",
+    "skal",
+    "kan",
+    "må",
+    "bør",
+    "blir",
+    "ble",
+    "blitt",
+    "enn",
+    "en",
+    "et",
+    "av",
+    "ved",
+    "mer",
+    "halvparten",
+    "side",
+    "tg2",
+    "tg3",
+}
+
+LABEL_OVERRIDES: Tuple[Tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"taknedløp[^.]*over bakken", re.IGNORECASE), "Åpne taknedløp"),
+    (re.compile(r"mangler\s+håndløper", re.IGNORECASE), "Manglende håndløper"),
+    (re.compile(r"fall[^.]{0,80}sluk", re.IGNORECASE), "Lavt slukfall"),
+    (re.compile(r"\bbom\b[^.]{0,80}flis", re.IGNORECASE), "Løs gulvflis"),
+    (re.compile(r"råte", re.IGNORECASE), "Råteskade"),
+    (re.compile(r"mugg", re.IGNORECASE), "Muggfare"),
+    (re.compile(r"ikke godkjent", re.IGNORECASE), "Ikke godkjent"),
+    (re.compile(r"lekk", re.IGNORECASE), "Lekkasjerisiko"),
+)
+
+LABEL_SIGNAL_TOKENS = {
+    "fukt",
+    "lekk",
+    "lekkasje",
+    "lekkasjer",
+    "rate",
+    "mugg",
+    "mangler",
+    "skade",
+    "skader",
+    "avvik",
+    "sluk",
+    "fall",
+    "bom",
+    "rust",
+    "korrosjon",
+    "svikt",
+    "ikke",
+    "godkjent",
+    "brann",
+    "drenering",
+    "grunnmur",
+    "kjeller",
+    "tak",
+}
+
+PRIORITY_REASON_TOKENS = (
+    "mangler",
+    "fukt",
+    "lekk",
+    "lekkasje",
+    "råte",
+    "mugg",
+    "bom",
+    "fall",
+    "ikke godkjent",
+    "utett",
+    "taknedløp",
 )
 
 
@@ -197,6 +301,18 @@ def _clean_reason_text(value: str) -> str:
         return ""
     text = WHITESPACE_RX.sub(" ", value).strip()
     text = re.sub(r"^[\-\*\u2022\u2043\u2219\u25cf]+\s*", "", text)
+    text = re.sub(
+        r"^(?:Forhold som har fått|Bygningsdeler med)\s+[^:]{0,150}?Oppsummering\s*[:\-]*\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"^Oppsummering(?: av)?\s+[^:]{0,120}?[:\-]\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     split = re.split(r"\b(Tiltak|Konsekvens|Arsak|Anbefaling)\b", text, flags=re.IGNORECASE)
     if split:
         text = split[0].strip()
@@ -217,6 +333,14 @@ def _clean_reason_text(value: str) -> str:
         text = text[0].upper() + text[1:]
     if len(text) > 220:
         text = text[:217].rstrip(",;:- ") + "..."
+    lowered = text.casefold()
+    if lowered.startswith("oppsummering"):
+        return ""
+    if lowered.startswith("type "):
+        return ""
+    for skip_phrase in ("vedlagt salgsoppgaven", "i tillegg kan det gis", "fremlagt dokumentasjon"):
+        if skip_phrase in lowered:
+            return ""
     if not text.endswith("."):
         text = f"{text}."
     return text
@@ -252,6 +376,7 @@ def _build_result_from_segments(segments: Sequence[Segment]) -> dict[str, object
     segment_list = list(segments)
     candidates = _candidates_from_segments(segment_list)
     findings = _dedupe_candidates(candidates)
+    findings = _collapse_component_duplicates(findings)
 
     tg3_entries = [
         {"komponent": f.component, "grunn": f.reason, "kilde_side": f.kilde_side}
@@ -402,24 +527,128 @@ def summarize_tg_strings(strings: Iterable[str], *, level: int, limit: int | Non
     return summarize_tg_entries(entries, level=level, include_source=False, limit=limit)
 
 
-def _build_summary_label(component: str, reason: str, level: int) -> str:
-    words = _tokenise_summary_words(component)
-    if len(words) < 2:
-        words.extend(_tokenise_summary_words(reason))
-    filtered = [word for word in words if word and not _is_tg_token(word, level)]
-    if not filtered:
-        filtered = words or [f"TG{level}"]
-    deduped: List[str] = []
-    seen: set[str] = set()
-    for token in filtered:
-        if token in seen:
+def _derive_short_reason(component: str, reason: str) -> str:
+    text = reason.strip()
+    if text:
+        text = WHITESPACE_RX.sub(" ", text)
+        text = text.rstrip(".").strip()
+    if text:
+        return text
+    return component.strip()
+
+
+def _compose_hover(level: int, component: str, reason: str, source: str) -> str:
+    return _build_summary_detail(component, reason, level, source)
+
+
+def build_v2_details(
+    entries: Iterable[Mapping[str, Any]],
+    *,
+    level: int,
+) -> List[dict[str, Any]]:
+    details: List[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
             continue
-        seen.add(token)
-        deduped.append(token)
-    if not deduped:
-        deduped = filtered
-    label = " ".join(deduped[:3])
-    return label.capitalize()
+        component = str(entry.get("komponent") or entry.get("component") or "").strip()
+        reason = str(entry.get("grunn") or entry.get("reason") or "").strip()
+        source = str(entry.get("kilde_side") or entry.get("kilde") or "").strip()
+        if not component and not reason:
+            continue
+        label = _build_summary_label(component, reason, level)
+        short = _derive_short_reason(component, reason) or label
+        hover = _compose_hover(level, component, reason, source)
+        fingerprint = (label.casefold(), short.casefold(), level)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        details.append(
+            {
+                "label": label,
+                "short": short,
+                "hover": hover,
+                "tg": level,
+            }
+        )
+    return details
+
+
+def build_v2_details_from_strings(
+    strings: Iterable[str],
+    *,
+    level: int,
+) -> List[dict[str, Any]]:
+    formatted_entries: List[dict[str, str]] = []
+    for raw in strings:
+        if not raw:
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        component, reason = _split_component_and_reason(text)
+        formatted_entries.append({"komponent": component, "grunn": reason})
+    return build_v2_details(formatted_entries, level=level)
+
+
+def _build_summary_label(component: str, reason: str, level: int) -> str:
+    lowered_reason = reason.casefold()
+    for pattern, label in LABEL_OVERRIDES:
+        if pattern.search(lowered_reason):
+            return label
+
+    component_tokens = _extract_label_tokens(component)
+    component_lookup = {_strip_diacritics(token.casefold()) for token in component_tokens}
+    reason_tokens = _extract_label_tokens(reason, exclude=component_lookup)
+
+    ordered_tokens: List[str] = []
+    seen: set[str] = set()
+
+    def add_token(token: str) -> None:
+        lowered = token.casefold()
+        if lowered in seen:
+            return
+        seen.add(lowered)
+        ordered_tokens.append(token)
+
+    def token_is_signal(token: str) -> bool:
+        key = _strip_diacritics(token.casefold())
+        return key in LABEL_SIGNAL_TOKENS
+
+    reason_has_signal = any(token_is_signal(token) for token in reason_tokens)
+
+    if reason_has_signal:
+        for token in reason_tokens:
+            add_token(token)
+        for token in component_tokens:
+            add_token(token)
+    else:
+        for token in component_tokens:
+            add_token(token)
+        for token in reason_tokens:
+            add_token(token)
+
+    if component_tokens:
+        primary_component = component_tokens[0]
+        comp_key = _strip_diacritics(primary_component.casefold())
+        has_component = any(
+            _strip_diacritics(token.casefold()) == comp_key for token in ordered_tokens[:3]
+        )
+        if not has_component:
+            if len(ordered_tokens) >= 3:
+                ordered_tokens[2] = primary_component
+            else:
+                ordered_tokens.append(primary_component)
+
+    if not ordered_tokens:
+        ordered_tokens = [f"TG{level}"]
+
+    label = " ".join(ordered_tokens[:3]).strip()
+    if not label:
+        label = f"TG{level}"
+    elif label[0].islower():
+        label = label[0].upper() + label[1:]
+    return label
 
 
 def _build_summary_detail(component: str, reason: str, level: int, source: str) -> str:
@@ -445,17 +674,24 @@ def _build_summary_detail(component: str, reason: str, level: int, source: str) 
     return detail
 
 
-def _tokenise_summary_words(value: str) -> List[str]:
+def _extract_label_tokens(value: str, exclude: set[str] | None = None) -> List[str]:
     if not value:
         return []
-    normalized = _strip_diacritics(value.lower())
-    tokens = re.findall(r"[a-z0-9æøå]+", normalized)
-    return [token for token in tokens if token]
-
-
-def _is_tg_token(token: str, level: int) -> bool:
-    lowered = token.lower()
-    return lowered in {"tg", f"tg{level}", "tilstandsgrad"}
+    tokens: List[str] = []
+    exclude_lookup = {_strip_diacritics(token.lower()) for token in (exclude or set())}
+    for match in re.finditer(r"[A-Za-zÆØÅæøå0-9][A-Za-zÆØÅæøå0-9\-]*", value):
+        token = match.group(0).strip("-")
+        if not token:
+            continue
+        lowered = _strip_diacritics(token.lower())
+        if lowered in LABEL_STOPWORDS or lowered in exclude_lookup:
+            continue
+        if lowered.startswith("tg"):
+            continue
+        if len(lowered) <= 2 and lowered not in {"bom"}:
+            continue
+        tokens.append(token)
+    return tokens
 
 
 def _split_component_and_reason(value: str) -> tuple[str, str]:
@@ -477,9 +713,12 @@ def _normalise_source_label(value: str) -> str:
         return ""
     lowered = cleaned.casefold()
     if cleaned.isdigit():
-        return f"Side {cleaned}"
+        return f"Tilstandsrapport side {cleaned}"
     if lowered.startswith("side"):
-        return cleaned.capitalize()
+        number_match = re.search(r"\d+", cleaned)
+        if number_match:
+            return f"Tilstandsrapport side {number_match.group(0)}"
+        return "Tilstandsrapport"
     if lowered in {"salgsoppgave", "finn"}:
         return cleaned.capitalize()
     return cleaned
@@ -591,6 +830,36 @@ def _dedupe_candidates(candidates: Iterable[FindingCandidate]) -> List[FindingCa
     return deduped
 
 
+def _score_reason_value(reason: str) -> int:
+    lowered = reason.casefold()
+    score = 0
+    if lowered.startswith("er "):
+        score -= 2
+    if _contains_any(lowered, IMPORTANT_REASON_KEYWORDS):
+        score += 3
+    if any(token in lowered for token in PRIORITY_REASON_TOKENS):
+        score += 2
+    score += min(len(reason) // 40, 2)
+    return score
+
+
+def _collapse_component_duplicates(findings: List[FindingCandidate]) -> List[FindingCandidate]:
+    best_by_component: dict[tuple[str, int], tuple[FindingCandidate, int]] = {}
+    ordered_keys: List[tuple[str, int]] = []
+    for cand in findings:
+        key = (cand.component.casefold(), cand.level)
+        score = _score_reason_value(cand.reason)
+        current = best_by_component.get(key)
+        if current is None:
+            best_by_component[key] = (cand, score)
+            ordered_keys.append(key)
+            continue
+        best_cand, best_score = current
+        if score > best_score or (score == best_score and len(cand.reason) > len(best_cand.reason)):
+            best_by_component[key] = (cand, score)
+    return [best_by_component[key][0] for key in ordered_keys]
+
+
 def _candidates_from_segments(segments: List[Segment]) -> List[FindingCandidate]:
     findings: List[FindingCandidate] = []
     total = len(segments)
@@ -652,6 +921,15 @@ def _candidates_from_segments(segments: List[Segment]) -> List[FindingCandidate]
             if _ends_reason(follower_text):
                 break
 
+        summary_candidates = _extract_summary_candidates(segment, reason_segments, level)
+        if summary_candidates:
+            findings.extend(summary_candidates)
+            if reason_segments and follower_idx > index + 1:
+                index = follower_idx
+            else:
+                index += 1
+            continue
+
         if reason_segments:
             reason_text = _combine_reason(reason_segments)
             component = _infer_component(reason_text, segments, index, reason_segments)
@@ -670,6 +948,29 @@ def _candidates_from_segments(segments: List[Segment]) -> List[FindingCandidate]
                             kilde_side=segment.kilde_side,
                         )
                     )
+                else:
+                    fallback_reason, fallback_source, fallback_original, fallback_component_match = _fallback_reason_from_previous(
+                        segments,
+                        index,
+                        component,
+                    )
+                    if fallback_reason and _is_relevant_reason(
+                        fallback_reason,
+                        component=component,
+                        original=fallback_original,
+                    ):
+                        fallback_component = component
+                        if fallback_component_match:
+                            if component == "Ukjent" or fallback_component_match == component:
+                                fallback_component = fallback_component_match
+                        findings.append(
+                            FindingCandidate(
+                                component=fallback_component,
+                                reason=fallback_reason,
+                                level=level,
+                                kilde_side=fallback_source or segment.kilde_side,
+                            )
+                        )
 
         if reason_segments and follower_idx > index + 1:
             index = follower_idx
@@ -751,6 +1052,129 @@ def _combine_reason(reason_segments: List[Segment]) -> str:
         if cleaned:
             parts.append(cleaned)
     return " ".join(parts).strip()
+
+
+def _extract_summary_candidates(
+    trigger: Segment,
+    reason_segments: List[Segment],
+    level: int,
+) -> List[FindingCandidate]:
+    trigger_text = (trigger.original_text or trigger.text or "").casefold()
+    if "forhold som har fått" not in trigger_text and "bygningsdeler med" not in trigger_text:
+        return []
+
+    findings: List[FindingCandidate] = []
+    total = len(reason_segments)
+    i = 0
+    while i < total:
+        segment = reason_segments[i]
+        text = segment.text.strip()
+        lowered = text.casefold()
+        if "oppsummering" not in lowered:
+            i += 1
+            continue
+
+        component_label = _extract_component_label(text) or ""
+        component_match = _find_component(component_label)
+        component = component_match.component if component_match else component_label or "Ukjent"
+
+        reason_lines: List[Segment] = []
+        j = i + 1
+        while j < total:
+            candidate = reason_segments[j]
+            candidate_text = candidate.text.strip()
+            candidate_lower = candidate_text.casefold()
+            if not candidate_text:
+                j += 1
+                continue
+            if "oppsummering" in candidate_lower:
+                break
+            candidate_level, _ = _detect_level(candidate_text)
+            if candidate_level is not None:
+                break
+            if _is_section_break(candidate_text):
+                break
+            reason_lines.append(candidate)
+            if "." in candidate_text or len(reason_lines) >= 2:
+                break
+            j += 1
+            continue
+        if reason_lines:
+            j = max(j, i + 1 + len(reason_lines))
+        if reason_lines:
+            combined = _combine_reason(reason_lines)
+            cleaned = _clean_reason_text(combined)
+            if cleaned and _is_relevant_reason(cleaned, component=component, original=combined):
+                findings.append(
+                    FindingCandidate(
+                        component=component,
+                        reason=cleaned,
+                        level=level,
+                        kilde_side=reason_lines[0].kilde_side,
+                    )
+                )
+        i = j if reason_lines else i + 1
+    return findings
+
+
+def _fallback_reason_from_previous(
+    all_segments: List[Segment],
+    tg_index: int,
+    component: str,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    start = max(0, tg_index - 12)
+    best_reason: str | None = None
+    best_source: str | None = None
+    best_original: str | None = None
+    best_component: str | None = None
+    best_score = -1
+    for idx in range(tg_index - 1, start - 1, -1):
+        prev = all_segments[idx]
+        text = prev.text.strip()
+        if not text:
+            continue
+        level, _ = _detect_level(text)
+        if level is not None:
+            break
+        if _is_section_break(text):
+            break
+        if "oppsummering" in text.casefold():
+            continue
+        if text.casefold().startswith("er det"):
+            continue
+        cleaned = _clean_reason_text(text)
+        if not cleaned:
+            continue
+        if not _is_relevant_reason(cleaned, component=component, original=text):
+            continue
+        component_match = _find_component(cleaned)
+        keyword_hit = _contains_any(cleaned.casefold(), IMPORTANT_REASON_KEYWORDS)
+        score = 1
+        if keyword_hit:
+            score += 2
+        lowered_cleaned = cleaned.casefold()
+        if "fall" in lowered_cleaned and "sluk" in lowered_cleaned:
+            score += 2
+        if "bom" in lowered_cleaned:
+            score += 1
+        if "mangler" in lowered_cleaned:
+            score += 1
+        if component_match:
+            if component_match.component == component:
+                score += 2
+            else:
+                score += 1
+        if score > best_score or (
+            score == best_score and (best_reason is None or len(cleaned) > len(best_reason))
+        ):
+            best_reason = cleaned
+            best_source = prev.kilde_side
+            best_original = text
+            best_component = component_match.component if component_match else None
+            best_score = score
+            if component_match and component_match.component == component and score >= 5:
+                break
+    return best_reason, best_source, best_original, best_component
 
 
 def _infer_component(
