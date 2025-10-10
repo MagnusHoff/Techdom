@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Iterable
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+try:
+    from pydantic import (  # type: ignore
+        BaseModel,
+        ConfigDict,
+        Field,
+        ValidationInfo,
+        field_validator,
+    )
+except ImportError:  # pragma: no cover - compatibility with Pydantic v1
+    from pydantic import BaseModel, Field, ValidationInfo, validator as field_validator  # type: ignore
+
+    ConfigDict = None  # type: ignore[assignment]
 
 
 def _trim(value: str | None, *, max_length: int | None = None) -> str | None:
@@ -100,8 +111,11 @@ class SavedAnalysisRead(SavedAnalysisBase):
     id: str
     saved_at: datetime
 
-    class Config:
-        from_attributes = True
+    if ConfigDict is not None:  # pragma: no branch - depends on pydantic version
+        model_config = ConfigDict(from_attributes=True)
+    else:  # pragma: no cover - Pydantic v1 fallback
+        class Config:
+            orm_mode = True
 
 
 class SavedAnalysisCollection(BaseModel):

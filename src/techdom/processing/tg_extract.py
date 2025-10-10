@@ -571,12 +571,14 @@ def _build_markdown(
 
 
 def _dedupe_candidates(candidates: Iterable[FindingCandidate]) -> List[FindingCandidate]:
+    """Remove duplicates while keeping the most informative candidate."""
+
     deduped: List[FindingCandidate] = []
-    index_map: dict[tuple[str, str], int] = {}
+    index_map: dict[tuple[str, str, int], int] = {}
     for cand in candidates:
         component_key = cand.component.casefold()
         reason_key = WHITESPACE_RX.sub(" ", cand.reason.casefold()).strip()
-        key = (component_key, reason_key)
+        key = (component_key, reason_key, cand.level)
         existing_index = index_map.get(key)
         if existing_index is None:
             index_map[key] = len(deduped)
@@ -588,7 +590,67 @@ def _dedupe_candidates(candidates: Iterable[FindingCandidate]) -> List[FindingCa
             deduped[existing_index] = cand
         elif cand.level == existing.level and len(cand.reason) > len(existing.reason):
             deduped[existing_index] = cand
-    return deduped
+
+    reason_map: dict[tuple[str, int], int] = {}
+    reduced: List[FindingCandidate] = []
+    for cand in deduped:
+        reason_key = WHITESPACE_RX.sub(" ", cand.reason.casefold()).strip()
+        reason_key_tuple = (reason_key, cand.level)
+        existing_index = reason_map.get(reason_key_tuple)
+        if existing_index is None:
+            reason_map[reason_key_tuple] = len(reduced)
+            reduced.append(cand)
+            continue
+
+        existing = reduced[existing_index]
+        preferred = _prefer_candidate_for_reason(existing, cand)
+        reduced[existing_index] = preferred
+
+    return reduced
+
+
+def _prefer_candidate_for_reason(
+    existing: FindingCandidate, cand: FindingCandidate
+) -> FindingCandidate:
+    if cand.level > existing.level:
+        return cand
+    if cand.level < existing.level:
+        return existing
+
+    existing_in_reason = _component_matches_reason(existing)
+    candidate_in_reason = _component_matches_reason(cand)
+
+    if existing_in_reason and not candidate_in_reason:
+        return existing
+    if candidate_in_reason and not existing_in_reason:
+        return cand
+
+    existing_unknown = _is_unknown_component(existing.component)
+    candidate_unknown = _is_unknown_component(cand.component)
+
+    if existing_unknown and not candidate_unknown:
+        return cand
+    if candidate_unknown and not existing_unknown:
+        return existing
+
+    if len(cand.component) > len(existing.component):
+        return cand
+    return existing
+
+
+def _component_matches_reason(candidate: FindingCandidate) -> bool:
+    component = candidate.component.strip()
+    if not component or _is_unknown_component(component):
+        return False
+    reason = WHITESPACE_RX.sub(" ", candidate.reason.casefold())
+    component_key = WHITESPACE_RX.sub(" ", component.casefold())
+    if not component_key:
+        return False
+    return component_key in reason
+
+
+def _is_unknown_component(value: str) -> bool:
+    return value.strip().casefold() in {"", "ukjent"}
 
 
 def _candidates_from_segments(segments: List[Segment]) -> List[FindingCandidate]:
