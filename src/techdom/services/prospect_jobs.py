@@ -223,9 +223,12 @@ class ProspectJobService:
             job.payload.update(payload)
         job.payload.setdefault("finnkode", finnkode)
         self._backend.save(job)
+        # Snapshot the just-created job so response data stays "queued" even if a worker
+        # immediately mutates the backend instance (possible with the in-memory backend).
+        response_job = ProspectJob.from_dict(job.to_dict())
         if enqueue:
             self._backend.enqueue(job.id)
-        return job
+        return response_job
 
     def enqueue(self, job_id: str) -> None:
         self._backend.enqueue(job_id)

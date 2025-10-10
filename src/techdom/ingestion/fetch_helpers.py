@@ -36,7 +36,7 @@ def absolute_url(base_url: str, href: Any) -> str | None:
 
 def clean_url(u: str) -> str:
     try:
-        u = u.replace("\/", "/")
+        u = u.replace("\\/", "/")
         p = urlparse(u)
         q = parse_qs(p.query)
         drop = {k for k in q if k.startswith("utm_") or k in {"gclid", "fbclid"}}

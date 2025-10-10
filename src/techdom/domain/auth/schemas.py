@@ -5,9 +5,17 @@ from datetime import datetime
 from typing import Literal
 
 try:
-    from pydantic import BaseModel, EmailStr, Field, field_validator  # type: ignore
+    from pydantic import (  # type: ignore
+        BaseModel,
+        ConfigDict,
+        EmailStr,
+        Field,
+        field_validator,
+    )
 except ImportError:  # pragma: no cover - compatibility with Pydantic v1
     from pydantic import BaseModel, EmailStr, Field, validator as field_validator  # type: ignore
+
+    ConfigDict = None  # type: ignore[assignment]
 
 from techdom.domain.auth.models import UserRole
 from techdom.domain.auth.constants import normalise_avatar_emoji, normalise_avatar_color
@@ -63,8 +71,11 @@ class UserRead(UserBase):
     updated_at: datetime
     total_analyses: int = 0
 
-    class Config:
-        from_attributes = True
+    if ConfigDict is not None:  # pragma: no branch - depends on pydantic version
+        model_config = ConfigDict(from_attributes=True)
+    else:  # pragma: no cover - Pydantic v1 fallback
+        class Config:
+            orm_mode = True
 
 
 class UserLogin(UserBase):
