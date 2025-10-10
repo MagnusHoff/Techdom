@@ -3952,6 +3952,43 @@ main {
   z-index: 2;
 }
 
+.subscription-plan-current,
+.subscription-plan-current-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #4f46e5 0%, #3b82f6 50%, #38bdf8 100%);
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  white-space: nowrap;
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 197, 253, 0.38),
+    0 0 12px rgba(99, 102, 241, 0.32),
+    0 0 28px rgba(59, 130, 246, 0.26);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: all 0.5s ease;
+}
+
+.subscription-plan-current-badge {
+  position: absolute;
+  top: clamp(2.4rem, 6vw, 3.3rem);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+
+.subscription-plan-current-badge + .subscription-plan-header {
+  padding-top: clamp(1.1rem, 3vw, 1.5rem);
+}
+
 .subscription-plan-header {
   display: flex;
   flex-direction: column;
@@ -3970,6 +4007,13 @@ main {
   color: rgba(203, 213, 225, 0.78);
   font-size: 0.95rem;
   line-height: 1.6;
+}
+
+.subscription-plan-renewal {
+  margin: 0;
+  margin-top: 0.35rem;
+  color: rgba(191, 219, 254, 0.8);
+  font-size: 0.85rem;
 }
 
 .subscription-plan-price {
@@ -4019,6 +4063,20 @@ main {
   margin-top: auto;
 }
 
+.subscription-plan-manage {
+  margin-top: 0.75rem;
+}
+
+.subscription-plan-manage .subscription-plan-cta {
+  box-shadow: none;
+}
+
+.subscription-plan-manage .subscription-plan-cta:hover,
+.subscription-plan-manage .subscription-plan-cta:focus-visible {
+  transform: none;
+  box-shadow: none;
+}
+
 .subscription-plan-cta {
   width: 100%;
   padding: 0.85rem 1.2rem;
@@ -4046,55 +4104,36 @@ main {
   box-shadow: none;
 }
 
-.subscription-plan-current {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.65rem 1.2rem;
-  border-radius: 14px;
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  background: rgba(37, 99, 235, 0.16);
-  color: rgba(191, 219, 254, 0.95);
-  font-weight: 600;
-  font-size: 0.9rem;
+.subscription-portal-hint {
+  margin-top: clamp(1.4rem, 3vw, 2rem);
+  text-align: center;
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 0.85rem;
 }
 
-.subscription-plan-downgrade {
-  position: relative;
+.subscription-portal-link {
+  border: none;
+  background: none;
+  color: rgba(96, 165, 250, 0.85);
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
 }
 
-.subscription-tooltip {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 0.6rem);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  max-width: 240px;
-  padding: 0.55rem 0.75rem;
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(248, 113, 113, 0.45);
-  color: rgba(254, 226, 226, 0.95);
-  font-size: 0.82rem;
-  line-height: 1.4;
-  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.5);
-  opacity: 0;
-  transform: translateY(8px);
-  pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
-  z-index: 5;
+.subscription-portal-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
-.subscription-tooltip.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.subscription-tooltip svg {
-  width: 16px;
-  height: 16px;
-  color: rgba(248, 113, 113, 0.95);
+.subscription-plan-current:hover,
+.subscription-plan-current:focus-visible,
+.subscription-plan-current-badge:hover,
+.subscription-plan-current-badge:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 197, 253, 0.45),
+    0 0 18px rgba(99, 102, 241, 0.42),
+    0 0 36px rgba(59, 130, 246, 0.32);
 }
 
 .subscription-compare {
@@ -4420,15 +4459,6 @@ main {
 
   .subscription-accordion {
     display: flex;
-  }
-
-  .subscription-tooltip {
-    left: 50%;
-    transform: translate(-50%, 8px);
-  }
-
-  .subscription-tooltip.is-visible {
-    transform: translate(-50%, 0);
   }
 
   .subscription-mobile-cta {
