@@ -205,6 +205,61 @@ def _ensure_users_schema(sync_conn) -> None:
         )
         columns.add("subscription_cancel_at_period_end")
 
+    if inspector.dialect.name == "postgresql":
+        _ensure_lowercase_user_role_enum(sync_conn, inspector)
+
+
+def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
+    """Normalise legacy uppercase enum labels and stored role values."""
+
+    try:
+        user_role_enum = next(
+            enum
+            for enum in inspector.get_enums()
+            if enum.get("name") == "user_role"
+        )
+    except (StopIteration, NotImplementedError):
+        return
+
+    target_labels = {"user", "plus", "admin"}
+
+    def _current_labels() -> set[str]:
+        result = sync_conn.execute(
+            text(
+                "SELECT enumlabel "
+                "FROM pg_enum e "
+                "JOIN pg_type t ON e.enumtypid = t.oid "
+                "WHERE t.typname = 'user_role'"
+            )
+        )
+        return {row[0] for row in result}
+
+    labels = _current_labels()
+
+    # Rename legacy uppercase enum variants (USER -> user, etc.) when lowercase is missing.
+    for label in list(labels):
+        lowered = label.lower()
+        if label != lowered and lowered in target_labels and lowered not in labels:
+            sync_conn.execute(
+                text("ALTER TYPE user_role RENAME VALUE :old TO :new"),
+                {"old": label, "new": lowered},
+            )
+
+    labels = _current_labels()
+
+    # Coerce stored values that still reference uppercase enum labels to the lowercase variant.
+    for label in labels:
+        lowered = label.lower()
+        if label != lowered and lowered in target_labels:
+            sync_conn.execute(
+                text(
+                    "UPDATE users "
+                    "SET role = CAST(:lowered AS user_role) "
+                    "WHERE role = :original"
+                ),
+                {"lowered": lowered, "original": label},
+            )
+
 
 async def ensure_auth_schema() -> None:
     """Ensure backward compatible auth schema (e.g. username column)."""
