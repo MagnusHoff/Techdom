@@ -3,26 +3,28 @@ services:
     name: techdom-api
     env: docker
     plan: starter
+    region: frankfurt
     dockerfilePath: apps/api/Dockerfile
     numInstances: 1
-    region: frankfurt
     envVars:
       - key: REDIS_URL
         sync: false
       - key: TECHDOM_CRON_TOKEN
         sync: false
   - type: worker
-    name: techdom-worker
+    name: techdom-worker-ny
     env: docker
     plan: starter
+    region: frankfurt
     dockerfilePath: services/worker/Dockerfile
     envVars:
       - key: REDIS_URL
         sync: false
   - type: web
-    name: techdom-cron
+    name: techdom-cron-ny
     env: docker
     plan: starter
+    region: frankfurt
     dockerfilePath: services/cron/Dockerfile
     numInstances: 1
     envVars:
@@ -34,3 +36,13 @@ services:
         value: "8000"
       - key: UVICORN_LOG_LEVEL
         value: info
+  - type: web
+    name: techdom-frontend
+    env: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: apps/frontend/Dockerfile
+    numInstances: 1
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
