@@ -213,7 +213,7 @@ def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
     """Normalise legacy uppercase enum labels and stored role values."""
 
     try:
-        user_role_enum = next(
+        next(
             enum
             for enum in inspector.get_enums()
             if enum.get("name") == "user_role"
@@ -240,9 +240,12 @@ def _ensure_lowercase_user_role_enum(sync_conn, inspector) -> None:
     for label in list(labels):
         lowered = label.lower()
         if label != lowered and lowered in target_labels and lowered not in labels:
+            safe_old = label.replace("'", "''")
+            safe_new = lowered.replace("'", "''")
             sync_conn.execute(
-                text("ALTER TYPE user_role RENAME VALUE :old TO :new"),
-                {"old": label, "new": lowered},
+                text(
+                    f"ALTER TYPE user_role RENAME VALUE '{safe_old}' TO '{safe_new}'"
+                )
             )
 
     labels = _current_labels()
