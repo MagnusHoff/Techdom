@@ -15,7 +15,7 @@ import {
   updateUsername,
 } from "@/lib/api";
 import { userDisplayName, userInitials } from "@/lib/user";
-import { AlertTriangle, Check, ChevronDown, Lock, LogOut, User } from "lucide-react";
+import { Check, ChevronDown, Lock, LogOut, User } from "lucide-react";
 import type { AuthUser } from "@/lib/types";
 
 const USER_UPDATED_EVENT = "techdom:user-updated";
@@ -108,6 +108,23 @@ const isSectionId = (value: string | null): value is SectionId =>
   typeof value === "string" && SECTIONS.some((section) => section.id === value);
 
 const isPlusRole = (role: AuthUser["role"]): boolean => role === "plus" || role === "admin";
+
+const formatRenewalDate = (value: string | null | undefined): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat("nb-NO", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
+};
 
 const SECTION_META: Record<SectionId, { title: string; subtitle: string }> = {
   profile: {
@@ -588,7 +605,6 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
   const [subscriptionError, setSubscriptionError] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
-  const [downgradeTooltip, setDowngradeTooltip] = useState(false);
   const [stickyVisible, setStickyVisible] = useState(false);
 
   const isLoggedIn = Boolean(user);
@@ -617,12 +633,6 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
     handleScroll();
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [isPlusUser]);
-
-  useEffect(() => {
-    if (!isPlusUser) {
-      setDowngradeTooltip(false);
-    }
   }, [isPlusUser]);
 
   const planOrder: PlanId[] = ["free", "plus"];
@@ -703,7 +713,7 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
       const message =
         err instanceof Error
           ? err.message
-          : "Kunne ikke åpne Stripe-portalen akkurat nå.";
+          : "Kunne ikke åpne Stripe-portalen. Prøv igjen senere.";
       setSubscriptionError(message);
     } finally {
       setPortalLoading(false);
@@ -715,10 +725,7 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
       onRequestSignup();
       return;
     }
-    if (isPlusUser) {
-      setDowngradeTooltip(true);
-    }
-  }, [isLoggedIn, isPlusUser, onRequestSignup]);
+  }, [isLoggedIn, onRequestSignup]);
 
   const stickyCtaLabel = isLoggedIn ? "Oppgrader til Pluss" : "Lag gratis konto";
 
@@ -756,6 +763,10 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
           const config = PLAN_CARDS[planId];
           const isCurrentPlan =
             (planId === "plus" && isPlusUser) || (planId === "free" && isFreeUser);
+          const isCurrentPlusPlan = planId === "plus" && isPlusUser;
+          const nextRenewal = isCurrentPlusPlan
+            ? formatRenewalDate(user?.subscription_current_period_end)
+            : null;
           const cardClassName = [
             "subscription-plan",
             config.isFeatured ? "is-featured" : "",
@@ -778,51 +789,12 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
               if (isFreeUser) {
                 return <span className="subscription-plan-current">Nåværende plan</span>;
               }
-              return (
-                <div className="subscription-plan-downgrade">
-                  <button
-                    type="button"
-                    className="subscription-plan-cta subscription-plan-cta--secondary"
-                    onClick={handleFreeCta}
-                    onMouseEnter={() => setDowngradeTooltip(true)}
-                    onMouseLeave={() => setDowngradeTooltip(false)}
-                    onFocus={() => setDowngradeTooltip(true)}
-                    onBlur={() => setDowngradeTooltip(false)}
-                    aria-describedby="subscription-downgrade-tooltip"
-                  >
-                    Bytt til Gratis
-                  </button>
-                  <div
-                    id="subscription-downgrade-tooltip"
-                    role="tooltip"
-                    className={
-                      downgradeTooltip
-                        ? "subscription-tooltip is-visible"
-                        : "subscription-tooltip"
-                    }
-                  >
-                    <AlertTriangle size={16} aria-hidden="true" />
-                    <span>Du mister Pluss-funksjoner og historikk.</span>
-                  </div>
-                </div>
-              );
+              return null;
             }
 
             if (planId === "plus") {
               if (isPlusUser) {
-                return (
-                  <>
-                    <span className="subscription-plan-current">Nåværende plan</span>
-                    <button
-                      type="button"
-                      className="subscription-plan-cta subscription-plan-cta--secondary"
-                      onClick={handlePortalCta}
-                      disabled={portalLoading}
-                    >
-                      {portalLoading ? "Åpner…" : "Administrer i Stripe"}
-                    </button>
-                  </>
-                );
+                return null;
               }
               return (
                 <button
@@ -839,10 +811,28 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
             return null;
           })();
 
+          const manageAction = planId === "plus" && isPlusUser ? (
+            <div className="subscription-plan-manage">
+              <button
+                type="button"
+                className="subscription-plan-cta subscription-plan-cta--secondary"
+                onClick={handlePortalCta}
+                disabled={portalLoading}
+              >
+                {portalLoading ? "Åpner…" : "Administrer i Stripe"}
+              </button>
+            </div>
+          ) : null;
+
           return (
             <article key={planId} className={cardClassName} aria-label={config.name}>
-              {config.isFeatured ? (
+              {config.isFeatured && !isCurrentPlusPlan ? (
                 <div className="subscription-plan-badge">Mest populær</div>
+              ) : null}
+              {isCurrentPlusPlan ? (
+                <div className="subscription-plan-current-badge" aria-live="polite">
+                  Nåværende plan <span aria-hidden="true">💎</span>
+                </div>
               ) : null}
               <header className="subscription-plan-header">
                 <h3>{config.name}</h3>
@@ -851,6 +841,9 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
                   <span>{config.pricing[billingInterval]}</span>
                   <span className="subscription-plan-period">{priceSuffix}</span>
                 </div>
+                {nextRenewal ? (
+                  <p className="subscription-plan-renewal">Neste fornyelse: {nextRenewal}</p>
+                ) : null}
               </header>
               <ul className="subscription-plan-features">
                 {config.bullets.map((bullet) => (
@@ -861,10 +854,27 @@ function SubscriptionSection({ user, onRequestSignup }: SubscriptionSectionProps
                 ))}
               </ul>
               <div className="subscription-plan-action">{planAction}</div>
+              {manageAction}
             </article>
           );
         })}
       </section>
+
+      {isPlusUser ? (
+        <p className="subscription-portal-hint">
+          Oppsigelse håndteres i
+          {' '}
+          <button
+            type="button"
+            className="subscription-portal-link"
+            onClick={handlePortalCta}
+            disabled={portalLoading}
+          >
+            {portalLoading ? "Åpner…" : "Stripe-portalen"}
+          </button>
+          .
+        </p>
+      ) : null}
 
       <section className="subscription-compare" aria-label="Funksjonstabell">
         <div className="subscription-compare-header">
