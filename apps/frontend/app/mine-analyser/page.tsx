@@ -13,7 +13,6 @@ import {
   ArrowUpDown,
   Eye,
   FileDown,
-  Filter,
   Search,
   Share2,
   Trash2,
@@ -35,27 +34,18 @@ const NOK_FORMATTER = new Intl.NumberFormat("nb-NO", {
 const ITEMS_PER_PAGE = 8;
 const SKELETON_ROWS = 6;
 
-type SortOption = "date_desc" | "score_desc" | "risk_asc";
-type RiskFilterValue = "alle" | "low" | "medium" | "high";
+type SortOption = "date_desc" | "date_asc" | "score_desc" | "score_asc";
 
 interface ScoreTuple {
   economy: number | null;
   condition: number | null;
 }
 
-type RiskVariant = "low" | "medium" | "high" | "unknown";
-
-const RISK_FILTER_LABELS: Record<RiskFilterValue, string> = {
-  alle: "Alle nivåer",
-  low: "Lav risiko",
-  medium: "Middels risiko",
-  high: "Høy risiko",
-};
-
 const SORT_LABELS: Record<SortOption, string> = {
   date_desc: "Nyest først",
+  date_asc: "Eldst først",
   score_desc: "Høyest score",
-  risk_asc: "Lavest risiko",
+  score_asc: "Lavest score",
 };
 
 function formatDate(value: string | null): string {
@@ -93,55 +83,25 @@ function getScoreAccent(value: number | null): string {
   return `hsl(${hue}, 82%, 58%)`;
 }
 
-function riskRank(label: string | null): number {
-  if (!label) {
-    return 999;
-  }
-  const lower = label.toLowerCase();
-  if (lower.includes("lav")) {
-    return 1;
-  }
-  if (lower.includes("moderat") || lower.includes("medium") || lower.includes("middels")) {
-    return 2;
-  }
-  if (lower.includes("h\u00f8y") || lower.includes("hoy") || lower.includes("stor")) {
-    return 3;
-  }
-  return 500;
-}
-
-function getRiskVariant(label: string | null): RiskVariant {
-  if (!label) {
-    return "unknown";
-  }
-  const lower = label.toLowerCase();
-  if (lower.includes("lav")) {
-    return "low";
-  }
-  if (lower.includes("moderat") || lower.includes("medium") || lower.includes("middels")) {
-    return "medium";
-  }
-  if (lower.includes("h\u00f8y") || lower.includes("hoy") || lower.includes("stor")) {
-    return "high";
-  }
-  return "unknown";
-}
-
 function buildAnalysisLink(analysis: StoredAnalysis): string | null {
+  const params = new URLSearchParams();
+  params.set("saved", analysis.id);
+
   if (analysis.sourceUrl) {
     try {
-      const encoded = encodeURIComponent(analysis.sourceUrl);
-      return `/analysis?listing=${encoded}`;
+      params.set("listing", analysis.sourceUrl);
     } catch {
       /* ignore invalid URL */
     }
-  }
-  if (analysis.finnkode) {
+  } else if (analysis.finnkode) {
     const finnUrl = `https://www.finn.no/realestate/homes/ad.html?finnkode=${analysis.finnkode}`;
-    const encoded = encodeURIComponent(finnUrl);
-    return `/analysis?listing=${encoded}`;
+    params.set("listing", finnUrl);
+  } else if (analysis.analysisKey) {
+    params.set("key", analysis.analysisKey);
   }
-  return null;
+
+  const query = params.toString();
+  return query ? `/analysis?${query}` : "/analysis";
 }
 
 function extractScores(summary: string | null): ScoreTuple {
@@ -203,13 +163,14 @@ export default function MyAnalysesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [riskFilter, setRiskFilter] = useState<RiskFilterValue>("alle");
   const [sortOption, setSortOption] = useState<SortOption>("date_desc");
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const fetchAnalyses = useCallback(async () => {
     setLoading(true);
@@ -238,26 +199,20 @@ export default function MyAnalysesPage() {
     }
   }, [analyses, previewId]);
 
+  useEffect(() => {
+    setDeleteError(null);
+  }, [pendingDeleteId]);
+
+  useEffect(() => {
+    if (pendingDeleteId && !analyses.some((analysis) => analysis.id === pendingDeleteId)) {
+      setPendingDeleteId(null);
+    }
+  }, [analyses, pendingDeleteId]);
+
   const normalisedSearch = search.trim().toLowerCase();
 
   const filteredAnalyses = useMemo(() => {
     const filtered = analyses.filter((item) => {
-      if (riskFilter !== "alle") {
-        const rank = riskRank(item.riskLevel);
-        if (riskFilter === "low" && rank !== 1) {
-          return false;
-        }
-        if (riskFilter === "medium" && rank !== 2) {
-          return false;
-        }
-        if (riskFilter === "high" && rank !== 3) {
-          return false;
-        }
-        if (rank === 500 || rank === 999) {
-          return false;
-        }
-      }
-
       if (!normalisedSearch) {
         return true;
       }
@@ -269,6 +224,14 @@ export default function MyAnalysesPage() {
     });
 
     const sorted = filtered.slice().sort((a, b) => {
+      const parseTime = (value: string | null | undefined) => {
+        if (!value) {
+          return 0;
+        }
+        const parsed = Date.parse(value);
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+
       switch (sortOption) {
         case "score_desc": {
           const aScore = typeof a.totalScore === "number" ? a.totalScore : -1;
@@ -278,37 +241,55 @@ export default function MyAnalysesPage() {
           }
           break;
         }
-        case "risk_asc": {
-          const riskDiff = riskRank(a.riskLevel) - riskRank(b.riskLevel);
-          if (riskDiff !== 0) {
-            return riskDiff;
+        case "score_asc": {
+          const aScore = typeof a.totalScore === "number" ? a.totalScore : Number.POSITIVE_INFINITY;
+          const bScore = typeof b.totalScore === "number" ? b.totalScore : Number.POSITIVE_INFINITY;
+          if (aScore !== bScore) {
+            return aScore - bScore;
+          }
+          break;
+        }
+        case "date_asc": {
+          const aTime = parseTime(a.savedAt);
+          const bTime = parseTime(b.savedAt);
+          if (aTime !== bTime) {
+            return aTime - bTime;
           }
           break;
         }
         case "date_desc":
         default: {
-          const aTime = a.savedAt ? Date.parse(a.savedAt) : 0;
-          const bTime = b.savedAt ? Date.parse(b.savedAt) : 0;
+          const aTime = parseTime(a.savedAt);
+          const bTime = parseTime(b.savedAt);
           if (bTime !== aTime) {
             return bTime - aTime;
           }
           break;
         }
       }
-      const fallbackScore = (typeof b.totalScore === "number" ? b.totalScore : 0) -
+
+      const scoreDiff = (typeof b.totalScore === "number" ? b.totalScore : 0) -
         (typeof a.totalScore === "number" ? a.totalScore : 0);
-      if (fallbackScore !== 0) {
-        return fallbackScore;
+      if (scoreDiff !== 0) {
+        return scoreDiff;
       }
-      return (b.savedAt ? Date.parse(b.savedAt) : 0) - (a.savedAt ? Date.parse(a.savedAt) : 0);
+
+      const dateDiff = parseTime(b.savedAt) - parseTime(a.savedAt);
+      if (dateDiff !== 0) {
+        return dateDiff;
+      }
+
+      const aLabel = (a.address ?? a.title ?? "").toLowerCase();
+      const bLabel = (b.address ?? b.title ?? "").toLowerCase();
+      return aLabel.localeCompare(bLabel);
     });
 
     return sorted;
-  }, [analyses, normalisedSearch, riskFilter, sortOption]);
+  }, [analyses, normalisedSearch, sortOption]);
 
   useEffect(() => {
     setCurrentPage(0);
-  }, [search, riskFilter, analyses.length]);
+  }, [search, analyses.length]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAnalyses.length / ITEMS_PER_PAGE));
   useEffect(() => {
@@ -332,6 +313,53 @@ export default function MyAnalysesPage() {
     [analyses, previewId],
   );
 
+  const renderScoreMeter = useCallback(
+    (label: string, value: number | null) => {
+      if (value === null || Number.isNaN(value)) {
+        return (
+          <div className="analysis-score-meter is-empty" aria-label={`${label} ikke tilgjengelig`}>
+            <div className="analysis-score-meter-header">
+              <span className="analysis-score-meter-label">{label}</span>
+              <span className="analysis-score-meter-value">
+                –<span className="analysis-score-meter-max">/100</span>
+              </span>
+            </div>
+            <div className="analysis-score-meter-bar" aria-hidden="true">
+              <span style={{ width: "0%" }} />
+            </div>
+          </div>
+        );
+      }
+
+      const score = Math.max(0, Math.min(100, Math.round(value)));
+      const accent = getScoreAccent(score);
+      const fillStyle = { width: `${score}%`, background: accent };
+
+      return (
+        <div className="analysis-score-meter" style={{ borderColor: accent }}>
+          <div className="analysis-score-meter-header">
+            <span className="analysis-score-meter-label">{label}</span>
+            <span className="analysis-score-meter-value">
+              {score}
+              <span className="analysis-score-meter-max">/100</span>
+            </span>
+          </div>
+          <div
+            className="analysis-score-meter-bar"
+            role="progressbar"
+            aria-label={`${label} ${score} av 100`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={score}
+          >
+            <span style={fillStyle} />
+          </div>
+        </div>
+      );
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!previewAnalysis) {
       return;
@@ -341,12 +369,9 @@ export default function MyAnalysesPage() {
         setPreviewId(null);
       }
     };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     document.addEventListener("keydown", handleKey);
     return () => {
       document.removeEventListener("keydown", handleKey);
-      document.body.style.overflow = previousOverflow;
     };
   }, [previewAnalysis]);
 
@@ -424,25 +449,41 @@ export default function MyAnalysesPage() {
     void fetchAnalyses();
   };
 
-  const handleSingleDelete = async (analysisId: string) => {
-    const confirmed = window.confirm("Fjern denne analysen fra listen? Du kan hente den igjen ved å laste siden.");
-    if (!confirmed) {
-      return;
-    }
+  const handleRequestDelete = useCallback((analysisId: string) => {
+    setPendingDeleteId(analysisId);
+  }, []);
+
+  const handleCancelDelete = useCallback(() => {
+    setPendingDeleteId(null);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async (analysisId: string) => {
     setDeletingIds((prev) => {
       const next = new Set(prev);
       next.add(analysisId);
       return next;
     });
+    setDeleteError(null);
     try {
       await deleteSavedAnalysis(analysisId);
       setAnalyses((prev) => prev.filter((item) => item.id !== analysisId));
       setSelectedIds((prevSelected) => prevSelected.filter((id) => id !== analysisId));
       setPreviewId((prev) => (prev === analysisId ? null : prev));
       void fetchAnalyses();
+      setPendingDeleteId((prev) => (prev === analysisId ? null : prev));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Kunne ikke slette analysen.";
-      window.alert(message);
+      const lower = typeof message === "string" ? message.toLowerCase() : "";
+      if (
+        lower.includes("401") ||
+        lower.includes("unauth") ||
+        lower.includes("forbidden") ||
+        lower.includes("missing authentication token")
+      ) {
+        setDeleteError("Logg inn for å fjerne analyser.");
+      } else {
+        setDeleteError(message || "Kunne ikke slette analysen.");
+      }
     } finally {
       setDeletingIds((prev) => {
         const next = new Set(prev);
@@ -450,7 +491,7 @@ export default function MyAnalysesPage() {
         return next;
       });
     }
-  };
+  }, [deleteSavedAnalysis, fetchAnalyses]);
 
   const handleDuplicate = (analysis: StoredAnalysis) => {
     const now = new Date();
@@ -532,10 +573,12 @@ export default function MyAnalysesPage() {
   };
 
   const handleOpenPreview = (analysisId: string) => {
+    setPendingDeleteId(null);
     setPreviewId(analysisId);
   };
 
   const handleClosePreview = () => {
+    setPendingDeleteId(null);
     setPreviewId(null);
   };
 
@@ -579,17 +622,6 @@ export default function MyAnalysesPage() {
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                   />
-                </label>
-                <label className="analysis-field analysis-field--select">
-                  <Filter aria-hidden="true" />
-                  <span className="sr-only">Filtrer på risiko</span>
-                  <select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as RiskFilterValue)}>
-                    {Object.entries(RISK_FILTER_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
                 </label>
                 <label className="analysis-field analysis-field--select">
                   <ArrowUpDown aria-hidden="true" />
@@ -667,7 +699,6 @@ export default function MyAnalysesPage() {
                         <th scope="col">Dato analysert</th>
                         <th scope="col">Total score</th>
                         <th scope="col">Økono / TG</th>
-                        <th scope="col">Risiko</th>
                         <th scope="col">Handlinger</th>
                       </tr>
                     </thead>
@@ -678,11 +709,15 @@ export default function MyAnalysesPage() {
                         const totalScore = normaliseScore(analysis.totalScore);
                         const scoreAccent = getScoreAccent(analysis.totalScore);
                         const { economy, condition } = extractScores(analysis.summary);
-                        const riskVariant = getRiskVariant(analysis.riskLevel);
                         const targetLink = buildAnalysisLink(analysis);
                         const deleting = deletingIds.has(analysis.id);
+                        const isConfirmingDelete = pendingDeleteId === analysis.id;
                         return (
-                          <tr key={analysis.id} onClick={() => handleOpenPreview(analysis.id)}>
+                          <tr
+                            key={analysis.id}
+                            onClick={() => handleOpenPreview(analysis.id)}
+                            className={isConfirmingDelete ? "is-confirming" : undefined}
+                          >
                             <td onClick={(event) => event.stopPropagation()}>
                               <input
                                 type="checkbox"
@@ -732,69 +767,74 @@ export default function MyAnalysesPage() {
                               </div>
                             </td>
                             <td>
-                              <div className="analysis-chip-list">
-                                <span
-                                  className={`analysis-chip${economy === null ? " analysis-chip--muted" : ""}`}
-                                  style={
-                                    economy === null
-                                      ? undefined
-                                      : { borderColor: getScoreAccent(economy), color: getScoreAccent(economy) }
-                                  }
-                                >
-                                  <strong>Økono</strong>
-                                  <span>{economy === null ? "–" : `${economy}`}</span>
-                                </span>
-                                <span
-                                  className={`analysis-chip${condition === null ? " analysis-chip--muted" : ""}`}
-                                  style={
-                                    condition === null
-                                      ? undefined
-                                      : { borderColor: getScoreAccent(condition), color: getScoreAccent(condition) }
-                                  }
-                                >
-                                  <strong>TG</strong>
-                                  <span>{condition === null ? "–" : `${condition}`}</span>
-                                </span>
+                              <div className="analysis-score-meter-stack">
+                                {renderScoreMeter("Økono", economy)}
+                                {renderScoreMeter("TG", condition)}
                               </div>
                             </td>
-                            <td>
-                              <span className={`analysis-risk analysis-risk--${riskVariant}`}>
-                                {analysis.riskLevel ?? "Ukjent"}
-                              </span>
-                            </td>
                             <td onClick={(event) => event.stopPropagation()}>
-                              <div className="analysis-actions">
-                                {targetLink ? (
-                                  <Link
-                                    href={targetLink}
-                                    className="analysis-action-button"
-                                    aria-label="Åpne full analyse"
-                                  >
-                                    <Eye size={16} aria-hidden="true" />
-                                  </Link>
+                              <div className={`analysis-actions${isConfirmingDelete ? " is-confirming" : ""}`}>
+                                {isConfirmingDelete ? (
+                                  <div className="analysis-delete-confirm">
+                                    <p className="analysis-delete-confirm__text">Fjerne analysen?</p>
+                                    {deleteError ? (
+                                      <p className="analysis-delete-confirm__error">{deleteError}</p>
+                                    ) : null}
+                                    <div className="analysis-delete-confirm__actions">
+                                      <button
+                                        type="button"
+                                        className="analysis-delete-confirm__button analysis-delete-confirm__button--danger"
+                                        onClick={() => handleConfirmDelete(analysis.id)}
+                                        disabled={deleting || bulkDeleting}
+                                        aria-busy={deleting ? "true" : undefined}
+                                      >
+                                        Bekreft
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="analysis-delete-confirm__button"
+                                        onClick={handleCancelDelete}
+                                        disabled={deleting}
+                                      >
+                                        Avbryt
+                                      </button>
+                                    </div>
+                                  </div>
                                 ) : (
-                                  <button className="analysis-action-button" type="button" disabled>
-                                    <Eye size={16} aria-hidden="true" />
-                                  </button>
+                                  <>
+                                    {targetLink ? (
+                                      <Link
+                                        href={targetLink}
+                                        className="analysis-action-button"
+                                        aria-label="Åpne full analyse"
+                                      >
+                                        <Eye size={16} aria-hidden="true" />
+                                      </Link>
+                                    ) : (
+                                      <button className="analysis-action-button" type="button" disabled>
+                                        <Eye size={16} aria-hidden="true" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="analysis-action-button"
+                                      onClick={() => handleShare(analysis)}
+                                      aria-label="Del analyse"
+                                    >
+                                      <Share2 size={16} aria-hidden="true" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="analysis-action-button analysis-action-button--danger"
+                                      onClick={() => handleRequestDelete(analysis.id)}
+                                      aria-label="Slett analyse"
+                                      disabled={deleting || bulkDeleting}
+                                      aria-busy={deleting ? "true" : undefined}
+                                    >
+                                      <Trash2 size={16} aria-hidden="true" />
+                                    </button>
+                                  </>
                                 )}
-                                <button
-                                  type="button"
-                                  className="analysis-action-button"
-                                  onClick={() => handleShare(analysis)}
-                                  aria-label="Del analyse"
-                                >
-                                  <Share2 size={16} aria-hidden="true" />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="analysis-action-button analysis-action-button--danger"
-                                  onClick={() => handleSingleDelete(analysis.id)}
-                                  aria-label="Slett analyse"
-                                  disabled={deleting || bulkDeleting}
-                                  aria-busy={deleting ? "true" : undefined}
-                                >
-                                  <Trash2 size={16} aria-hidden="true" />
-                                </button>
                               </div>
                             </td>
                           </tr>
@@ -811,13 +851,13 @@ export default function MyAnalysesPage() {
                     const totalScore = normaliseScore(analysis.totalScore);
                     const scoreAccent = getScoreAccent(analysis.totalScore);
                     const { economy, condition } = extractScores(analysis.summary);
-                    const riskVariant = getRiskVariant(analysis.riskLevel);
                     const targetLink = buildAnalysisLink(analysis);
                     const deleting = deletingIds.has(analysis.id);
+                    const isConfirmingDelete = pendingDeleteId === analysis.id;
                     return (
                       <li key={analysis.id}>
                         <div
-                          className="analysis-card-item"
+                          className={`analysis-card-item${isConfirmingDelete ? " is-confirming" : ""}`}
                           role="button"
                           tabIndex={0}
                           onClick={() => handleOpenPreview(analysis.id)}
@@ -836,9 +876,6 @@ export default function MyAnalysesPage() {
                                 aria-label={`Velg analyse for ${analysis.address}`}
                               />
                             </label>
-                            <span className={`analysis-risk analysis-risk--${riskVariant}`}>
-                              {analysis.riskLevel ?? "Ukjent"}
-                            </span>
                           </div>
                           <div className="analysis-card-body">
                             <div className="analysis-card-thumb">
@@ -867,67 +904,83 @@ export default function MyAnalysesPage() {
                                 </div>
                               </div>
                               <div className="analysis-card-chips">
-                                <span
-                                  className={`analysis-chip${economy === null ? " analysis-chip--muted" : ""}`}
-                                  style={
-                                    economy === null
-                                      ? undefined
-                                      : { borderColor: getScoreAccent(economy), color: getScoreAccent(economy) }
-                                  }
-                                >
-                                  <strong>Økono</strong>
-                                  <span>{economy === null ? "–" : `${economy}`}</span>
-                                </span>
-                                <span
-                                  className={`analysis-chip${condition === null ? " analysis-chip--muted" : ""}`}
-                                  style={
-                                    condition === null
-                                      ? undefined
-                                      : { borderColor: getScoreAccent(condition), color: getScoreAccent(condition) }
-                                  }
-                                >
-                                  <strong>TG</strong>
-                                  <span>{condition === null ? "–" : `${condition}`}</span>
-                                </span>
+                                <div className="analysis-score-meter-stack">
+                                  {renderScoreMeter("Økono", economy)}
+                                  {renderScoreMeter("TG", condition)}
+                                </div>
                               </div>
                             </div>
                           </div>
                           <div className="analysis-card-actions" onClick={(event) => event.stopPropagation()}>
-                            {targetLink ? (
-                              <Link href={targetLink} className="analysis-action-button" aria-label="Åpne full analyse">
-                                <Eye size={16} aria-hidden="true" />
-                              </Link>
+                            {isConfirmingDelete ? (
+                              <div className="analysis-delete-confirm">
+                                <p className="analysis-delete-confirm__text">Fjerne analysen?</p>
+                                {deleteError ? (
+                                  <p className="analysis-delete-confirm__error">{deleteError}</p>
+                                ) : null}
+                                <div className="analysis-delete-confirm__actions">
+                                  <button
+                                    type="button"
+                                    className="analysis-delete-confirm__button analysis-delete-confirm__button--danger"
+                                    onClick={() => handleConfirmDelete(analysis.id)}
+                                    disabled={deleting || bulkDeleting}
+                                    aria-busy={deleting ? "true" : undefined}
+                                  >
+                                    Bekreft
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="analysis-delete-confirm__button"
+                                    onClick={handleCancelDelete}
+                                    disabled={deleting}
+                                  >
+                                    Avbryt
+                                  </button>
+                                </div>
+                              </div>
                             ) : (
-                              <button className="analysis-action-button" type="button" disabled>
-                                <Eye size={16} aria-hidden="true" />
-                              </button>
+                              <>
+                                {targetLink ? (
+                                  <Link
+                                    href={targetLink}
+                                    className="analysis-action-button"
+                                    aria-label="Åpne full analyse"
+                                  >
+                                    <Eye size={16} aria-hidden="true" />
+                                  </Link>
+                                ) : (
+                                  <button className="analysis-action-button" type="button" disabled>
+                                    <Eye size={16} aria-hidden="true" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="analysis-action-button"
+                                  onClick={() => handleShare(analysis)}
+                                  aria-label="Del analyse"
+                                >
+                                  <Share2 size={16} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="analysis-action-button"
+                                  onClick={() => handleDuplicate(analysis)}
+                                  aria-label="Dupliser analyse"
+                                >
+                                  <FileDown size={16} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="analysis-action-button analysis-action-button--danger"
+                                  onClick={() => handleRequestDelete(analysis.id)}
+                                  aria-label="Slett analyse"
+                                  disabled={deleting || bulkDeleting}
+                                  aria-busy={deleting ? "true" : undefined}
+                                >
+                                  <Trash2 size={16} aria-hidden="true" />
+                                </button>
+                              </>
                             )}
-                            <button
-                              type="button"
-                              className="analysis-action-button"
-                              onClick={() => handleShare(analysis)}
-                              aria-label="Del analyse"
-                            >
-                              <Share2 size={16} aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              className="analysis-action-button"
-                              onClick={() => handleDuplicate(analysis)}
-                              aria-label="Dupliser analyse"
-                            >
-                              <FileDown size={16} aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              className="analysis-action-button analysis-action-button--danger"
-                              onClick={() => handleSingleDelete(analysis.id)}
-                              aria-label="Slett analyse"
-                              disabled={deleting || bulkDeleting}
-                              aria-busy={deleting ? "true" : undefined}
-                            >
-                              <Trash2 size={16} aria-hidden="true" />
-                            </button>
                           </div>
                         </div>
                       </li>
@@ -963,8 +1016,7 @@ export default function MyAnalysesPage() {
       </PageContainer>
 
       {previewAnalysis ? (
-        <div className="analysis-preview-overlay" role="dialog" aria-modal="true" aria-label="Forhåndsvisning av analyse">
-          <div className="analysis-preview-backdrop" onClick={handleClosePreview} />
+        <div className="analysis-preview-overlay" role="dialog" aria-label="Forhåndsvisning av analyse">
           <aside className="analysis-preview-panel">
             <button type="button" className="analysis-preview-close" onClick={handleClosePreview} aria-label="Lukk forhåndsvisning">
               <X size={18} aria-hidden="true" />
@@ -983,9 +1035,6 @@ export default function MyAnalysesPage() {
                 )}
               </div>
               <div className="analysis-preview-meta">
-                <span className={`analysis-risk analysis-risk--${getRiskVariant(previewAnalysis.riskLevel)}`}>
-                  {previewAnalysis.riskLevel ?? "Ukjent risiko"}
-                </span>
                 <h2>{previewAnalysis.address ?? previewAnalysis.title}</h2>
                 <p>{formatDate(previewAnalysis.savedAt)}</p>
                 {formatPrice(previewAnalysis.price) ? <p>{formatPrice(previewAnalysis.price)}</p> : null}
@@ -1006,37 +1055,15 @@ export default function MyAnalysesPage() {
                   />
                 </div>
               </div>
-              <div className="analysis-chip-list">
-                {(() => {
-                  const { economy, condition } = extractScores(previewAnalysis.summary);
-                  return (
-                    <>
-                      <span
-                        className={`analysis-chip${economy === null ? " analysis-chip--muted" : ""}`}
-                        style={
-                          economy === null
-                            ? undefined
-                            : { borderColor: getScoreAccent(economy), color: getScoreAccent(economy) }
-                        }
-                      >
-                        <strong>Økono</strong>
-                        <span>{economy === null ? "–" : `${economy}`}</span>
-                      </span>
-                      <span
-                        className={`analysis-chip${condition === null ? " analysis-chip--muted" : ""}`}
-                        style={
-                          condition === null
-                            ? undefined
-                            : { borderColor: getScoreAccent(condition), color: getScoreAccent(condition) }
-                        }
-                      >
-                        <strong>TG</strong>
-                        <span>{condition === null ? "–" : `${condition}`}</span>
-                      </span>
-                    </>
-                  );
-                })()}
-              </div>
+              {(() => {
+                const { economy, condition } = extractScores(previewAnalysis.summary);
+                return (
+                  <div className="analysis-score-meter-stack">
+                    {renderScoreMeter("Økono", economy)}
+                    {renderScoreMeter("TG", condition)}
+                  </div>
+                );
+              })()}
             </div>
             <div className="analysis-preview-body">
               <div className="analysis-preview-section">
@@ -1075,17 +1102,45 @@ export default function MyAnalysesPage() {
                 );
               })()}
               <div className="analysis-preview-action-group">
-                <button type="button" onClick={() => handleDuplicate(previewAnalysis)}>
-                  Dupliser
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSingleDelete(previewAnalysis.id)}
-                  disabled={deletingIds.has(previewAnalysis.id) || bulkDeleting}
-                  aria-busy={deletingIds.has(previewAnalysis.id) ? "true" : undefined}
-                >
-                  Slett
-                </button>
+                {pendingDeleteId === previewAnalysis.id ? (
+                  <div className="analysis-delete-confirm">
+                    <p className="analysis-delete-confirm__text">Fjerne analysen?</p>
+                    {deleteError ? <p className="analysis-delete-confirm__error">{deleteError}</p> : null}
+                    <div className="analysis-delete-confirm__actions">
+                      <button
+                        type="button"
+                        className="analysis-delete-confirm__button analysis-delete-confirm__button--danger"
+                        onClick={() => handleConfirmDelete(previewAnalysis.id)}
+                        disabled={deletingIds.has(previewAnalysis.id) || bulkDeleting}
+                        aria-busy={deletingIds.has(previewAnalysis.id) ? "true" : undefined}
+                      >
+                        Bekreft
+                      </button>
+                      <button
+                        type="button"
+                        className="analysis-delete-confirm__button"
+                        onClick={handleCancelDelete}
+                        disabled={deletingIds.has(previewAnalysis.id)}
+                      >
+                        Avbryt
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => handleDuplicate(previewAnalysis)}>
+                      Dupliser
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRequestDelete(previewAnalysis.id)}
+                      disabled={deletingIds.has(previewAnalysis.id) || bulkDeleting}
+                      aria-busy={deletingIds.has(previewAnalysis.id) ? "true" : undefined}
+                    >
+                      Slett
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </aside>

@@ -334,6 +334,24 @@ def _normalize_user_roles(sync_conn) -> None:
     )
 
 
+def _ensure_saved_analyses_schema(sync_conn) -> None:
+    inspector = inspect(sync_conn)
+    if not inspector.has_table("saved_analyses"):
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("saved_analyses")}
+    if "analysis_snapshot" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE saved_analyses ADD COLUMN analysis_snapshot JSON")
+        )
+        columns.add("analysis_snapshot")
+    if "prospectus_snapshot" not in columns:
+        sync_conn.execute(
+            text("ALTER TABLE saved_analyses ADD COLUMN prospectus_snapshot JSON")
+        )
+        columns.add("prospectus_snapshot")
+
+
 async def ensure_auth_schema() -> None:
     """Ensure backward compatible auth schema (e.g. username column)."""
     if engine is None:
@@ -342,6 +360,16 @@ async def ensure_auth_schema() -> None:
         ) from _DB_IMPORT_ERROR
     async with engine.begin() as connection:
         await connection.run_sync(_ensure_users_schema)
+
+
+async def ensure_saved_analyses_schema() -> None:
+    """Ensure new saved analyses columns exist for snapshots."""
+    if engine is None:
+        raise RuntimeError(
+            "Kan ikke oppdatere analyses-skjema uten asynkron database-driver."
+        ) from _DB_IMPORT_ERROR
+    async with engine.begin() as connection:
+        await connection.run_sync(_ensure_saved_analyses_schema)
 
 
 @asynccontextmanager

@@ -29,6 +29,7 @@ import {
   analyzeProspectusText,
   deleteSavedAnalysis,
   fetchSavedAnalyses,
+  fetchSavedAnalysisDetail,
   fetchAnalysisTgDetails,
   getJobStatus,
   incrementUserAnalyses,
@@ -53,13 +54,13 @@ import type {
 const USER_UPDATED_EVENT = "techdom:user-updated";
 
 const DEFAULT_FORM: AnalysisPayload = {
-  price: "",
-  equity: "",
-  interest: "5.0",
-  term_years: "25",
-  rent: "",
-  hoa: "",
-  maint_pct: "6.0",
+  price: "0",
+  equity: "0",
+  interest: "0",
+  term_years: "0",
+  rent: "0",
+  hoa: "0",
+  maint_pct: "0",
   vacancy_pct: "0",
   other_costs: "0",
 };
@@ -173,10 +174,38 @@ const FLOORPLAN_TEXT_KEYS = [
 
 type FeedbackCategory = "idea" | "problem" | "other";
 
-const FEEDBACK_OPTIONS: Array<{ id: FeedbackCategory; shortcut: string; label: string; description: string }> = [
-  { id: "idea", shortcut: "A", label: "Idé", description: "Del forslag eller ønsker" },
-  { id: "problem", shortcut: "B", label: "Problem", description: "Rapporter feil eller hindringer" },
-  { id: "other", shortcut: "C", label: "Annet", description: "Andre tanker eller spørsmål" },
+const FEEDBACK_OPTIONS: Array<{
+  id: FeedbackCategory;
+  shortcut: string;
+  label: string;
+  description: string;
+  icon: string;
+  cta: string;
+}> = [
+  {
+    id: "idea",
+    shortcut: "A",
+    label: "Idé",
+    description: "Del forslag eller ønsker",
+    icon: "💡",
+    cta: "Send inn idé 💡",
+  },
+  {
+    id: "problem",
+    shortcut: "B",
+    label: "Problem",
+    description: "Rapporter feil eller hindringer",
+    icon: "⚙️",
+    cta: "Rapporter problem ⚙️",
+  },
+  {
+    id: "other",
+    shortcut: "C",
+    label: "Tanker",
+    description: "Del tanker eller spørsmål",
+    icon: "💭",
+    cta: "Del tanker 💭",
+  },
 ];
 
 const FLOORPLAN_DYNAMIC_REGEX =
@@ -1532,6 +1561,9 @@ function AnalysisPageContent() {
   const params = useSearchParams();
   const listing = params.get("listing") ?? "";
   const runToken = params.get("run") ?? "";
+  const savedAnalysisParam = params.get("saved");
+  const savedKeyParam = params.get("key");
+  const [forcedAnalysisKey, setForcedAnalysisKey] = useState<string | null>(() => savedKeyParam);
 
   const listingUrl = normaliseListingUrl(listing);
 
@@ -1572,6 +1604,14 @@ function AnalysisPageContent() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackSuccess, setFeedbackSuccess] = useState(false);
   const [feedbackErrorMessage, setFeedbackErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (savedKeyParam) {
+      setForcedAnalysisKey(savedKeyParam);
+    } else if (!savedAnalysisParam) {
+      setForcedAnalysisKey(null);
+    }
+  }, [savedKeyParam, savedAnalysisParam]);
   const [listingKeyFacts, setListingKeyFacts] = useState<KeyFactRaw[]>([]);
   const [listingKeyFactsSource, setListingKeyFactsSource] = useState<"job" | "finn" | null>(null);
   const [listingKeyFactsLoading, setListingKeyFactsLoading] = useState(false);
@@ -1617,6 +1657,9 @@ function AnalysisPageContent() {
   const listingDetails = useMemo(() => extractListingInfo(jobStatus), [jobStatus]);
   const listingFinnkode = useMemo(() => (listingUrl ? extractFinnkode(listingUrl) : null), [listingUrl]);
   const analysisKey = useMemo(() => {
+    if (forcedAnalysisKey) {
+      return forcedAnalysisKey;
+    }
     if (listingFinnkode) {
       return listingFinnkode;
     }
@@ -1624,7 +1667,7 @@ function AnalysisPageContent() {
       return listingUrl.slice(0, 255);
     }
     return null;
-  }, [listingFinnkode, listingUrl]);
+  }, [forcedAnalysisKey, listingFinnkode, listingUrl]);
   const tgAutoRefreshRef = useRef<string | null>(null);
   const tgReextractingRef = useRef(false);
   const triggerTgReextract = useCallback(
@@ -1661,6 +1704,107 @@ function AnalysisPageContent() {
   );
 
   useEffect(() => {
+    if (!savedAnalysisParam) {
+      return;
+    }
+
+    let cancelled = false;
+    setPreviewLoading(true);
+    setError(null);
+
+    fetchSavedAnalysisDetail(savedAnalysisParam)
+      .then((data) => {
+        if (cancelled) {
+          return;
+        }
+        setSavedAnalysisId(data.id);
+        const derivedKey =
+          data.analysisKey ||
+          data.finnkode ||
+          (data.sourceUrl ? data.sourceUrl.slice(0, 255) : null) ||
+          savedKeyParam ||
+          null;
+        if (derivedKey) {
+          setForcedAnalysisKey(derivedKey);
+        }
+        if (data.analysisSnapshot) {
+          setResult(data.analysisSnapshot);
+          setForm(buildFormFromParams(data.analysisSnapshot.input_params ?? null));
+        } else {
+          setResult(null);
+          setForm({ ...DEFAULT_FORM });
+        }
+        const snapshotProspectus = data.prospectusSnapshot ?? null;
+        setProspectus(snapshotProspectus);
+        setTgApiDetails(snapshotProspectus?.tg2_details ?? []);
+        setTgApiError(null);
+        setTgApiLoading(false);
+        setTgReextracting(false);
+        tgReextractingRef.current = false;
+        tgAutoRefreshRef.current = null;
+        jobListingRef.current = null;
+        jobAppliedRef.current = null;
+        setJobStatus(null);
+        setJobError(null);
+        setJobId(null);
+        setJobStarting(false);
+        setAutoManualJobId(null);
+        setAnalyzing(false);
+        setPreviewImages(data.image ? [data.image] : []);
+        setPreviewContainHints(new Set());
+        setPreviewImageIndex(0);
+        setPreviewTitle(data.title ?? data.address ?? null);
+        setPreviewAddress(data.address ?? data.title ?? null);
+        setPreviewError(null);
+        setPreviewLoading(false);
+        setManualProspectusFile(null);
+        setManualProspectusError(null);
+        setManualProspectusSuccess(false);
+        setManualProspectusShouldRefresh(false);
+        setManualProspectusLoading(false);
+        setProspectusReanalyzing(false);
+        setProspectusReanalyzeError(null);
+        setProspectusReanalyzeSuccess(false);
+        setListingKeyFacts([]);
+        setListingKeyFactsSource(null);
+        setListingKeyFactsError(null);
+        setListingKeyFactsLoading(false);
+        setSaveError(null);
+        setSaveMessage(null);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        setSavedAnalysisId(null);
+        setResult(null);
+        setProspectus(null);
+        setTgApiDetails([]);
+        setTgApiError(null);
+        setTgApiLoading(false);
+        setTgReextracting(false);
+        tgReextractingRef.current = false;
+        tgAutoRefreshRef.current = null;
+        setPreviewImages([]);
+        setPreviewContainHints(new Set());
+        setPreviewImageIndex(0);
+        setPreviewTitle(null);
+        setPreviewAddress(null);
+        setPreviewError(err instanceof Error ? err.message : "Kunne ikke laste lagret analyse.");
+        setPreviewLoading(false);
+        setError(err instanceof Error ? err.message : "Kunne ikke laste lagret analyse.");
+        setForcedAnalysisKey(savedKeyParam ?? null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [savedAnalysisParam, savedKeyParam]);
+
+  useEffect(() => {
+    if (savedAnalysisParam) {
+      return;
+    }
     if (!listingFinnkode) {
       setTgApiDetails([]);
       setTgApiLoading(false);
@@ -1709,7 +1853,7 @@ function AnalysisPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [listingFinnkode, triggerTgReextract]);
+  }, [listingFinnkode, triggerTgReextract, savedAnalysisParam]);
   const derivedListingKeyFacts = useMemo(() => extractKeyFactsRaw(listingDetails), [listingDetails]);
   useEffect(() => {
     if (!listingDetails) {
@@ -1940,9 +2084,15 @@ function AnalysisPageContent() {
       try {
         await deleteSavedAnalysis(savedAnalysisId);
         setSavedAnalysisId(null);
+        showSaveMessage("Analyse fjernet");
       } catch (error) {
         const message = error instanceof Error ? error.message : "Kunne ikke fjerne analysen.";
-        setSaveError(message || "Kunne ikke fjerne analysen.");
+        const lower = typeof message === "string" ? message.toLowerCase() : "";
+        if (lower.includes("401") || lower.includes("unauth") || lower.includes("forbidden") || lower.includes("missing authentication token")) {
+          setSaveError("Logg inn for å lagre analyser.");
+        } else {
+          setSaveError(message || "Kunne ikke fjerne analysen.");
+        }
       } finally {
         setSaveBusy(false);
       }
@@ -1976,6 +2126,8 @@ function AnalysisPageContent() {
       finnkode: listingFinnkode,
       summary,
       sourceUrl: listingUrl ?? null,
+      analysisSnapshot: result,
+      prospectusSnapshot: prospectus,
     } as const;
 
     try {
@@ -2003,6 +2155,7 @@ function AnalysisPageContent() {
     previewImages,
     previewTitle,
     result,
+    prospectus,
     saveAnalysis,
     saveBusy,
     savedAnalysisId,
@@ -2534,6 +2687,9 @@ function AnalysisPageContent() {
   };
 
   useEffect(() => {
+    if (savedAnalysisParam) {
+      return;
+    }
     if (skipJobInitRef.current) {
       skipJobInitRef.current = false;
       return;
@@ -2619,9 +2775,12 @@ function AnalysisPageContent() {
         jobListingRef.current = null;
       }
     };
-  }, [listing, runToken]);
+  }, [listing, runToken, savedAnalysisParam]);
 
   useEffect(() => {
+    if (savedAnalysisParam) {
+      return;
+    }
     if (!listing) {
       setPreviewImages([]);
       setPreviewContainHints(new Set());
@@ -2695,7 +2854,7 @@ function AnalysisPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [listing]);
+  }, [listing, savedAnalysisParam]);
 
   useEffect(() => {
     if (!jobId) {
@@ -2990,7 +3149,7 @@ function AnalysisPageContent() {
                 label="Kjøpesum"
                 tooltip={FORM_FIELD_TOOLTIPS["Kjøpesum"]}
                 value={form.price}
-                placeholder="4 500 000"
+                placeholder="0"
                 onChange={handleChange("price")}
                 disabled={fieldsDisabled}
               />
@@ -2998,7 +3157,7 @@ function AnalysisPageContent() {
                 label="Egenkapital"
                 tooltip={FORM_FIELD_TOOLTIPS["Egenkapital"]}
                 value={form.equity}
-                placeholder="675 000"
+                placeholder="0"
                 onChange={handleChange("equity")}
                 disabled={fieldsDisabled}
               />
@@ -3006,7 +3165,7 @@ function AnalysisPageContent() {
                 label="Rente % p.a."
                 tooltip={FORM_FIELD_TOOLTIPS["Rente % p.a."]}
                 value={form.interest}
-                placeholder="5.10"
+                placeholder="0"
                 onChange={handleChange("interest")}
                 disabled={fieldsDisabled}
               />
@@ -3014,7 +3173,7 @@ function AnalysisPageContent() {
                 label="Lånetid (år)"
                 tooltip={FORM_FIELD_TOOLTIPS["Lånetid (år)"]}
                 value={form.term_years}
-                placeholder="30"
+                placeholder="0"
                 onChange={handleChange("term_years")}
                 disabled={fieldsDisabled}
               />
@@ -3022,7 +3181,7 @@ function AnalysisPageContent() {
                 label="Leie (mnd)"
                 tooltip={FORM_FIELD_TOOLTIPS["Leie (mnd)"]}
                 value={form.rent}
-                placeholder="18 000"
+                placeholder="0"
                 onChange={handleChange("rent")}
                 disabled={fieldsDisabled}
               />
@@ -3030,7 +3189,7 @@ function AnalysisPageContent() {
                 label="Felleskost (mnd)"
                 tooltip={FORM_FIELD_TOOLTIPS["Felleskost (mnd)"]}
                 value={form.hoa}
-                placeholder="3 000"
+                placeholder="0"
                 onChange={handleChange("hoa")}
                 disabled={fieldsDisabled}
               />
@@ -3038,7 +3197,7 @@ function AnalysisPageContent() {
                 label="Vedlikehold % av leie"
                 tooltip={FORM_FIELD_TOOLTIPS["Vedlikehold % av leie"]}
                 value={form.maint_pct}
-                placeholder="6.0"
+                placeholder="0"
                 onChange={handleChange("maint_pct")}
                 disabled={fieldsDisabled}
               />
@@ -3046,7 +3205,7 @@ function AnalysisPageContent() {
                 label="Andre kost (mnd)"
                 tooltip={FORM_FIELD_TOOLTIPS["Andre kost (mnd)"]}
                 value={form.other_costs}
-                placeholder="800"
+                placeholder="0"
                 onChange={handleChange("other_costs")}
                 disabled={fieldsDisabled}
               />
@@ -3054,7 +3213,7 @@ function AnalysisPageContent() {
                 label="Ledighet %"
                 tooltip={FORM_FIELD_TOOLTIPS["Ledighet %"]}
                 value={form.vacancy_pct}
-                placeholder="0.0"
+                placeholder="0"
                 onChange={handleChange("vacancy_pct")}
                 disabled={fieldsDisabled}
               />
@@ -3086,55 +3245,60 @@ function AnalysisPageContent() {
           <div className="analysis-results-grid">
             <div className="analysis-score-block">
               <h2 className="analysis-column-title">Resultat – forsterket av OpenAI</h2>
-              <div className="score-card">
-                <div className="score-card-header">
-                  <div>
-                    <p className="overline">Total score</p>
-                    <div className="score-value">{scoreValue ?? "-"}</div>
+              <div className="score-card-layout">
+                <div className="score-card">
+                  <div className="score-card-header">
+                    <div>
+                      <p className="overline">Total score</p>
+                      <div className="score-value">{scoreValue ?? "-"}</div>
+                    </div>
+                    <span className={scoreColor}>{domLabel || "N/A"}</span>
                   </div>
-                  <span className={scoreColor}>{domLabel || "N/A"}</span>
+                  <div
+                    className={`score-progress${scorePercent === 100 ? " complete" : ""}`}
+                    role="progressbar"
+                    aria-label="Total score"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={scorePercent ?? undefined}
+                  >
+                    <span className="score-progress-fill" style={scoreFillStyle} />
+                  </div>
+                  <div className="score-card-footer">
+                    {statusSentence ? <p className="status-sentence">{statusSentence}</p> : null}
+                  </div>
                 </div>
-                <div
-                  className={`score-progress${scorePercent === 100 ? " complete" : ""}`}
-                  role="progressbar"
-                  aria-label="Total score"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={scorePercent ?? undefined}
-                >
-                  <span className="score-progress-fill" style={scoreFillStyle} />
-                </div>
-                <div className="score-breakdown">
-                  {scoreBreakdownEntries.map((entry) => {
-                    const percent = entry.value ?? 0;
-                    const valueText = entry.value === null ? "–" : `${percent}%`;
-                    const fillStyle = {
-                      width: `${percent}%`,
-                      "--score-fill-color": scoreFillColor(entry.value ?? null),
-                    } as CSSProperties;
-                    return (
-                      <div className="score-breakdown-item" key={entry.id}>
-                        <div className="score-breakdown-header">
-                          <span className="score-breakdown-label">{entry.label}</span>
-                          <span className="score-breakdown-value">{valueText}</span>
+                {scoreBreakdownEntries.length > 0 ? (
+                  <div className="score-mini-stack">
+                    {scoreBreakdownEntries.map((entry) => {
+                      const percent = entry.value ?? 0;
+                      const safePercent = Math.max(0, Math.min(100, percent));
+                      const valueText = entry.value === null ? "–" : `${safePercent}%`;
+                      const fillStyle = {
+                        width: entry.value === null ? "0%" : `${safePercent}%`,
+                        "--score-fill-color": scoreFillColor(entry.value ?? null),
+                      } as CSSProperties;
+                      return (
+                        <div className="score-mini-card" key={entry.id}>
+                          <div className="score-mini-header">
+                            <span className="score-mini-label">{entry.label}</span>
+                            <span className="score-mini-value">{valueText}</span>
+                          </div>
+                          <div
+                            className="score-mini-progress"
+                            role="progressbar"
+                            aria-label={entry.label}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={entry.value ?? undefined}
+                          >
+                            <span className="score-mini-progress-fill" style={fillStyle} />
+                          </div>
                         </div>
-                        <div
-                          className="score-breakdown-bar"
-                          role="progressbar"
-                          aria-label={entry.label}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={entry.value ?? undefined}
-                        >
-                          <span className="score-breakdown-fill" style={fillStyle} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="score-card-footer">
-                  {statusSentence ? <p className="status-sentence">{statusSentence}</p> : null}
-                </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -3776,7 +3940,7 @@ function FeedbackDialog({
   const messageId = useId();
   const emailId = useId();
   const optionGroupId = useId();
-  const overlayPointerDownRef = useRef(false);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -3787,12 +3951,30 @@ function FeedbackDialog({
         onClose();
       }
     };
-    const previousOverflow = document.body.style.overflow;
     document.addEventListener("keydown", handleKeydown);
-    document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeydown);
+    };
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const dialogElement = dialogRef.current;
+      if (!dialogElement) {
+        return;
+      }
+      const targetNode = event.target as Node | null;
+      if (!targetNode || dialogElement.contains(targetNode)) {
+        return;
+      }
+      onClose();
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
     };
   }, [open, onClose]);
 
@@ -3800,56 +3982,60 @@ function FeedbackDialog({
     return null;
   }
 
-  const handleOverlayPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    overlayPointerDownRef.current = event.target === event.currentTarget;
-  };
-
-  const handleOverlayClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget && overlayPointerDownRef.current) {
-      onClose();
-    }
-    overlayPointerDownRef.current = false;
-  };
+  const activeOption = FEEDBACK_OPTIONS.find((option) => option.id === category) ?? FEEDBACK_OPTIONS[0];
+  const ctaLabel = submitting ? "Sender..." : activeOption.cta;
 
   return (
-    <div
-      className="feedback-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      onPointerDown={handleOverlayPointerDown}
-      onClick={handleOverlayClick}
-    >
-      <div className="feedback-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="feedback-overlay" role="dialog" aria-modal="false" aria-labelledby={titleId}>
+      <div
+        className={`feedback-modal${success ? " is-success" : ""}`}
+        ref={dialogRef}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="feedback-modal-pattern" aria-hidden="true" />
         <button type="button" className="feedback-close" aria-label="Lukk tilbakemeldingsskjema" onClick={onClose}>
-          ×
+          <span aria-hidden="true">×</span>
         </button>
         {success ? (
-          <div className="feedback-success">
+          <div className="feedback-success" role="status" aria-live="polite">
+            <div className="feedback-success-check" aria-hidden="true">
+              <span className="feedback-success-circle">
+                <span className="feedback-success-icon">✅</span>
+              </span>
+            </div>
             <h2 className="feedback-title" id={titleId}>
-              Takk for tilbakemeldingen!
+              ✅ Takk for tilbakemeldingen!
             </h2>
-            <button type="button" className="analysis-button" onClick={onClose}>
-              Lukk
+            <p className="feedback-success-message">Takk for at du hjelper oss gjøre Techdom.ai enda bedre 🤝</p>
+            <button type="button" className="feedback-secondary-button" onClick={onClose}>
+              Lukk vindu
             </button>
+            <div className="feedback-confetti" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
           </div>
         ) : (
           <>
-            <div className="feedback-header">
+            <header className="feedback-header">
               <span className="feedback-badge" aria-hidden="true">
-                Vi lytter
+                Techdom.ai
               </span>
               <h2 className="feedback-title" id={titleId}>
-                Gi oss tilbakemelding
+                Vi hører deg 💬
               </h2>
-              <p className="feedback-description">Fortell oss hva som fungerer, og hva vi kan forbedre.</p>
-            </div>
+              <p className="feedback-description">Fortell oss hva du mener – din stemme former Techdom.ai.</p>
+              <span className="feedback-header-stripe" aria-hidden="true" />
+            </header>
             <form className="feedback-form" onSubmit={onSubmit}>
               <input type="hidden" name="category" value={category} />
               <div className="feedback-content-grid">
                 <section className="feedback-options" aria-labelledby={optionGroupId}>
                   <span className="feedback-group-title" id={optionGroupId}>
-                    Hva gjelder tilbakemeldingen?
+                    Hva ønsker du å dele?
                   </span>
                   <div className="feedback-option-list" role="radiogroup" aria-labelledby={optionGroupId}>
                     {FEEDBACK_OPTIONS.map((option) => {
@@ -3858,16 +4044,17 @@ function FeedbackDialog({
                         <button
                           key={option.id}
                           type="button"
-                          className={`feedback-option${selected ? " selected" : ""}`}
+                          role="radio"
+                          aria-checked={selected}
+                          className={`feedback-option-card${selected ? " is-selected" : ""}`}
                           onClick={() => onSelectCategory(option.id)}
-                          aria-pressed={selected}
                           disabled={submitting}
+                          data-shortcut={option.shortcut}
                         >
-                          <span className="feedback-option-key">{option.shortcut}</span>
-                          <span className="feedback-option-body">
-                            <span className="feedback-option-label">{option.label}</span>
-                            <span className="feedback-option-desc">{option.description}</span>
-                          </span>
+                          <span className="feedback-option-glow" aria-hidden="true" />
+                          <span className="feedback-option-icon" aria-hidden="true">{option.icon}</span>
+                          <span className="feedback-option-label">{option.label}</span>
+                          <span className="feedback-option-desc">{option.description}</span>
                         </button>
                       );
                     })}
@@ -3898,22 +4085,27 @@ function FeedbackDialog({
                     <label className="feedback-field-label" htmlFor={emailId}>
                       E-post (valgfritt)
                     </label>
-                    <input
-                      id={emailId}
-                      type="email"
-                      name="email"
-                      value={email}
-                      onChange={(event) => onEmailChange(event.target.value)}
-                      placeholder="navn@virksomhet.no"
-                      disabled={submitting}
-                    />
+                    <div className="feedback-input-wrapper">
+                      <span className="feedback-field-icon" aria-hidden="true">
+                        ✉️
+                      </span>
+                      <input
+                        id={emailId}
+                        type="email"
+                        name="email"
+                        value={email}
+                        onChange={(event) => onEmailChange(event.target.value)}
+                        placeholder="E-post (valgfritt)"
+                        disabled={submitting}
+                      />
+                    </div>
                   </div>
                 </section>
               </div>
               {error ? <p className="feedback-error">{error}</p> : null}
               <div className="feedback-actions">
-                <button type="submit" className="analysis-button" disabled={submitting}>
-                  {submitting ? "Sender..." : "Send"}
+                <button type="submit" className="feedback-submit" disabled={submitting}>
+                  <span className="feedback-submit-label">{ctaLabel}</span>
                 </button>
               </div>
             </form>

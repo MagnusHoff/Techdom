@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from techdom.infrastructure.db import Base
@@ -36,6 +36,8 @@ class SavedAnalysis(Base):
     finnkode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    analysis_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    prospectus_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="saved_analyses")
 

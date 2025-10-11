@@ -54,6 +54,22 @@ async def save_analysis(
     return saved_schemas.SavedAnalysisRead.model_validate(saved)
 
 
+@router.get("/{analysis_id}", response_model=saved_schemas.SavedAnalysisRead)
+async def retrieve_saved_analysis(
+    analysis_id: str,
+    current_user: User = Depends(auth_service.get_current_active_user),
+    session: AsyncSession = Depends(get_session),
+) -> saved_schemas.SavedAnalysisRead:
+    instance = await saved_service.get_saved_analysis(
+        session,
+        user_id=current_user.id,
+        analysis_id=analysis_id.strip(),
+    )
+    if instance is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analyse ikke funnet")
+    return saved_schemas.SavedAnalysisRead.model_validate(instance)
+
+
 @router.delete("/{analysis_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_saved_analysis(
     analysis_id: str,
