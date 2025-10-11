@@ -121,6 +121,8 @@ export interface StoredAnalysis {
   summary: string | null;
   sourceUrl: string | null;
   analysisKey?: string | null;
+  analysisSnapshot?: AnalysisResponse | null;
+  prospectusSnapshot?: ProspectusExtract | null;
 }
 
 export interface StoredAnalysesResponse {

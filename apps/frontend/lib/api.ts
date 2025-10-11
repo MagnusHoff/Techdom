@@ -40,16 +40,22 @@ function apiFetch(input: RequestInfo | URL, init?: RequestInit) {
   }
 
   const base = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+  const options: RequestInit = {
+    ...init,
+  };
+  if (!options.credentials) {
+    options.credentials = "include";
+  }
 
   if (typeof window !== "undefined") {
-    return fetch(withApiPrefix(input), init);
+    return fetch(withApiPrefix(input), options);
   }
 
   if (base) {
-    return fetch(`${base}${input}`, init);
+    return fetch(`${base}${input}`, options);
   }
 
-  return fetch(withApiPrefix(input), init);
+  return fetch(withApiPrefix(input), options);
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -87,6 +93,30 @@ function normaliseString(value: unknown): string | null {
   return null;
 }
 
+function normaliseJson<T extends Record<string, unknown>>(value: unknown): T | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as T)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as T;
+  }
+  return null;
+}
+
 function mapSavedAnalysis(raw: Record<string, unknown>): StoredAnalysis {
   return {
     id: typeof raw.id === "string" ? raw.id : String(raw.id ?? ""),
@@ -101,6 +131,12 @@ function mapSavedAnalysis(raw: Record<string, unknown>): StoredAnalysis {
     summary: normaliseString(raw.summary),
     sourceUrl: normaliseString(raw.source_url),
     analysisKey: normaliseString(raw.analysis_key),
+    analysisSnapshot: normaliseJson<Record<string, unknown>>(raw.analysis_snapshot) as
+      | AnalysisResponse
+      | null,
+    prospectusSnapshot: normaliseJson<Record<string, unknown>>(raw.prospectus_snapshot) as
+      | ProspectusExtract
+      | null,
   };
 }
 
@@ -489,6 +525,14 @@ export async function fetchSavedAnalyses(
   return { items };
 }
 
+export async function fetchSavedAnalysisDetail(analysisId: string): Promise<StoredAnalysis> {
+  const res = await apiFetch(`/analyses/${analysisId}`, {
+    cache: "no-store",
+  });
+  const data = await handleResponse<Record<string, unknown>>(res);
+  return mapSavedAnalysis(data);
+}
+
 export interface SaveAnalysisPayload {
   analysisKey: string;
   title?: string | null;
@@ -500,6 +544,8 @@ export interface SaveAnalysisPayload {
   finnkode?: string | null;
   summary?: string | null;
   sourceUrl?: string | null;
+  analysisSnapshot?: AnalysisResponse | null;
+  prospectusSnapshot?: ProspectusExtract | null;
 }
 
 export async function saveAnalysis(payload: SaveAnalysisPayload): Promise<StoredAnalysis> {
@@ -514,6 +560,8 @@ export async function saveAnalysis(payload: SaveAnalysisPayload): Promise<Stored
     finnkode: payload.finnkode ?? null,
     summary: payload.summary ?? null,
     source_url: payload.sourceUrl ?? null,
+    analysis_snapshot: payload.analysisSnapshot ?? null,
+    prospectus_snapshot: payload.prospectusSnapshot ?? null,
   };
   const res = await apiFetch("/analyses", {
     method: "POST",
@@ -534,7 +582,20 @@ export async function deleteSavedAnalysis(analysisId: string): Promise<void> {
     return;
   }
   if (!res.ok) {
-    const message = await res.text();
+    const messageText = await res.text();
+    let parsedDetail: string | null = null;
+    if (messageText) {
+      try {
+        const parsed = JSON.parse(messageText) as Record<string, unknown>;
+        const detail = parsed.detail ?? parsed.error;
+        if (typeof detail === "string" && detail.trim()) {
+          parsedDetail = detail.trim();
+        }
+      } catch {
+        /* ignore parse errors */
+      }
+    }
+    const message = parsedDetail ?? messageText;
     throw new Error(message || "Kunne ikke fjerne analysen.");
   }
   await handleResponse<unknown>(res);

@@ -1,22 +1,8 @@
-import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { resolveApiBase } from "../_lib/api-base";
-
-function buildUpstreamHeaders(request: NextRequest, accessToken: string | undefined): HeadersInit {
-  const headers: Record<string, string> = {
-    Accept: request.headers.get("accept") ?? "application/json",
-  };
-  const contentType = request.headers.get("content-type");
-  if (contentType) {
-    headers["Content-Type"] = contentType;
-  }
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
-  return headers;
-}
+import { buildUpstreamHeaders, resolveAccessToken } from "../_lib/auth-proxy";
 
 async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse> {
   const apiBase = resolveApiBase();
@@ -27,11 +13,14 @@ async function proxyAnalysesRequest(request: NextRequest): Promise<NextResponse>
     );
   }
 
-  const token = cookies().get("access_token")?.value;
+  const token = resolveAccessToken(request);
   const search = request.nextUrl.search;
   const targetUrl = `${apiBase}/analyses${search}`;
 
   const headers = buildUpstreamHeaders(request, token);
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[proxy] /analyses authorization?", headers.get("authorization"));
+  }
   const method = request.method.toUpperCase();
 
   let body: string | undefined;

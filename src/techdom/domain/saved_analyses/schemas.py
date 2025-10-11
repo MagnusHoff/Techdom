@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable
+from typing import Any, Iterable
 
 try:
     from pydantic import (  # type: ignore
@@ -46,6 +46,8 @@ class SavedAnalysisBase(BaseModel):
     finnkode: str | None = Field(default=None, max_length=32)
     summary: str | None = Field(default=None, max_length=4000)
     source_url: str | None = Field(default=None, max_length=500)
+    analysis_snapshot: dict[str, Any] | None = None
+    prospectus_snapshot: dict[str, Any] | None = None
 
     @field_validator("analysis_key")
     @classmethod

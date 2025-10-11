@@ -55,7 +55,22 @@ async def upsert_saved_analysis(
 
     await session.flush()
     await session.refresh(instance)
+    await session.commit()
     return instance
+
+
+async def get_saved_analysis(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    analysis_id: str,
+) -> SavedAnalysis | None:
+    stmt: Select[tuple[SavedAnalysis]] = select(SavedAnalysis).where(
+        SavedAnalysis.user_id == user_id,
+        SavedAnalysis.id == analysis_id.strip(),
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def delete_saved_analysis(
@@ -74,4 +89,5 @@ async def delete_saved_analysis(
         return False
     await session.delete(instance)
     await session.flush()
+    await session.commit()
     return True

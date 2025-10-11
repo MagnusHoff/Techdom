@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { resolveApiBase } from "../../_lib/api-base";
 import { buildUpstreamHeaders, resolveAccessToken } from "../../_lib/auth-proxy";
 
-async function proxyAnalysesDetail(
+async function proxyAnalysisRequest(
   request: NextRequest,
   analysisId: string,
 ): Promise<NextResponse> {
@@ -18,15 +18,9 @@ async function proxyAnalysesDetail(
 
   const token = resolveAccessToken(request);
   const search = request.nextUrl.search;
-  const targetUrl = `${apiBase}/analyses/${encodeURIComponent(analysisId)}${search}`;
+  const targetUrl = `${apiBase}/analysis/${encodeURIComponent(analysisId)}${search}`;
 
   const headers = buildUpstreamHeaders(request, token);
-  if (process.env.NODE_ENV !== "production") {
-    console.info(
-      "[proxy] /analyses/ID authorization?",
-      headers.get("authorization"),
-    );
-  }
   const method = request.method.toUpperCase();
 
   let body: string | undefined;
@@ -43,9 +37,9 @@ async function proxyAnalysesDetail(
       cache: "no-store",
     });
   } catch (error) {
-    console.error("analyses detail proxy failed", error);
+    console.error("analysis proxy failed", error);
     return NextResponse.json(
-      { error: "Kunne ikke kontakte API-et for analyser" },
+      { error: "Kunne ikke kontakte API-et for analyse" },
       { status: 502 },
     );
   }
@@ -78,19 +72,19 @@ export async function GET(
   request: NextRequest,
   context: { params: { analysisId: string } },
 ): Promise<NextResponse> {
-  return proxyAnalysesDetail(request, context.params.analysisId);
+  return proxyAnalysisRequest(request, context.params.analysisId);
 }
 
 export async function DELETE(
   request: NextRequest,
   context: { params: { analysisId: string } },
 ): Promise<NextResponse> {
-  return proxyAnalysesDetail(request, context.params.analysisId);
+  return proxyAnalysisRequest(request, context.params.analysisId);
 }
 
 export async function PATCH(
   request: NextRequest,
   context: { params: { analysisId: string } },
 ): Promise<NextResponse> {
-  return proxyAnalysesDetail(request, context.params.analysisId);
+  return proxyAnalysisRequest(request, context.params.analysisId);
 }

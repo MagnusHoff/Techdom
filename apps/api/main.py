@@ -40,7 +40,12 @@ from techdom.domain.analysis_service import (
 from techdom.domain.history import get_total_count
 from techdom.services.prospect_jobs import ProspectJobService
 from techdom.services.salgsoppgave import retrieve_salgsoppgave
-from techdom.infrastructure.db import ensure_auth_schema, get_session, init_models
+from techdom.infrastructure.db import (
+    ensure_auth_schema,
+    ensure_saved_analyses_schema,
+    get_session,
+    init_models,
+)
 from techdom.ingestion.fetch import extract_pdf_text_from_bytes
 from techdom.processing.ai import analyze_prospectus
 from techdom.processing.tg_extract import (
@@ -83,6 +88,7 @@ app.mount(
 async def _startup() -> None:
     await init_models()
     await ensure_auth_schema()
+    await ensure_saved_analyses_schema()
 
 
 def _model_dump(value: Optional[Any]) -> Optional[Dict[str, Any]]:
